@@ -12,7 +12,7 @@
     LANG_LABEL,
   } from '../lib/store/settings'
   import { ASR_MODULES, MODULE_LANGS, MODULE_SHORT, type ModuleLang } from '../lib/asr/models'
-  import { ICON_VARIANTS, iconDataUrl, iconVariant, type AppIconId } from '../lib/brand/logo'
+  import { APP_ICONS, iconFor, iconPreviewUrl, type AppIconId } from '../lib/brand/logo'
   import { info } from '../lib/log/store'
   import type { Accelerator, LlmFormat, LogLevelSetting, MtProviderId, Precision } from '../lib/store/settings'
   import type { Lang } from '../lib/types'
@@ -21,7 +21,7 @@
     if (id === $settings.appIcon) return
     setSetting('appIcon', id)
     // Applying it happens in App.svelte, where the setting is watched.
-    info('ui', `应用图标换成「${iconVariant(id).label}」`, { note: '已经装到桌面的图标要删掉重新添加才会更新' })
+    info('ui', `应用图标换成「${iconFor(id).label}」`, { note: '已经装到桌面的图标要删掉重新添加才会更新' })
   }
 
   async function clearModule(moduleLang: ModuleLang) {
@@ -66,17 +66,23 @@
       help="装到手机或桌面上时用的图标。已经装过的，要删掉重新「添加到主屏幕」才会换成新的。"
     >
       <div class="icons">
-        {#each ICON_VARIANTS as variant (variant.id)}
+        {#each APP_ICONS as icon (icon.id)}
           <button
             class="icon"
-            class:on={$settings.appIcon === variant.id}
+            class:on={$settings.appIcon === icon.id}
             type="button"
-            title={variant.label}
-            aria-label={`图标：${variant.label}`}
-            aria-pressed={$settings.appIcon === variant.id}
-            onclick={() => pickIcon(variant.id)}
+            title={icon.label}
+            aria-label={`图标：${icon.label}`}
+            aria-pressed={$settings.appIcon === icon.id}
+            onclick={() => pickIcon(icon.id)}
           >
-            <img src={iconDataUrl(variant.id)} alt="" width="30" height="30" />
+            <img
+              src={iconPreviewUrl(icon.id)}
+              style={`background:${icon.bg}`}
+              alt=""
+              width="30"
+              height="30"
+            />
           </button>
         {/each}
       </div>
@@ -418,8 +424,9 @@
     white-space: nowrap;
   }
 
-  /* Icon picker: each swatch is the real 512×512 icon, drawn at 30 px, so what
-     is previewed is byte-for-byte what the manifest would get. */
+  /* Icon picker: each swatch is the icon's own artwork on the background it is
+     rendered on, so what is previewed is what the installed icon will be — the
+     swatch is not a second drawing of it. */
   .icons {
     display: flex;
     flex-wrap: wrap;
@@ -442,6 +449,9 @@
     width: 30px;
     height: 30px;
     border-radius: 7px;
+    /* The artwork is wider than it is tall: contain keeps its proportions instead
+       of stretching it to the square, and the background shows where it is empty. */
+    object-fit: contain;
   }
 
   .icon.on {

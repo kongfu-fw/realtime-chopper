@@ -18,3 +18,6 @@ dist
 Dockerfile
 docker-compose*.yml
 *.md
+
+# 设计稿原图：不进构建上下文，也不发到线上（应用用的是 static/ 里那份小尺寸）
+design

@@ -15,10 +15,16 @@
     <link rel="icon" id="rc-favicon" type="image/svg+xml" href="./icon.svg" />
     <!--
       iOS never took SVG here: without this link it screenshots the page for the
-      home-screen icon. 180 is the size Apple asks for; the PNGs are written by
-      scripts/make-icons.mjs from the same geometry as the rest of the mark.
+      home-screen icon. 180 is the size Apple asks for, and the file is written
+      by scripts/make-icons.mjs — the default icon, once the page has run and
+      knows which icon the user actually chose (see src/lib/brand/apply.ts).
     -->
-    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link
+      id="rc-apple-touch"
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="./apple-touch-icon.png"
+    />
     <link rel="manifest" id="rc-manifest" href="./manifest.webmanifest" />
     <title>乔巴 · 实时翻译</title>
   </head>

@@ -33,7 +33,7 @@ npm run dev     # http://127.0.0.1:5273
 | 换声音、调语速 | 译文栏标题栏的音色下拉；语速在设置里 |
 | 某句没识别对 | 打开**调试模式**，那一行会出现 `▶ 原声` 和 `重新识别`（从整场录音里重新切一遍这段） |
 | 看队列 / 报错 | 调试模式下：副标题栏是队列读数，标题栏右边的 `⋮` 是从左侧滑出的日志抽屉（可导出 JSON） |
-| 看小鹿 | 点标题栏的小鹿或「乔巴」二字 |
+| 看乔巴 | 点标题栏的名字左边那张图，或「乔巴」二字 |
 
 ---
 
@@ -112,23 +112,28 @@ npm run icons      # 从 logo.ts 的几何重新渲染图标（见下）
 ```
 src/
   App.svelte  main.ts
-  components/          三明治外壳、双栏面板、状态栏、日志抽屉、设置、弹窗、小鹿
+  components/          三明治外壳、双栏面板、状态栏、日志抽屉、设置、弹窗、品牌标记
   lib/audio/           capture / resample / recorder（OPFS 里的 WAV）
   lib/asr/             models(模块注册表) / router / moonshine / segmenter(VAD)
   lib/mt/              client / cache / probe / providers{google,microsoft,llm}
   lib/tts/             speech.ts
   lib/pipeline/        session(状态机) / queues / rate / latency
-  lib/brand/           logo.ts（标记几何，唯一来源）/ apply.ts（favicon、manifest）
+  lib/brand/           logo.ts（标记几何 + 图标清单，唯一来源）/ apply.ts（favicon、manifest、iOS）
   workers/             vad.worker.ts / asr.worker.ts / mt.worker.ts
-static/                manifest / sw.js / 图标 / zh-asr.worker.js（手写的 classic worker）
-scripts/make-icons.mjs 图标渲染 + 裁切安全半径自检
+static/                manifest / sw.js / 图标 / 可选图标的原图 / zh-asr.worker.js（手写的 classic worker）
+static/icons/          非默认图标的各尺寸 PNG（由 npm run icons 生成）
+scripts/make-icons.mjs 图标渲染 + 裁切安全自检
+design/                设计稿原图（几 MB 那种）：不进构建、不进镜像、也不发到线上
 ```
 
 **两个不要手改的地方**
 
-- **图标文件**（`static/icon*.png`、`apple-touch-icon.png`、`icon.svg`）：由 `npm run icons` 从
-  `src/lib/brand/logo.ts` 的几何生成，标题栏、favicon、manifest 和 PNG 全都来自那一处定义。
-  改图标请改几何再重新生成；这个脚本还会量出"图案最远点半径"，确认它仍在 maskable 允许被裁的 80% 圆内。
+- **图标文件**（`static/icon*.png`、`apple-touch-icon.png`、`icon.svg`、`static/icons/`）：由
+  `npm run icons` 生成。可选图标清单、素材路径、输出文件名都在 `src/lib/brand/logo.ts` 一处
+  （图标素材要放在 `static/` 里 —— 那是会发给浏览器的目录；只当设计稿、不参与运行的大图放 `design/`）。
+  根目录那套永远是默认图标（页面和静态 manifest 在 JavaScript 之前就指着它）。
+  换图标请改清单再重新生成；脚本还会量出"图案最远点半径"与"越出圆角的像素数"，
+  确认 maskable / iOS 那两档仍在允许被裁的 80% 圆内。
 - **`static/zh-asr.worker.js`**：它必须是一个 classic 脚本（sherpa 的 glue 是脚本作用域的
   lexical 声明），所以它不能 import 我们的模块 —— 里面的资源清单和 `src/lib/asr/models.ts`
   里的版本号是配套的，改一边要改另一边。
@@ -173,6 +178,6 @@ docker compose up -d --build      # 默认只监听 127.0.0.1:8080
 
 「乔巴」是作者最喜欢的动漫《海贼王》里的角色：他是一只驯鹿，也有一半是人，所以动物说的话和人说的话他都听得懂 —— 当翻译再合适不过。
 
-不过**应用里那只小鹿是自己画的**（圆脸、宽鹿角、戴着耳机）：那个角色的形象有版权，名字可以用，画不能照抄。几何定义在 `src/lib/brand/logo.ts`，六种配色在设置里可选。想在应用里见到他，点标题栏的小鹿。
+图标有四款可选（设置 → 外观 → 应用图标）：三款是仓库里自带的素材（`static/chopper-hat*`，那顶红帽子带鹿角、只有帽子、戴耳机），另一款是**应用自己画的小鹿**（圆脸、宽鹿角、戴着耳机）—— 那个角色的形象有版权，名字可以用，画不能照抄，所以自己画了一只放在旁边当备选。选中的那款会出现在标题栏名字左边、弹窗配图、favicon 和装到桌面上的图标里。想看它，点标题栏的名字左边那张图。
 
 `package.json` 里写的是 `ISC`；仓库里目前没有 `LICENSE` 文件。

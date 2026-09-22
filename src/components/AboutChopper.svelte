@@ -1,6 +1,6 @@
 <script lang="ts">
   import Modal from './Modal.svelte'
-  import { APP_NAME, iconDataUrl } from '../lib/brand/logo'
+  import { APP_NAME, iconPreviewUrl } from '../lib/brand/logo'
   import { settings } from '../lib/store/settings'
 
   interface Props {
@@ -9,25 +9,26 @@
 
   let { onclose }: Props = $props()
 
-  // Whatever colourway the user picked in settings is the one that turns up
-  // here — the easter egg should look like the mark in their own header.
-  const art = $derived(iconDataUrl($settings.appIcon))
+  // Whatever icon the user picked in settings is the one that turns up here: the
+  // easter egg should show the face they chose for the app.
+  const art = $derived(iconPreviewUrl($settings.appIcon))
 </script>
 
 <!--
   The easter egg behind clicking the mascot or the name in the header.
 
-  It shows the app's *own* little deer — the mascot drawn in `lib/brand/logo.ts`,
-  not the character the app is named after: that design belongs to its author, so
-  the mark here stays ours (see the note at the top of `logo.ts`). The name, and
-  the story told below, are what tie the app to the anime.
+  It shows whatever icon the app is wearing — the artwork supplied in `static/`
+  for the character it is named after, or the little deer the app draws for
+  itself (`lib/brand/logo.ts`). Either way it is the same picture as the one in
+  the settings picker and on the home screen, so the joke lands on the same face.
 
   Copy rules of the house apply: short sentences a child could follow, one idea
   per line, and no explaining anything the reader did not ask about.
 -->
 <Modal title={`我是${APP_NAME}`} {onclose}>
   <div class="hero">
-    <img src={art} alt="一只戴着耳机的小鹿" width="132" height="132" />
+    <!-- Decorative: the heading above it already says who is speaking. -->
+    <img src={art} alt="" width="132" height="132" />
   </div>
 
   <p class="lead">我来自《海贼王》，作者最喜欢的动漫。</p>
@@ -50,6 +51,8 @@
 
   .hero img {
     display: block;
+    /* The artwork is wider than it is tall; contain keeps its proportions. */
+    object-fit: contain;
     /* A single friendly nod, then it holds still. */
     animation: bob 620ms ease-out 1;
   }

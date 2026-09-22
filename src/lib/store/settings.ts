@@ -1,7 +1,7 @@
 import { writable, get } from 'svelte/store'
 import type { Lang, SourceLang, TargetLang } from '../types'
 import { ASR_MODULES, moduleLangFor } from '../asr/models'
-import { DEFAULT_APP_ICON, type AppIconId } from '../brand/logo'
+import { APP_ICONS, DEFAULT_APP_ICON, type AppIconId } from '../brand/logo'
 
 /**
  * User-facing settings (requirement 10).
@@ -112,6 +112,13 @@ function readStored(): Partial<Settings> {
     // `halfDuplex` is gone: the app is always full-duplex now. Drop the stored
     // key instead of carrying dead state around forever.
     delete (parsed as Record<string, unknown>).halfDuplex
+    // So are the icon ids this app used to draw itself (`paper`, `mustard`, …).
+    // An unknown id would leave the picker with nothing selected while the page
+    // quietly showed the default, so drop it and let the default apply.
+    const icon = (parsed as Partial<Settings>).appIcon
+    if (icon !== undefined && !APP_ICONS.some((choice) => choice.id === icon)) {
+      delete (parsed as Record<string, unknown>).appIcon
+    }
     return parsed as Partial<Settings>
   } catch {
     return {}

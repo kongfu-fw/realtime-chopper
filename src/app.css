@@ -1,0 +1,318 @@
+@import './lib/styles/tokens.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--rc-bg);
+  color: var(--rc-ink);
+  font-family: var(--rc-font);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  height: 100%;
+}
+
+/* ---------------------------------------------------------------- sandwich */
+
+.sandwich {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* iOS home-screen mode: keep the recording button clear of the home bar. */
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-top: env(safe-area-inset-top);
+}
+
+.sandwich > header {
+  flex: 0 0 auto;
+  min-height: var(--rc-header-h);
+  border-bottom: 2px solid var(--rc-ink);
+  background: var(--rc-surface);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.sandwich > main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sandwich > footer {
+  flex: 0 0 auto;
+  min-height: var(--rc-footer-h);
+  border-top: 2px solid var(--rc-ink);
+  background: var(--rc-surface);
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 12px;
+  gap: 8px;
+}
+
+/* Two-column content: side by side on pointer devices, stacked on touch. */
+.panels {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+@media (pointer: coarse) and (orientation: portrait) {
+  .panels {
+    flex-direction: column;
+  }
+}
+
+.panel {
+  flex: 1 1 50%;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--rc-surface);
+}
+
+.panel + .panel {
+  border-left: 2px solid var(--rc-ink);
+}
+
+@media (pointer: coarse) and (orientation: portrait) {
+  .panel + .panel {
+    border-left: none;
+    border-top: 2px solid var(--rc-ink);
+  }
+}
+
+/*
+ * Fixed height, not min-height: the two panels sit side by side, so a control
+ * that is one pixel taller in one header would visibly break the shared line.
+ * Native <select> elements are the usual culprit, hence the normalisation rule
+ * further down.
+ */
+.panel-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  height: var(--rc-panel-head-h);
+  border-bottom: 1px solid var(--rc-line);
+  background: var(--rc-surface-alt);
+}
+
+.panel-title {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---------------------------------------------------------------- controls */
+
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+.rc-btn {
+  border: 2px solid var(--rc-ink);
+  background: var(--rc-surface);
+  border-radius: var(--rc-radius-pill);
+  padding: 6px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  box-shadow: var(--rc-shadow-hard);
+  transition: transform 80ms ease;
+}
+
+.rc-btn:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.rc-btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.rc-btn.accent {
+  background: var(--rc-accent);
+}
+
+.rc-btn.ghost {
+  box-shadow: none;
+  border-color: var(--rc-line-strong);
+  background: transparent;
+  font-weight: 500;
+}
+
+.rc-btn.small {
+  padding: 3px 10px;
+  font-size: 13px;
+}
+
+.rc-select,
+.rc-input {
+  border: 2px solid var(--rc-ink);
+  background: var(--rc-surface);
+  border-radius: var(--rc-radius-s);
+  padding: 4px 8px;
+  max-width: 100%;
+}
+
+.rc-input {
+  width: 100%;
+}
+
+.rc-input::placeholder {
+  color: var(--rc-ink-soft);
+  opacity: 0.7;
+}
+
+/* The record button lives centred in the status bar (requirement 17). */
+.record-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid var(--rc-ink);
+  background: var(--rc-danger);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--rc-shadow-hard);
+  align-self: center;
+}
+
+.record-btn.recording {
+  background: var(--rc-ink);
+  animation: rc-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes rc-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(180 69 58 / 55%);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgb(180 69 58 / 0%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .record-btn.recording {
+    animation: none;
+  }
+}
+
+/*
+ * One control height inside panel headers. Declared here, after every .rc-*
+ * rule, so it wins on source order against `.rc-btn.small` rather than needing
+ * a heavier selector.
+ */
+.panel-head .rc-select,
+.panel-head .rc-btn,
+.panel-head .rc-btn.small {
+  height: 26px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  font-size: 13px;
+  box-shadow: none;
+}
+
+/* ------------------------------------------------------------------- lists */
+
+.line {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--rc-line);
+}
+
+.line.selectable {
+  cursor: pointer;
+}
+
+.line.selectable:hover {
+  background: var(--rc-accent-soft);
+}
+
+.line-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--rc-ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.line-text {
+  margin-top: 2px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.line.failed {
+  background: var(--rc-danger-soft);
+}
+
+.debug-box {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--rc-surface-alt);
+  border: 1px dashed var(--rc-line-strong);
+  border-radius: var(--rc-radius-s);
+  font-family: var(--rc-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--rc-ink-soft);
+}
+
+.empty {
+  padding: 24px 16px;
+  color: var(--rc-ink-soft);
+  font-size: 13px;
+  text-align: center;
+}
+
+.clone-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  background: var(--rc-ink);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: var(--rc-radius-pill);
+  font-size: 13px;
+  z-index: 60;
+}

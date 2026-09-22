@@ -1,0 +1,20 @@
+# 构建上下文里不需要的东西。
+# node_modules 和 dist 尤其重要：几百 MB 传进上下文，每次构建白等几分钟，
+# 而且它们本来就会在镜像里重新生成。
+node_modules
+dist
+
+# 本地状态与仓库元数据
+.git
+.gitignore
+.freebuff
+*.log
+
+# 密钥和本地配置绝不进镜像
+.env
+.env.*
+
+# 只有构建源码和 deploy/ 是需要的
+Dockerfile
+docker-compose*.yml
+*.md

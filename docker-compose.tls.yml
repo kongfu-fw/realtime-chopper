@@ -1,0 +1,28 @@
+# 可选覆盖：给"手机 / 局域网 / 外网访问"加上真正的 HTTPS。
+#
+# 浏览器只在安全上下文里给麦克风，而 https:// 是唯一能在别的设备上成立的形式。
+# Caddy 会自己申请并续期 Let's Encrypt 证书，证书存在 caddy-data 卷里。
+#
+#   echo 'RC_DOMAIN=speak.example.com' > .env
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build
+#
+# 要求：这个域名已经解析到本机，并且 80 / 443 从外网可达（Let's Encrypt 要用
+# 80 做 http-01 校验）。只是想在自己手机上看，用 Tailscale 更省事，见 DOCKER.md。
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      RC_DOMAIN: ${RC_DOMAIN:?请先在 .env 里设置 RC_DOMAIN，例如 speak.example.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

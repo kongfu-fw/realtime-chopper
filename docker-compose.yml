@@ -1,0 +1,40 @@
+# 实时语音翻译 —— 部署用（静态站点 + nginx）
+#
+#   docker compose up -d --build     构建并启动
+#   docker compose ps                看状态（healthy 才算起来了）
+#   docker compose logs -f app       看访问日志
+#   docker compose down              停止并删除容器（镜像留着）
+#
+# 默认只监听 127.0.0.1:8080，这是有意的：浏览器只在"安全上下文"里给麦克风，
+# 也就是 https:// 或 http://localhost。用局域网 IP 打开，界面能出来但录不了音。
+# 想在手机上用，见 DOCKER.md 的 HTTPS 一节。
+#
+# 换端口：RC_PORT=9000 docker compose up -d   （或写进 .env）
+
+name: realtime-chopper
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: realtime-chopper:latest
+
+    ports:
+      - "127.0.0.1:${RC_PORT:-8080}:80"
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    # 静态服务器日志量很小，但也没必要让它无限长下去。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

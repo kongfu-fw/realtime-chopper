@@ -1,0 +1,7 @@
+# Caddy 只做两件事：拿证书、把请求转给里面的 nginx。
+# 不用再写 encode：压缩在 nginx 那一层已经做了。
+# {$RC_DOMAIN} 来自环境变量（docker-compose.tls.yml 里从 .env 传入）。
+
+{$RC_DOMAIN} {
+	reverse_proxy app:80
+}

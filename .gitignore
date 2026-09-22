@@ -1,0 +1,54 @@
+# ---------------------------------------------------------------- 依赖与产物
+node_modules/
+
+# Vite 的输出目录。注意它由 `npm run build` 生成，Docker 镜像里也是从源码重建，
+# 所以任何时候都不该进版本库。
+dist/
+
+# Vite 的依赖预打包缓存（`optimizeDeps` 的结果），删掉会自动重建。
+.vite/
+
+# ---------------------------------------------------------------- 日志与临时文件
+*.log
+logs/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# TypeScript 的增量编译信息（tsconfig 现在是 noEmit，留这条是防止以后打开）
+*.tsbuildinfo
+
+# ---------------------------------------------------------------- 密钥与本地配置
+.env
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------- 编辑器与系统
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+
+.idea/
+
+# VS Code：个人设置按机器不同，只有推荐扩展值得共享
+.vscode/*
+!.vscode/extensions.json
+
+# ---------------------------------------------------------------- 本机工具状态
+# Freebuff 在这个工作区留下的会话/缓存，与项目本身无关。
+.freebuff/
+
+# ---------------------------------------------------------------- 不要忽略的东西
+# 下面这些看起来"是生成的"，但必须留在版本库里，改动前请先想一秒：
+#
+#   static/icon*.png  static/apple-touch-icon.png
+#       由 `npm run icons` 从 src/lib/brand/logo.ts 的几何渲染而来。Android 安装
+#       要 PNG，iOS 的 apple-touch-icon 从不支持 SVG（缺了它 iPhone 会把页面
+#       截图当图标），所以要提交。
+#   static/icon.svg
+#       manifest 里那个"跑 JS 之前就有了"的图标，静态部署直接依赖它。
+#   package-lock.json
+#       Dockerfile 用的是 `npm ci`，它要求锁文件存在且与 package.json 一致。
+#   deploy/  Dockerfile  docker-compose*.yml
+#       部署本身是项目的一部分。

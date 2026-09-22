@@ -1,0 +1,28 @@
+{
+  "name": "realtime-chopper",
+  "version": "1.0.0",
+  "description": "实时语音翻译单页应用：本地识别 + 多提供方翻译 + 浏览器朗读",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.7.6",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.0"
+  }
+}

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="220 180 962 770" width="100%" height="100%">
+  <title>托尼托尼·乔巴的帽子 (Chopper's Hat)</title>
+  <defs>
+    <style>
+      .hat-fill-red {
+        fill: #E62846;
+        stroke: #1E1012;
+        stroke-width: 14px;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .hat-fill-dark-red {
+        fill: #B41D32;
+        stroke: #1E1012;
+        stroke-width: 13px;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .hat-cross {
+        fill: #FFFFFF;
+        stroke: #1E1012;
+        stroke-width: 14px;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+    </style>
+  </defs>
+
+  <!-- 1. 帽身 (Hat Crown) -->
+  <path id="hat-crown" class="hat-fill-red" d="M 356 265 Q 360 242 382 238 C 480 216, 922 216, 1020 238 Q 1042 242 1046 265 C 1032 390, 1008 560, 994 750 L 408 750 C 394 560, 370 390, 356 265 Z" />
+
+  <!-- 2. 标志白色十字 (Cross) -->
+  <path id="hat-cross" class="hat-cross" d="M 600 362 L 536 427 L 634 517 L 536 607 L 600 672 L 701 581 L 802 672 L 866 607 L 768 517 L 866 427 L 802 362 L 701 453 Z" />
+
+  <!-- 3. 帽檐正面 (Brim Shell) -->
+  <path id="hat-brim-shell" class="hat-fill-red" d="M 248 825 C 380 745, 540 709, 701 709 C 862 709, 1022 745, 1154 825 Q 1164 846 1136 868 C 1010 918, 860 926, 701 926 C 542 926, 392 918, 266 868 Q 238 846 248 825 Z" />
+
+  <!-- 4. 帽檐内部阴影开口 (Brim Underside Cavity) -->
+  <path id="hat-brim-opening" class="hat-fill-dark-red" d="M 318 893 C 440 852, 570 836, 701 836 C 832 836, 962 852, 1084 893 C 962 922, 832 926, 701 926 C 570 926, 440 922, 318 893 Z" />
+</svg>

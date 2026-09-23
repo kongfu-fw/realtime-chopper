@@ -214,4 +214,16 @@
     color: var(--rc-ok);
     font-weight: 600;
   }
+
+  /*
+   * Phone widths: this header holds a title, the voice picker, the read-aloud
+   * toggle and the provider mark in roughly 175 px. The picker's 92 px floor made
+   * it the one item that refused to give, which pushed the provider mark past the
+   * panel edge — 3 px of horizontal page scroll on a 393 px iPhone.
+   */
+  @media (max-width: 560px) {
+    .voice {
+      min-width: 0;
+    }
+  }
 </style>

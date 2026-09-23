@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import type { AsrEngine, AsrLoadProgress, Lang } from '../lib/types'
+import type { DevicePlan } from '../lib/asr/moonshine'
 import { createEngine } from '../lib/asr/router'
 
 /**
@@ -20,7 +21,12 @@ let engine: AsrEngine | null = null
 let chain: Promise<void> = Promise.resolve()
 
 type Inbound =
-  | { type: 'load'; lang: Lang; preference: 'auto' | 'webgpu' | 'wasm'; precision: 'high' | 'eco' }
+  | {
+      type: 'load'
+      lang: Lang
+      /** Device decision made on the main thread; see `DevicePlan`. */
+      plan: DevicePlan | null
+    }
   | { type: 'recognize'; id: number; samples: Float32Array; startMs: number; endMs: number }
   | { type: 'dispose' }
 
@@ -28,7 +34,7 @@ self.onmessage = (event: MessageEvent) => {
   const msg = event.data as Inbound
   switch (msg.type) {
     case 'load':
-      chain = chain.then(() => handleLoad(msg.lang, msg.preference, msg.precision))
+      chain = chain.then(() => handleLoad(msg.lang, msg.plan))
       break
     case 'recognize':
       chain = chain.then(() => handleRecognize(msg.id, msg.samples, msg.startMs, msg.endMs))
@@ -43,11 +49,7 @@ self.onmessage = (event: MessageEvent) => {
   }
 }
 
-async function handleLoad(
-  lang: Lang,
-  preference: 'auto' | 'webgpu' | 'wasm',
-  precision: 'high' | 'eco',
-): Promise<void> {
+async function handleLoad(lang: Lang, plan: DevicePlan | null): Promise<void> {
   if (engine && engine.lang === lang && engine.ready) {
     postMessage({ type: 'loaded', lang, device: 'cached', reason: '模型已在内存中' })
     return
@@ -55,7 +57,7 @@ async function handleLoad(
   engine?.dispose()
   engine = null
   try {
-    const next = createEngine(lang, preference, precision)
+    const next = createEngine(lang, plan)
     const info = await next.load((progress: AsrLoadProgress) => {
       postMessage({ type: 'load-progress', lang, ...progress })
     })

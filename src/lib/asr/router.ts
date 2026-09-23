@@ -1,6 +1,6 @@
 import type { AsrEngine, Lang } from '../types'
 import { moduleFor } from './models'
-import { MoonshineEngine } from './moonshine'
+import { MoonshineEngine, type DevicePlan } from './moonshine'
 
 /**
  * Routing: the source language the user picked in the title bar decides which
@@ -17,14 +17,11 @@ import { MoonshineEngine } from './moonshine'
  * whose runtime can only be evaluated as a classic script, so it lives in its own
  * worker (static/zh-asr.worker.js) and never reaches this module worker at all.
  */
-export function createEngine(
-  lang: Lang,
-  preference: 'auto' | 'webgpu' | 'wasm',
-  precision: 'high' | 'eco',
-): AsrEngine {
+export function createEngine(lang: Lang, plan: DevicePlan | null): AsrEngine {
   const spec = moduleFor(lang)
   if (spec.engine !== 'moonshine') {
     throw new Error(`${lang} 不在本 worker 中运行（${spec.engine} 有自己的 worker）`)
   }
-  return new MoonshineEngine(lang, preference, precision)
+  if (!plan) throw new Error(`没有为 ${lang} 决定用哪个加速器`)
+  return new MoonshineEngine(lang, plan)
 }

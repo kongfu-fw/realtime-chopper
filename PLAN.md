@@ -160,6 +160,25 @@ resp: [{translations:[{text:"..."}]}, ...]
 ### 4.7 日志与调试
 - 环形缓冲 1000 条（可调），`error/warn/info/debug`，字段 `{ts, level, stage, message, detail}`。
 - 写入点：模型加载失败、VAD 异常、识别空结果、翻译 429/超时/格式异常、提供方降级、TTS 无音色、存储配额不足、Worker 崩溃重启。
+- **手机上的可诊断性（iPhone 实测暴露的问题）**：手机没有 devtools，而日志抽屉只在调试模式存在，所以
+  - 安装弹窗失败的弹窗里直接给出原始报错（`session.failure.raw`）+ 「复制诊断信息」（环境、存储、缓存桶、日志环）；剪贴板被拒时改为在屏上显示原文供长按复制；
+  - 识别 worker 的启动面包屑（运行时初始化耗时、识别器就绪、模型文件释放、blob 脚本加载方式）以 `info` 级别进日志——默认级别就能看到；以前它们发的是 `debug`，而且主线程直接丢弃；
+  - `describeModuleError` 补齐 wasm/`abort()`/OOM 等模式（Emscripten 的内存不足只报一句 `Aborted()`），识别不了原因时也必须让原文可见。
+  - **日志本身要能活过一次重新加载**：手机的内存回收会直接杀掉并重载页面，只存在内存里的日志等于让崩溃把自己的证据带走（用户重新打开抽屉只看到空的，或者一句无关的话）。所以最近 300 条同步写进 `localStorage`（不是 `sessionStorage`：被杀的渲染进程最不一定留下的就是它自己的会话存储），重新加载后恢复，并补一条 `页面重新加载过：已恢复上次的 N 条日志`；`pagehide` 时立即落盘，`visibilitychange` 记一行前后台——这几行就是"页面被系统回收"的唯一痕迹。防噪声的两道闸：只采纳 2 分钟以内的尾巴（崩溃会立刻重载，明天开新标签页不该继承昨天的日志），且只属于同一个标签页（`sessionStorage` 里的 tab id；没有 id 恰恰就是崩溃那种情况，也照收）。
+  - **页面被系统直接杀掉这件事，要由下一次加载说出来**（`lib/boot-guard.ts`）：启动识别引擎前先在 `localStorage` 里写一张条子（"我要启动 X 模块"），正常结束（成功或我们能报的失败）就撕掉；条子留着不动的唯一可能就是页面被杀了。下一次加载读到它就记一条 error 级日志，并在界面上显示一条**常驻提示条**（标题 + 一句人话 + 「查看日志」+「复制诊断信息」）——这两个按钮**不依赖调试模式**，因为"出错了但看不到任何日志"比出错本身更糟。
+  - **同一个模块连续两次杀掉页面之后就不再重试**：记数键带启动路径版本（`rc.asr.crashes.<rev>`，本版 `fs-mount-2`），所以换模型或改这条路都会自动清零、不会把一个能用得好的设备封死；成功加载后也会清零。到阈值时 `prepare()` 在 1ms 内直接抛出"这台设备装不下……先别试了"，而不是再让用户看一次闪屏。条子超过 5 分钟就当"用户自己关掉了页面"，不计入崩溃（正常加载也可能要几分钟）。
+  - **弹窗的关闭原因进日志**：`Modal` 把 `onclose` 的原因传下来（`点关闭` / `点遮罩` / `按 Esc`），于是 `已取消安装识别模块（点遮罩）` 这种句子能自己解释自己——手机上点遮罩和点关闭一样容易，只写"已取消"看起来像安装自己失败了。
+- **iPhone 实测：WebGPU 会把整页带崩，而且崩得没有异常可捕**。2026-09-23 的一份真机诊断：英文模块（62MB，Moonshine）在「浏览器有 WebGPU」下，从「开始安装」到页面重开只隔 2.7 秒，两次一样，日志里既没有进度也没有报错——那不是一个能 catch 的失败，是渲染进程直接被拿走。于是：
+  - Apple 移动端（iPhone/iPad，含触控 Mac）的 `auto` 直接走 CPU（`device.ts` 的 `isAppleMobile()` 是唯一一处平台判定，`webgpuRiskyReason()` 只用它），理由写进日志与自检；设置里仍可手动指定「显卡优先」，那是指令不是建议。
+  - **崩溃只封显卡、不封模块**：崩溃条子现在同时记录加速器（`en@webgpu`），下一次加载据此 `rememberGpuFailure` 并把加速器降级——所以同一个模块第二次就能用，而不是被"这台设备装不下"封死。只有同一模块在 **CPU 下** 连崩两次才拒绝（那才真是内存不够）。
+  - 决策只做一次、在主线程做：GPU 判定存在 `localStorage`，而 **worker 里没有 `localStorage`**，所以让 worker 自己再算一遍会出现"日志写的是 CPU、实际用的却是 WebGPU"。现在主线程调一次 `planDevice()` 拿到 `DevicePlan{primary, fallback}`，**连备用档（GPU 失败后的那份 CPU 配置）一起**随 `load` 请求传进 worker；worker 里只剩执行，没有任何再判断的余地。自检也用同一个函数问"这台设备会怎么跑"。
+- **显卡加速的失败会被记住**：WebGPU 尝试有 90 秒上限（卡住就回退 CPU，而不是把整个 240 秒预算耗完再报"网络问题"），失败按设备记在 `rc.gpu.verdict.v1`（30 天过期），下次直接用 CPU；自检里能看到判定与原因。
+
+### 4.8 手机（尤其 iPhone）上的内存取舍
+- 中韩模块常驻内存的构成：虚拟文件系统（MEMFS）里的模型文件 228MB + ONNX 会话里的权重 228MB + 运行时；而 WebKit 给一个页面大约 1～1.5GB。**iPhone 实测就是在这里整页闪一下重开、没有任何报错**，所以这一节改过一次大手术。
+- **模型不再走运行时自带的 `.data` 打包路径**：那条路把 228MB 拼成一个 blob、再用 XHR 读成一个 ArrayBuffer，而生成的加载器把这个 buffer 钉在 `DataRequest.prototype.byteArray` 上**一辈子不放**（源文件里就写着 `DataRequest.prototype.byteArray=byteArray`），等于最大那个文件常年两份。现在改成：清单置空 + `getPreloadedPackage` 返回空 buffer（打包器整段不执行）+ 运行时起来后用 `Module.FS_createDataFile('/', 'model.int8.onnx', bytes, …, canOwn=true)` 自己写进文件系统。`canOwn` 是重点：文件系统直接收下我们的 buffer 而不复制（实测写入耗时 **0ms**），于是 worker 里模型只有一份。顺带 `wasmBinary` 直接给字节，11MB 运行时也不再走 blob URL 抓取。
+- 下载阶段全程没有 Blob：流式填进一个按 content-length 预分配好的 `Uint8Array`（列表 + 最后拼接会在最糟的时刻多出一整份拷贝），另一条 tee 分支照旧写进 Cache Storage。
+- 识别器构造完成后，先做一次 100ms 空跑解码自检，通过后 `FS_unlink` 掉文件系统里的副本**并把我们自己持有的那个数组也置空**——两个引用都放掉才算真的省下来；自检不通过就都留着。**实测同一段真实语音在释放后仍逐字正确**（`Hello world. This is a short test of the speech recognition module.`，6.35s 音频、推理 1.8s），启动耗时也从 ~6.6s 降到 ~2.7s（不再拼 228MB blob、不再 XHR 它）。
 
 ---
 
@@ -244,6 +263,7 @@ resp: [{translations:[{text:"..."}]}, ...]
 - `settings`: localStorage（`rc.settings.v1`），变更即时生效。
 - API key 仅存 localStorage（UI 标注"仅本机"），不上传、日志脱敏。
 - 模型缓存：transformers.js 走 Cache API；sherpa-onnx WASM 走 Cache Storage/OPFS；下载前 `storage.estimate()` 校验，支持 Range 续传。
+- **每个模块实际占用的桶写在 `MODULE_CACHE_KEYS` 里，不再用公式推**：两个引擎的命名惯例不一样（sherpa 自己起名，Moonshine 落在 transformers.js 固定的 `transformers-cache` 桶里），而曾经的公式 `rc-model-<模块>-<引擎>` 推出的是 `rc-model-en-moonshine` —— **一个从未存在过的桶**。后果是设置里的「清除」对英文模块什么都不删（62MB 留在原地而界面说已清除），自检也把已安装的英文报成"未安装"。现在 `SettingsView.clearModule` 与自检读同一张表（旧前缀扫描保留，用来清老构建留下的键）。
 - 会话记录 v1 不持久化；日志可导出 JSON。
 
 ---

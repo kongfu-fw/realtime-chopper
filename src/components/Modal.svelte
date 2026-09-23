@@ -3,7 +3,14 @@
 
   interface Props {
     title: string
-    onclose?: () => void
+    /**
+     * `reason` names *how* it was dismissed ("点关闭" / "点遮罩" / "按 Esc").
+     *
+     * A dialog that disappears without a word is unreadable from a log: when the
+     * user reports "it just closed", the reason is the difference between a bug
+     * and a stray tap on the backdrop — and on a phone that tap is very easy.
+     */
+    onclose?: (reason?: string) => void
     children: Snippet
     footer: Snippet
     wide?: boolean
@@ -12,11 +19,11 @@
   let { title, onclose, children, footer, wide = false }: Props = $props()
 
   function onBackdrop(event: MouseEvent) {
-    if (event.target === event.currentTarget) onclose?.()
+    if (event.target === event.currentTarget) onclose?.('点遮罩')
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') onclose?.()
+    if (event.key === 'Escape') onclose?.('按 Esc')
   }
 </script>
 

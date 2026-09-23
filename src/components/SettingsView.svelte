@@ -11,7 +11,13 @@
     TARGET_ORDER,
     LANG_LABEL,
   } from '../lib/store/settings'
-  import { ASR_MODULES, MODULE_LANGS, MODULE_SHORT, type ModuleLang } from '../lib/asr/models'
+  import {
+    ASR_MODULES,
+    MODULE_CACHE_KEYS,
+    MODULE_LANGS,
+    MODULE_SHORT,
+    type ModuleLang,
+  } from '../lib/asr/models'
   import { APP_ICONS, iconFor, iconPreviewUrl, type AppIconId } from '../lib/brand/logo'
   import { info } from '../lib/log/store'
   import type { Accelerator, LlmFormat, LogLevelSetting, MtProviderId, Precision } from '../lib/store/settings'
@@ -25,9 +31,14 @@
   }
 
   async function clearModule(moduleLang: ModuleLang) {
+    const owned = MODULE_CACHE_KEYS[moduleLang]
     if (typeof caches !== 'undefined') {
+      // The module's own bucket(s), plus anything an older build left under this
+      // module's prefix. See `MODULE_CACHE_KEYS`: English does not live under
+      // `rc-model-en-…` at all, so the prefix guess deleted nothing and the app
+      // still reported the 62 MB as cleared.
       for (const key of await caches.keys()) {
-        if (key.startsWith(`rc-model-${moduleLang}-`)) await caches.delete(key)
+        if (owned.includes(key) || key.startsWith(`rc-model-${moduleLang}-`)) await caches.delete(key)
       }
     }
     forgetModel(moduleLang)
@@ -126,7 +137,10 @@
       </select>
     </SettingRow>
 
-    <SettingRow label="用显卡加速" help="有显卡会更快。中文识别一直用 CPU。">
+    <SettingRow
+      label="用显卡加速"
+      help="有显卡会更快。中文识别一直用 CPU；iPhone / iPad 上别选「显卡优先」——实测一启用就把整个页面带崩，所以那边的自动档走 CPU。"
+    >
       <select
         class="rc-select"
         value={$settings.accelerator}

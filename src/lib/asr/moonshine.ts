@@ -1,5 +1,12 @@
 import type { AsrLoadProgress, AsrResult, Lang } from '../types'
 import { moduleFor } from './models'
+import {
+  gpuBlockReason,
+  looksLikeDeviceFailure,
+  rememberGpuFailure,
+  rememberGpuSuccess,
+  webgpuAvailable,
+} from './device'
 
 /**
  * Moonshine via transformers.js (decision: hybrid runtime).
@@ -95,18 +102,99 @@ export interface DeviceChoice {
   reason: string
 }
 
-export function chooseDevice(preference: 'auto' | 'webgpu' | 'wasm', precision: 'high' | 'eco'): DeviceChoice {
-  const hasWebGpu = typeof navigator !== 'undefined' && 'gpu' in navigator
-  if (preference === 'wasm') {
-    return { device: 'wasm', dtype: precision === 'eco' ? 'q4' : 'q8', reason: '用户指定用 CPU' }
+/**
+ * The whole plan for one load: what to try, and what to try when that refuses.
+ *
+ * Both choices are made on the main thread, in one place, and travel to the worker
+ * with the load request. That is not tidiness: a worker has no `localStorage`
+ * (where the GPU verdict lives), so one that recomputed this decision would see
+ * "nothing is known about this device" and pick WebGPU — while the log line and
+ * the crash note said CPU. One decision, made on the side that writes the note.
+ */
+export interface DevicePlan {
+  primary: DeviceChoice
+  /**
+   * The CPU retry for a GPU attempt, or `null` when there is nothing to retry on.
+   *
+   * The retry itself is not optional — incomplete operator sets are normal on new
+   * drivers, and it re-downloads nothing — so its dtype is decided here too,
+   * instead of being derived a second time inside the worker.
+   */
+  fallback: DeviceChoice | null
+}
+
+export function planDevice(preference: 'auto' | 'webgpu' | 'wasm', precision: 'high' | 'eco'): DevicePlan {
+  const wasmDtype = precision === 'eco' ? 'q4' : 'q8'
+  const cpu = (reason: string): DeviceChoice => ({ device: 'wasm', dtype: wasmDtype, reason })
+  const gpu = (reason: string): DeviceChoice => ({
+    device: 'webgpu',
+    dtype: precision === 'eco' ? 'q4' : 'fp32',
+    reason,
+  })
+  const plan = (primary: DeviceChoice): DevicePlan => ({
+    primary,
+    fallback: primary.device === 'webgpu' ? cpu('显卡不可用，回退到 CPU') : null,
+  })
+  if (preference === 'wasm') return plan(cpu('用户指定用 CPU'))
+  if (preference === 'webgpu') {
+    // An explicit choice is an instruction, not a hint: it is tried even if this
+    // device failed before (a driver update is exactly how that gets fixed).
+    return plan(webgpuAvailable() ? gpu('用户指定用显卡') : cpu('本机没有 WebGPU，改用 CPU'))
   }
-  if (preference === 'webgpu' && !hasWebGpu) {
-    return { device: 'wasm', dtype: precision === 'eco' ? 'q4' : 'q8', reason: '本机没有 WebGPU，改用 CPU' }
+  if (!webgpuAvailable()) return plan(cpu('本机没有 WebGPU，改用 CPU'))
+  const blocked = gpuBlockReason()
+  if (blocked) {
+    // Two different reasons arrive here, and both end the same way. Either this
+    // platform's WebGPU is fatal rather than merely slow (Apple's mobile WebKit —
+    // see `device.ts`), or the GPU attempt did not *throw* last time — it hung or
+    // took the page down — which is exactly why the verdict has to be remembered:
+    // nothing was catchable at the time.
+    return plan(cpu(`${blocked}，改用 CPU`))
   }
-  if (hasWebGpu) {
-    return { device: 'webgpu', dtype: precision === 'eco' ? 'q4' : 'fp32', reason: '使用显卡加速' }
-  }
-  return { device: 'wasm', dtype: precision === 'eco' ? 'q4' : 'q8', reason: '本机没有 WebGPU，改用 CPU' }
+  return plan(gpu('使用显卡加速'))
+}
+
+/**
+ * How long a WebGPU attempt gets before the WASM fallback takes over.
+ *
+ * The failure this exists for is a hang, not a throw: on a browser whose WebGPU
+ * support is brand new, `requestDevice()`/session creation can simply never
+ * settle, and a `try/catch` around it waits forever. Without this, that hang ate
+ * the whole 240 s load budget and then reported a *network* problem — the fallback
+ * that would have worked never got a turn.
+ *
+ * Generous on purpose: this must never fire during a legitimate first download of
+ * the 62 MB module (the retry would then re-download), only on a genuinely stuck
+ * device.
+ */
+const WEBGPU_ATTEMPT_TIMEOUT_MS = 90_000
+
+/**
+ * Races one attempt against a deadline.
+ *
+ * If the abandoned attempt ever does land, its session is disposed: an ONNX
+ * session nobody is holding would otherwise keep a second copy of the model in
+ * memory for the rest of the session.
+ */
+function withAttemptTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(message))
+      void work
+        .then((value) => (value as { dispose?: () => unknown } | null)?.dispose?.())
+        .catch(() => undefined)
+    }, ms)
+    work.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err: unknown) => {
+        clearTimeout(timer)
+        reject(err instanceof Error ? err : new Error(String(err)))
+      },
+    )
+  })
 }
 
 export class MoonshineEngine {
@@ -116,8 +204,12 @@ export class MoonshineEngine {
 
   constructor(
     readonly lang: Lang,
-    private readonly preference: 'auto' | 'webgpu' | 'wasm',
-    private readonly precision: 'high' | 'eco',
+    /**
+     * The device decision made *before this worker was asked to load*; see
+     * `DevicePlan`. Passed in rather than recomputed here because only the main
+     * thread can read the verdict and write the note a killed page leaves behind.
+     */
+    private readonly plan: DevicePlan,
   ) {}
 
   get device(): DeviceChoice | null {
@@ -145,16 +237,13 @@ export class MoonshineEngine {
       env.backends.onnx.wasm.numThreads = crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1
     }
 
-    const choice = chooseDevice(this.preference, this.precision)
-    const attempts: DeviceChoice[] = choice.device === 'webgpu'
-      ? [choice, { device: 'wasm', dtype: this.precision === 'eco' ? 'q4' : 'q8', reason: '显卡不可用，回退到 CPU' }]
-      : [choice]
+    const attempts = this.plan.fallback ? [this.plan.primary, this.plan.fallback] : [this.plan.primary]
 
     let lastError: unknown
     const since = { value: 0 }
     for (const attempt of attempts) {
       try {
-        this.pipe = (await pipeline('automatic-speech-recognition', spec.hfModelId, {
+        const work = pipeline('automatic-speech-recognition', spec.hfModelId, {
           device: attempt.device,
           dtype: attempt.dtype,
           progress_callback: (p: LoadProgress) => {
@@ -163,13 +252,30 @@ export class MoonshineEngine {
             // both attempts instead of snapping back to zero.
             onProgress?.(toFraction(p, since))
           },
-        })) as AsrPipeline
+        }) as Promise<AsrPipeline>
+        const settled = attempt.device === 'webgpu'
+          ? await withAttemptTimeout(
+              work,
+              WEBGPU_ATTEMPT_TIMEOUT_MS,
+              `显卡加速没能在 ${Math.round(WEBGPU_ATTEMPT_TIMEOUT_MS / 1000)} 秒内启动，改用 CPU`,
+            )
+          : await work
+        this.pipe = settled
         this.actual = attempt
+        if (attempt.device === 'webgpu') rememberGpuSuccess()
         return attempt
       } catch (err) {
         lastError = err
         // A WebGPU failure is expected on some drivers and on Safari builds
         // where the operator set is incomplete; the WASM retry is not optional.
+        if (attempt.device === 'webgpu') {
+          const message = err instanceof Error ? err.message : String(err)
+          // Only a device failure is worth remembering — a download that died
+          // halfway says nothing about the GPU, and `since` tells the two apart.
+          if (since.value > 0.99 && looksLikeDeviceFailure(message)) {
+            rememberGpuFailure(message.slice(0, 140))
+          }
+        }
       }
     }
     throw lastError instanceof Error ? lastError : new Error('Moonshine 模型加载失败')

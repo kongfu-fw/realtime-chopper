@@ -2,6 +2,7 @@ import type { AsrLoadProgress, Lang, LogLevel, SpeechSegment } from '../types'
 import type { RecordingInfo } from '../audio/recorder'
 import type { MtConfig, MtItem, MtItemResult } from '../mt/client'
 import type { SegmenterOptions } from '../asr/segmenter'
+import type { DevicePlan } from '../asr/moonshine'
 import { describeModuleError, moduleFor, moduleLangFor, type ModuleLang } from '../asr/models'
 import { debug, error as logError, info, warn } from '../log/store'
 
@@ -269,6 +270,20 @@ export class AsrWorkerClient {
             total: msg.total as number | undefined,
           })
           break
+        // Breadcrumbs from inside the classic worker (runtime init, recogniser
+        // construction, freeing the model file, what `locateFile` was asked for).
+        // They used to be posted and then dropped on the floor here, which is why
+        // a failure that only ever happens on a phone — where there is no console
+        // to read — arrived with nothing around it to explain it.
+        case 'log':
+          forwardAsrLog(String(msg.level ?? 'info') as LogLevel, String(msg.message ?? ''))
+          break
+        // The older spelling of the same thing: a worker script can stay in the
+        // HTTP cache across a reload, and a breadcrumb that only exists in one of
+        // the two versions is worse than no breadcrumb at all.
+        case 'debug':
+          debug('asr', String(msg.message ?? ''))
+          break
         case 'result':
           this.onResult?.({
             id: msg.id as number,
@@ -303,7 +318,7 @@ export class AsrWorkerClient {
    * bytes have been downloaded, not after the request was sent. Rejects when the
    * worker reports a load failure, and only then can an install be recorded.
    */
-  load(lang: Lang, preference: 'auto' | 'webgpu' | 'wasm', precision: 'high' | 'eco'): Promise<void> {
+  load(lang: Lang, plan: DevicePlan | null): Promise<void> {
     // A second request supersedes the first; the old one must not hang forever.
     this.pendingLoad?.settle(new Error('已被新的加载请求取代'))
     const done = new Promise<void>((resolve, reject) => {
@@ -312,7 +327,9 @@ export class AsrWorkerClient {
         settle: (err) => (err ? reject(err) : resolve()),
       }
     })
-    this.worker.postMessage({ type: 'load', lang, preference, precision })
+    // The plan travels with the request: the verdict behind it lives in
+    // `localStorage`, which a worker does not have. See `DevicePlan`.
+    this.worker.postMessage({ type: 'load', lang, plan })
     return done
   }
 
@@ -415,6 +432,13 @@ export class MtWorkerClient {
   dispose(): void {
     this.worker.terminate()
   }
+}
+
+function forwardAsrLog(level: LogLevel, message: string): void {
+  if (level === 'error') logError('asr', message)
+  else if (level === 'warn') warn('asr', message)
+  else if (level === 'debug') debug('asr', message)
+  else info('asr', message)
 }
 
 function forwardWorkerLog(level: LogLevel, message: string, detail?: unknown): void {

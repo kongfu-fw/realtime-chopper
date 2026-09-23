@@ -119,23 +119,54 @@ export function moduleFor(lang: Lang): AsrModuleSpec {
  */
 export function describeModuleError(message: string): string {
   const text = message.toLowerCase()
+  if (isMemoryFailure(message)) return '这个设备内存不够装这个模块：关掉其他应用，或先装英文模块'
   if (/fetch|network|load failed|offline|connection/.test(text)) return '下载中断了，检查网络后重试'
   if (/401|403|unauthor|forbidden|denied/.test(text)) return '下载被拒绝，换个网络重试'
   if (/404|not found/.test(text)) return '找不到模块文件，可能需要更新版本'
   if (/timeout|timed out/.test(text)) return '下载太久没动静，重试一次'
   if (/quota|space|storage/.test(text)) return '手机存储空间不够，清理后重试'
-  if (/memory|out of/.test(text)) return '内存不够，关掉其他应用后重试'
+  if (/caches|indexeddb|cache storage/.test(text)) return '浏览器不让存文件，用 https 打开再试'
+  // WebAssembly failures read like nothing else in this file, and they are the
+  // ones a phone actually hits: Emscripten reports an out-of-memory as a bare
+  // `abort()`, which is the same text as a dozen other faults.
+  if (/instantiate|webassembly|wasm|linkerror|compileerror/.test(text))
+    return '识别引擎没能在浏览器里启动，换个浏览器再试'
+  if (/not allowed|securityerror|permission|blocked/.test(text)) return '浏览器拦住了加载，用 https 或换个浏览器打开'
   return '模块没能装好，再试一次'
 }
 
 /**
- * Cache Storage key for a module's assets, so installs survive a reload.
+ * Whether the failure is the device running out of memory.
  *
- * Keyed by the *module*, not the language: two languages sharing one module must
- * not end up downloading the same 240 MB twice.
+ * Worth its own function because it is the one failure with a fix the user can
+ * apply (`关掉别的应用`) and the one an iPhone hits first on the 228 MB model.
+ * Emscripten's `abort()` and WebKit's jetsam both surface as strings that never
+ * contain the word "memory", so they are matched explicitly.
  */
-export function moduleCacheKey(lang: Lang): string {
-  return `rc-model-${moduleLangFor(lang)}-${moduleFor(lang).engine}`
+export function isMemoryFailure(message: string): boolean {
+  return /out of memory|cannot enlarge|allocation failed|memory access out of bounds|unreachable|aborted|abort\(|rangeerror|allocation size|oom/i.test(
+    message,
+  )
+}
+
+/**
+ * The Cache Storage buckets a module's assets actually live in.
+ *
+ * Written out rather than derived, because the two engines do not share a
+ * convention: sherpa-onnx names its own bucket (the same literal appears in
+ * `static/zh-asr.worker.js`, which cannot import from here), while Moonshine goes
+ * through transformers.js, whose browser cache is the fixed bucket
+ * `transformers-cache`. A formula that "looks right" — `rc-model-en-moonshine` —
+ * describes a bucket that has never existed, which is how clearing the English
+ * module silently deleted nothing while the self-check reported it as not
+ * installed.
+ *
+ * Keyed by *module*, not language: two languages sharing one module must not end
+ * up downloading the same 240 MB twice.
+ */
+export const MODULE_CACHE_KEYS: Record<ModuleLang, readonly string[]> = {
+  en: ['transformers-cache'],
+  zh: ['rc-model-zh-sherpa-zh'],
 }
 
 /**

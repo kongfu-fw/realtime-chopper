@@ -9,6 +9,7 @@ import type {
 } from '../types'
 import type { Settings } from '../store/settings'
 import { getSettings } from '../store/settings'
+import { asrCrashCount, clearAsrAttempt, forgetAsrCrashes, markAsrAttempt } from '../boot-guard'
 import { startCapture, type CaptureHandle } from '../audio/capture'
 import {
   deleteRecordingFile,
@@ -20,7 +21,8 @@ import { OrderedQueue, pump } from './queues'
 import { RateController } from './rate'
 import { estimateLagSeconds, estimateSpeechSeconds } from './latency'
 import { AsrWorkerClient, MtWorkerClient, VadWorkerClient } from '../workers'
-import { moduleLangFor, type ModuleLang } from '../asr/models'
+import { describeModuleError, MODULE_NAME, moduleFor, moduleLangFor, type ModuleLang } from '../asr/models'
+import { planDevice } from '../asr/moonshine'
 import { SpeechEngine, speechSupported } from '../tts/speech'
 import { resolveWorkingProvider } from '../mt/probe'
 import type { MtConfig, MtItemResult } from '../mt/client'
@@ -85,6 +87,21 @@ export interface ModelState {
   totalBytes?: number
 }
 
+/**
+ * The last recognition-module failure, kept in full.
+ *
+ * `message` is the sentence a user should read; `raw` is what the runtime actually
+ * said. Keeping both matters because the humanised sentence is deliberately vague
+ * ("模块没能装好") and the raw one is the only thing that identifies the bug — and
+ * on a phone there is no console to read it from.
+ */
+export interface LoadFailure {
+  where: string
+  message: string
+  raw: string
+  at: number
+}
+
 export class Session {
   readonly lines: Writable<Line[]> = writable([])
   readonly state: Writable<SessionState> = writable('idle')
@@ -100,6 +117,8 @@ export class Session {
   readonly level: Writable<number> = writable(0)
   readonly providerLabel: Writable<string> = writable('')
   readonly model: Writable<ModelState | null> = writable(null)
+  /** Last module failure, so the UI can explain it without a log drawer. */
+  readonly failure: Writable<LoadFailure | null> = writable(null)
   /**
    * What `start()` is busy with, in words a user can read.
    *
@@ -178,6 +197,35 @@ export class Session {
    */
   async prepare(lang: Settings['sourceLang']): Promise<void> {
     const client = this.ensureAsrClient(lang)
+    const module = moduleLangFor(lang)
+    // Which accelerator this attempt will actually use, decided *before* the
+    // engine starts — the crash note records it, and the log states it, because a
+    // page that dies cannot tell anyone what it was doing. A report that says only
+    // "开始安装识别模块" is what made an iPhone's crash unreadable for two rounds:
+    // it named the module but not the thing that killed it.
+    const settings = getSettings()
+    // Moonshine is the only engine with a choice to make: sherpa-onnx's WASM
+    // build is CPU-only, so Chinese/Korean has nothing to decide. The plan is
+    // handed to the worker with the request; see `DevicePlan`.
+    const plan =
+      moduleFor(lang).engine === 'moonshine' ? planDevice(settings.accelerator, settings.precision) : null
+    const accelerator = plan?.primary.device ?? 'wasm'
+    info(
+      'asr',
+      `准备启动${MODULE_NAME[module]}：${plan ? `${plan.primary.device}（${plan.primary.dtype}）—— ${plan.primary.reason}` : 'sherpa WebAssembly（CPU）'}`,
+    )
+    // A device that this module has already killed twice *the same way* does not
+    // need a third demonstration. A killed page cannot report anything, so all a
+    // retry can produce is another silent crash — refuse in words, and say why.
+    // Keyed by accelerator: two GPU crashes say the GPU is unusable, not that the
+    // module is.
+    if (asrCrashCount(module, accelerator) >= 2) {
+      throw new Error(
+        accelerator === 'webgpu'
+          ? `这台设备已经在显卡加速（WebGPU）下被关掉页面两次了：请在设置里把「显卡加速」改成 CPU 再试`
+          : `${MODULE_NAME[module]}在这台设备上装不下：已经两次在启动时把整个页面关掉了（内存不够），先别试了`,
+      )
+    }
     // A new install starts the bar over; without this the dialog would open
     // showing the last install's 100%.
     const lastFraction = { value: 0 }
@@ -201,23 +249,40 @@ export class Session {
     client.onLoaded = (loaded) => {
       this.model.set(null)
       this.modelModuleLang = moduleLangFor(lang)
+      this.failure.set(null)
       info('asr', `识别模块已就绪（${loaded.device ?? 'unknown'}）`, { reason: loaded.reason })
     }
     client.onResult = (result) => this.onAsrResult(result)
     client.onFailed = (where, message, id) => {
       logError('asr', where === 'load' ? `识别模块加载失败：${message}` : `识别失败：${message}`)
+      if (where === 'load') {
+        this.failure.set({ where, message: describeModuleError(message), raw: message, at: Date.now() })
+      }
       if (id !== undefined) {
         const wait = this.asrWaiters.get(id)
         this.asrWaiters.delete(id)
         wait?.({ text: '', rawText: '', engine: '', inferMs: 0 })
       }
     }
-    const settings = getSettings()
-    await withTimeout(
-      client.load(lang, settings.accelerator, settings.precision),
-      MODEL_LOAD_TIMEOUT_MS,
-      '下载太久没动静，检查网络后重试',
-    )
+    // From here to the end of the load the page may be killed by the system
+    // without a word. The note is what tells the *next* load that it happened, and
+    // under which accelerator; a load that ends in any way we can report clears it.
+    // See `lib/boot-guard.ts`.
+    markAsrAttempt(module, accelerator)
+    try {
+      await withTimeout(
+        client.load(lang, plan),
+        MODEL_LOAD_TIMEOUT_MS,
+        '下载太久没动静，检查网络后重试',
+      )
+      clearAsrAttempt()
+      // It loaded, so whatever killed the page before was not this device being
+      // unable to run the module; a stale count would lock out a working device.
+      forgetAsrCrashes(module, accelerator)
+    } catch (err) {
+      clearAsrAttempt()
+      throw err
+    }
   }
 
   async start(): Promise<void> {
@@ -226,6 +291,7 @@ export class Session {
     this.stopping = false
     // A failure from the previous attempt must not linger above the button.
     this.notice.set('')
+    this.failure.set(null)
     const abort = new AbortController()
     this.startAbort = abort
     try {
@@ -235,7 +301,11 @@ export class Session {
         this.model.set({ status: '准备识别模块' })
         await this.prepare(settings.sourceLang)
         if (this.modelModuleLang !== moduleLangFor(settings.sourceLang)) {
-          throw new Error('识别模块没有加载成功，请查看右下角日志')
+          // Never "go and read the log drawer": that drawer only exists in debug
+          // mode, so on a phone the old sentence was a dead end. The reason
+          // itself travels to the status bar instead.
+          const reason = get(this.failure)?.message
+          throw new Error(reason ? `识别模块没能装好：${reason}` : '识别模块没能装好，再试一次')
         }
       }
       this.stage.set('正在连接翻译服务')

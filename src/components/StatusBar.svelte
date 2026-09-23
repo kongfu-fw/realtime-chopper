@@ -59,9 +59,12 @@
     })
   }
 
-  function onInstallCancel() {
+  function onInstallCancel(reason = '未知') {
     installLang.set(null)
-    info('storage', '已取消安装识别模块')
+    // The reason matters: on a phone a tap on the backdrop closes this dialog
+    // just as easily as the close button, and "cancelled" with no reason reads
+    // like the install failed on its own.
+    info('storage', `已取消安装识别模块（${reason}）`)
   }
 </script>
 

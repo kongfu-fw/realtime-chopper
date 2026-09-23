@@ -16,6 +16,16 @@ export const session = new Session()
 export type View = 'translate' | 'settings'
 export const view = writable<View>('translate')
 export const logOpen = writable(false)
+/**
+ * A problem the user has to be told about, with the logs one click away.
+ *
+ * This exists because "something went wrong and I cannot see what" is worse than
+ * the failure itself. The log drawer lives behind the debug switch — reasonable
+ * when everything works, useless in the one case where the log is the whole point
+ * — so anything that fails on its own raises this instead, and the strip it
+ * renders carries a button that opens the drawer without touching the setting.
+ */
+export const problem = writable<{ title: string; body: string } | null>(null)
 export const installLang = writable<Lang | null>(null)
 export const selfCheckReport = writable<SelfCheckReport | null>(null)
 export const selfCheckRunning = writable(false)

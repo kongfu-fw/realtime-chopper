@@ -35,10 +35,24 @@
  * The model pack is ours rather than the demo's: that build embeds a resource
  * manifest in its JS (a fixed offset table for /silero_vad.onnx, /tokens.txt and
  * a 367 MB /zipformer-ctc.onnx) and the packager then fetches one big `.data`
- * file. We fetch the two files we actually want, rewrite that manifest to match
- * them, and hand the runtime a `.data` blob composed from them — the runtime's
- * own loading path, with our contents. 240 MB instead of 362 MB, and no
- * Mandarin-only CTC model.
+ * file. We fetch the two files we actually want and empty that manifest, so the
+ * 362 MB / Mandarin-only CTC pack never enters the picture.
+ *
+ * How those two files reach the runtime — this is the part that decides whether
+ * a phone can run the module at all, so it is worth being explicit. The demo's
+ * own route is to concatenate them into a `.data` blob and let the packager XHR
+ * it: that materialises the 228 MB model as an ArrayBuffer in the JavaScript
+ * heap, which the generated loader then pins on `DataRequest.prototype.byteArray`
+ * *for the lifetime of the worker*, on top of the browser-side blob it was read
+ * from. Two and a half copies of the largest file in the app, one of them
+ * permanent, is what an iPhone runs out of.
+ *
+ * So we skip the packager for these files: after the runtime is up we write them
+ * into its Emscripten file system ourselves with `FS_createDataFile(…, canOwn)`,
+ * which stores our buffer instead of copying it, and once the recognizer has read
+ * the weights into its ONNX session we unlink the file *and* drop our own array —
+ * leaving one copy of the model in this worker instead of two, and none of it
+ * resident after startup. Same files, same runtime, ~228 MB less.
  *
  * The message protocol is byte-for-byte the one in src/workers/asr.worker.ts, so
  * the main thread cannot tell which of the two workers answered:
@@ -93,8 +107,11 @@ const ORDER = ['tokens', 'model', 'wasm']
 let recognizer = null
 let booting = null
 let blobUrls = []
-/** The large assets, tracked separately so they can be dropped after boot. */
-let largeBlobs = []
+/**
+ * The model bytes we handed to the runtime's file system, kept here so they can
+ * be dropped once the recognizer owns them. `null` means we hold no reference.
+ */
+let mountedModel = null
 let chain = Promise.resolve()
 /** Highest fraction reported so far; the bar must never move backwards. */
 let lastFraction = 0
@@ -140,45 +157,40 @@ async function boot() {
   booting = (async () => {
     lastFraction = 0
     const downloaded = await downloadAssets()
-    const tokensBlob = downloaded.tokens
-    const modelBlob = downloaded.model
-    const wasmBlob = downloaded.wasm
+    const tokensBytes = downloaded.tokens
+    const modelBytes = downloaded.model
 
     const glueText = await fetchText(ASSETS.glue.url)
     const mainText = await fetchText(ASSETS.main.url)
-    const runtimeBytes = wasmBlob.size + ASSETS.glue.bytes + ASSETS.main.bytes
-    debug(`运行环境与本机模型就绪（${Math.round((modelBlob.size + runtimeBytes) / 1048576)}MB）`)
+    const runtimeBytes = downloaded.wasm.byteLength + ASSETS.glue.bytes + ASSETS.main.bytes
+    note(`运行环境与模型文件已就绪（${Math.round((modelBytes.byteLength + runtimeBytes) / 1048576)}MB）`)
 
-    // Tell the runtime's packager to preload *our* two files instead of the
-    // demo's 367 MB zipformer pack. The manifest is the only part of the build we
-    // rewrite, and if its shape ever changes we say so instead of hanging.
-    const manifest = `{"files":[{"filename":"/tokens.txt","start":0,"end":${tokensBlob.size}},` +
-      `{"filename":"/model.int8.onnx","start":${tokensBlob.size},"end":${tokensBlob.size + modelBlob.size}}],` +
-      `"remote_package_size":${tokensBlob.size + modelBlob.size}}`
+    // Empty preload list: everything the runtime needs is written into its file
+    // system by hand below. If this pattern ever stops matching, say so instead
+    // of silently falling back to the demo's 367 MB pack.
     const patched = mainText.replace(
       /loadPackage\(\{"files":\[[^\]]*\],"remote_package_size":\d+\}\)/,
-      `loadPackage(${manifest})`,
+      'loadPackage({"files":[],"remote_package_size":0})',
     )
     if (patched === mainText) {
       throw new Error('运行时的资源清单格式变了，需要重新核对 static/zh-asr.worker.js')
     }
 
-    // Blob parts share storage rather than copying, so composing the pack costs
-    // no extra 228 MB. Cache Storage still holds the two files separately.
-    const dataUrl = blobUrl(new Blob([tokensBlob, modelBlob]))
-    const wasmUrl = blobUrl(wasmBlob)
-    largeBlobs = [dataUrl, wasmUrl]
-
     post({ type: 'load-progress', status: '初始化识别模块' })
 
     const ready = new Promise((resolve) => {
       self.Module = {
-        // The packager asks for '…wasm' / '…data' by name; hand back the blobs we
-        // already downloaded instead of making it fetch them again.
+        // The generated loader asks for `sherpa-onnx-wasm-main-vad-asr.data` and
+        // would XHR the whole thing into a single ArrayBuffer it never releases.
+        // Handing it an empty one skips that path entirely — see the file header.
+        getPreloadedPackage: () => new ArrayBuffer(0),
+        // The same argument for the 11 MB runtime: bytes instead of a fetch.
+        wasmBinary: downloaded.wasm,
+        // Nothing should need this any more (no `.wasm`, no `.data`), but a
+        // future asset must not silently resolve to a wrong relative path.
         locateFile: (path) => {
-          const mapped = path.endsWith('.wasm') ? wasmUrl : path.endsWith('.data') ? dataUrl : SPACE + path
           debug(`locateFile(${path})`)
-          return mapped
+          return SPACE + path
         },
         setStatus: (status) => {
           if (status) post({ type: 'load-progress', status: String(status).slice(0, 80) })
@@ -197,13 +209,22 @@ async function boot() {
     // which is exactly how this failed the first time.
     const glueWithExport = `${glueText}\n;self.OfflineRecognizer = OfflineRecognizer;\n`
     const startedAt = performance.now()
-    self.importScripts(scriptUrl(glueWithExport), scriptUrl(patched))
+    try {
+      self.importScripts(scriptUrl(glueWithExport), scriptUrl(patched))
+    } catch (first) {
+      // A WebKit build that refuses `blob:` URLs inside `importScripts` would fail
+      // right here — after the 228 MB download, which is the worst possible moment.
+      // `data:` is the fallback spelling of the same trick, and the breadcrumb says
+      // which one was used, so a report from a phone can tell us if it ever fires.
+      caution(`blob 脚本没能加载（${describe(first)}），改试 data: URL`)
+      try {
+        self.importScripts(dataScriptUrl(glueWithExport), dataScriptUrl(patched))
+      } catch (second) {
+        throw new Error(`运行环境的脚本没能加载：${describe(second)}`)
+      }
+    }
     await ready
-    debug(`运行时初始化完成（${Math.round(performance.now() - startedAt)}ms）`)
-
-    // The runtime has unpacked both files by now; dropping the browser-side copies
-    // keeps a phone from holding the same 240 MB twice.
-    releaseLargeBlobs()
+    note(`运行时初始化完成（${Math.round(performance.now() - startedAt)}ms）`)
 
     const Module = self.Module
     if (typeof self.OfflineRecognizer !== 'function') {
@@ -212,6 +233,16 @@ async function boot() {
     if (!Module || typeof Module._SherpaOnnxFileExists !== 'function') {
       throw new Error('运行环境没有加载完整，无法读取模型文件')
     }
+    if (typeof Module.FS_createDataFile !== 'function') {
+      throw new Error('运行环境没有提供文件系统，无法写入模型文件')
+    }
+
+    // `canOwn` is the whole point: the file system keeps *this* buffer instead of
+    // copying it, so the 228 MB model exists once in this worker rather than
+    // twice. The tokens stay mounted for the lifetime of the recognizer.
+    Module.FS_createDataFile('/', 'tokens.txt', tokensBytes, true, true, true)
+    Module.FS_createDataFile('/', 'model.int8.onnx', modelBytes, true, true, true)
+    mountedModel = modelBytes
     if (!fileExists(Module, MODEL.slice(2))) {
       throw new Error('模型没有写进运行时的文件系统')
     }
@@ -236,7 +267,11 @@ async function boot() {
       recognizer = null
       throw new Error('识别器创建失败')
     }
-    debug(`识别器就绪（${Math.round(performance.now() - startedAt)}ms）`)
+    note(`识别器就绪（${Math.round(performance.now() - startedAt)}ms）`)
+    // The model has been read into the recognizer's own session by now; both the
+    // copy in the virtual file system and the array we kept to write it are dead
+    // weight, and on a phone they are the difference between fitting and not.
+    releaseModelFile(Module, recognizer)
     void pruneCache()
   })()
   try {
@@ -245,6 +280,7 @@ async function boot() {
     // A failed boot must not poison every later attempt.
     booting = null
     recognizer = null
+    mountedModel = null
     revokeBlobUrls()
     throw err
   }
@@ -303,9 +339,24 @@ function post(message) {
   self.postMessage(message)
 }
 
-/** Diagnostic breadcrumbs; the client ignores this type by design. */
+/**
+ * Breadcrumbs, with the level they belong at.
+ *
+ * They used to be dropped on the floor by the main thread, which made a failure
+ * that only ever happens on a phone — where there is no console to read —
+ * unexplainable. The milestones below are one-liners per boot, so they belong at
+ * `info` (the default level); only the per-file chatter stays at `debug`.
+ */
 function debug(message) {
-  post({ type: 'debug', message })
+  post({ type: 'log', level: 'debug', message })
+}
+
+function note(message) {
+  post({ type: 'log', level: 'info', message })
+}
+
+function caution(message) {
+  post({ type: 'log', level: 'warn', message })
 }
 
 function describe(err) {
@@ -317,19 +368,6 @@ function blobUrl(blob) {
   const url = URL.createObjectURL(blob)
   blobUrls.push(url)
   return url
-}
-
-function releaseLargeBlobs() {
-  for (const url of largeBlobs) {
-    try {
-      URL.revokeObjectURL(url)
-    } catch {
-      /* ignore */
-    }
-    const index = blobUrls.indexOf(url)
-    if (index >= 0) blobUrls.splice(index, 1)
-  }
-  largeBlobs = []
 }
 
 function revokeBlobUrls() {
@@ -349,6 +387,74 @@ function revokeBlobUrls() {
  */
 function scriptUrl(text) {
   return blobUrl(new Blob([text], { type: 'text/javascript' }))
+}
+
+/**
+ * The same script as a `data:` URL.
+ *
+ * Only reachable when blob URLs are refused; `encodeURIComponent` (rather than
+ * base64) keeps the text readable in a stack trace and needs no TextEncoder round
+ * trip.
+ */
+function dataScriptUrl(text) {
+  return `data:text/javascript;charset=utf-8,${encodeURIComponent(text)}`
+}
+
+/**
+ * Gives the 228 MB model file back to the runtime's file system.
+ *
+ * sherpa-onnx reads the ONNX weights into its own session while the recognizer is
+ * constructed, so from that moment both the copy in Emscripten's file system and
+ * the array we handed to it are dead weight — and on a phone that dead weight is
+ * most of what decides whether the page fits in memory at all (WebKit hands a
+ * page roughly 1–1.5 GB, and this module peaks far above that once the model, the
+ * session and the runtime are all resident).
+ *
+ * It is dropped only after one throwaway decode has proven the recognizer works
+ * without it: the opposite failure — a silent read of a file that is no longer
+ * there, 228 MB into a session — would be far worse than the memory it saves.
+ */
+function releaseModelFile(Module, recognizer) {
+  let stream = null
+  try {
+    stream = recognizer.createStream()
+    stream.acceptWaveform(SAMPLE_RATE, new Float32Array(1600)) // 100 ms of silence
+    recognizer.decode(stream)
+    recognizer.getResult(stream)
+  } catch (err) {
+    caution(`模型自检解码失败，保留文件副本（${describe(err)}）`)
+    return
+  } finally {
+    try {
+      stream && stream.free && stream.free()
+    } catch {
+      /* the runtime owns this memory */
+    }
+  }
+
+  const unlink =
+    typeof Module.FS_unlink === 'function'
+      ? (path) => Module.FS_unlink(path)
+      : Module.FS && typeof Module.FS.unlink === 'function'
+        ? (path) => Module.FS.unlink(path)
+        : null
+  if (!unlink) {
+    caution('运行环境没有提供 unlink，模型文件留在内存里')
+    return
+  }
+  for (const path of [MODEL, '/model.int8.onnx', 'model.int8.onnx']) {
+    try {
+      unlink(path)
+      // Both halves of the release matter: the file system held our buffer, and
+      // this worker held the only other reference to it.
+      mountedModel = null
+      note(`已释放模型字节（约 ${Math.round(ASSETS.model.bytes / 1048576)}MB）`)
+      return
+    } catch {
+      /* the runtime may resolve its working directory differently */
+    }
+  }
+  caution('模型文件没有释放成功，识别本身不受影响')
 }
 
 function fileExists(Module, name) {
@@ -372,21 +478,21 @@ function fileExists(Module, name) {
  */
 async function downloadAssets() {
   const total = ORDER.reduce((sum, key) => sum + ASSETS[key].bytes, 0)
-  const blobs = {}
+  const assets = {}
   let done = 0
   for (let i = 0; i < ORDER.length; i++) {
     const key = ORDER[i]
     const remaining = ORDER.slice(i + 1).reduce((sum, k) => sum + ASSETS[k].bytes, 0)
-    blobs[key] = await fetchIntoCache(ASSETS[key].url, LABELS[key], ASSETS[key].bytes, {
+    assets[key] = await fetchIntoCache(ASSETS[key].url, LABELS[key], ASSETS[key].bytes, {
       // Everything already fetched, so the fraction describes the module and not
       // the file: what is downloaded + what this file has + what is still ahead.
       offset: done,
       ceiling: done + ASSETS[key].bytes + remaining,
       total,
     })
-    done += blobs[key].size
+    done += assets[key].byteLength
   }
-  return blobs
+  return assets
 }
 
 async function fetchText(url) {
@@ -405,25 +511,33 @@ async function fetchText(url) {
 }
 
 /**
- * Streams a large asset into Cache Storage while reporting progress, without
- * holding a second copy of a 228 MB body in memory.
+ * Streams a large asset into Cache Storage while reporting progress, and returns
+ * it as one exact-size array.
+ *
+ * Deliberately no Blob anywhere on this path. The previous version parked the
+ * 228 MB model in blob storage and read it back through XHR, which left the
+ * browser holding the bytes offline *and* the fetched ArrayBuffer live — and the
+ * generated packager never lets go of that ArrayBuffer. One array we own, and can
+ * release ourselves, is the cheapest the model can be before the ONNX session
+ * copies it into the WebAssembly heap.
  */
 async function fetchIntoCache(url, label, fallbackBytes, scale) {
   const cache = await openCache()
   if (cache) {
     const hit = await cache.match(url).catch(() => undefined)
     if (hit) {
-      const blob = await hit.blob()
-      report(label + '（已缓存）', scale.offset + blob.size, scale)
-      return blob
+      const bytes = new Uint8Array(await hit.arrayBuffer())
+      report(label + '（已缓存）', scale.offset + bytes.byteLength, scale)
+      return bytes
     }
   }
 
   const response = await fetch(url)
   if (!response.ok) throw new Error(`${label}失败：HTTP ${response.status}`)
   // The CDN does not always send content-length through its redirect, so the
-  // measured size is the better denominator when it is missing.
-  const fileBytes = Number(response.headers.get('content-length') || 0) || fallbackBytes
+  // measured size is the better denominator when it is missing. It is also what
+  // lets us allocate the destination array once instead of growing it.
+  const expected = Number(response.headers.get('content-length') || 0) || fallbackBytes
 
   // Tee keeps one copy flowing to the cache and the other to the progress bar.
   let body = response
@@ -435,30 +549,56 @@ async function fetchIntoCache(url, label, fallbackBytes, scale) {
   }
 
   const storePromise = cache ? cache.put(url, body).catch(() => undefined) : Promise.resolve()
-  const blob = progressBody
-    ? await readWithProgress(progressBody, scale, label)
-    : await response.blob().then((b) => {
-        report(label, scale.offset + b.size, scale)
-        return b
-      })
+  const bytes = progressBody
+    ? await readIntoProgress(progressBody, scale, label, expected)
+    : new Uint8Array(await response.arrayBuffer())
+  if (!progressBody) report(label, scale.offset + bytes.byteLength, scale)
   await storePromise
-  return blob
+  return bytes
 }
 
-async function readWithProgress(stream, scale, label) {
+/**
+ * Fills one pre-allocated array from a response body, reporting as it goes.
+ *
+ * Holding the body as a list of chunks and joining them at the end would cost a
+ * second copy of the whole file at exactly the wrong moment; allocating up front
+ * costs one array and one 8 MB chunk at a time. If the response turns out to be
+ * bigger than advertised the tail is buffered separately and joined once — rare,
+ * and announced in the log rather than silently doubling the peak.
+ */
+async function readIntoProgress(stream, scale, label, expected) {
   const reader = stream.getReader()
-  const chunks = []
-  let loaded = 0
+  const target = new Uint8Array(Math.max(1, expected))
+  let filled = 0
+  let received = 0
+  let overflow = null
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
-    if (value) {
-      chunks.push(value)
-      loaded += value.byteLength
-      report(label, scale.offset + loaded, scale)
+    if (!value || !value.byteLength) continue
+    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value)
+    if (!overflow && filled + chunk.byteLength <= target.byteLength) {
+      target.set(chunk, filled)
+      filled += chunk.byteLength
+    } else {
+      if (!overflow) {
+        overflow = []
+        caution(`${label}比声明的大小更大，末尾另存后再拼一次`)
+      }
+      overflow.push(chunk)
     }
+    received += chunk.byteLength
+    report(label, scale.offset + received, scale)
   }
-  return new Blob(chunks)
+  if (!overflow) return filled === target.byteLength ? target : target.subarray(0, filled)
+  const joined = new Uint8Array(received)
+  joined.set(target.subarray(0, filled), 0)
+  let at = filled
+  for (const chunk of overflow) {
+    joined.set(chunk, at)
+    at += chunk.byteLength
+  }
+  return joined
 }
 
 /**

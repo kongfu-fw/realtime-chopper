@@ -2,8 +2,9 @@ import type { Lang } from './types'
 import { getProvider, PROVIDER_LABEL, type MtProviderId } from './mt/providers'
 import { probeProvider } from './mt/probe'
 import { SpeechEngine, speechSupported } from './tts/speech'
-import { ASR_MODULES, MODULE_LANGS, type ModuleLang } from './asr/models'
-import { chooseDevice } from './asr/moonshine'
+import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_LANGS, type ModuleLang } from './asr/models'
+import { planDevice } from './asr/moonshine'
+import { isAppleMobile } from './asr/device'
 import type { LlmConfig } from './mt/types'
 
 /**
@@ -58,15 +59,23 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
       `安全上下文：${window.isSecureContext ? '是' : '否（麦克风会不可用）'}`,
       `线程隔离（SharedArrayBuffer）：${crossOriginIsolated ? '是' : '否（WASM 单线程）'}`,
       `CPU 核心：${navigator.hardwareConcurrency || '未知'}`,
+      `设备：${isAppleMobile() ? `iOS（网页可用内存约 1～1.5 GB）` : '非 iOS'}${
+        (navigator as { deviceMemory?: number }).deviceMemory
+          ? ` · 内存约 ${(navigator as { deviceMemory?: number }).deviceMemory} GB`
+          : ''
+      }`,
       `显示语言：${navigator.language}`,
     ].join(' · '),
   })
 
-  const device = chooseDevice('auto', 'high')
+  // The same plan the pipeline will use, from the same function — a self-check
+  // that answered this question its own way could promise a GPU the engine then
+  // declines to try.
+  const plan = planDevice('auto', 'high')
   results.push({
     label: '识别加速方式',
-    ok: device.device === 'webgpu' ? true : 'warn',
-    detail: `将使用 ${device.device}（${device.dtype}）—— ${device.reason}`,
+    ok: plan.primary.device === 'webgpu' ? true : 'warn',
+    detail: `将使用 ${plan.primary.device}（${plan.primary.dtype}）—— ${plan.primary.reason}`,
   })
 
   // --- storage -------------------------------------------------------------
@@ -211,9 +220,13 @@ async function burstProbe(
 
 async function isModuleCached(moduleLang: ModuleLang): Promise<boolean> {
   if (typeof caches === 'undefined') return false
+  const owned = MODULE_CACHE_KEYS[moduleLang]
   try {
-    const keys = await caches.keys()
-    return keys.some((key) => key.startsWith(`rc-model-${moduleLang}-`))
+    // Residency means the module's own bucket is there: for sherpa that is the
+    // bucket it writes, for Moonshine the transformers.js cache. The old prefix
+    // guess (`rc-model-en-…`) was never a bucket that existed, so the English
+    // module read as "not installed" on every device that had it.
+    return (await caches.keys()).some((key) => owned.includes(key))
   } catch {
     return false
   }

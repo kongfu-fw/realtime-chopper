@@ -17,15 +17,24 @@ export type View = 'translate' | 'settings'
 export const view = writable<View>('translate')
 export const logOpen = writable(false)
 /**
- * A problem the user has to be told about, with the logs one click away.
+ * The headline shown at the top of the log drawer when something needs saying.
  *
- * This exists because "something went wrong and I cannot see what" is worse than
- * the failure itself. The log drawer lives behind the debug switch — reasonable
- * when everything works, useless in the one case where the log is the whole point
- * — so anything that fails on its own raises this instead, and the strip it
- * renders carries a button that opens the drawer without touching the setting.
+ * There used to be a second surface for this: a red box rendered next to the
+ * title bar whenever the engine failed on its own. Two places to look is one too
+ * many — the box and the drawer showed the same failure, and on a phone the box
+ * is what the user saw *instead* of the log, with no way to reach the lines
+ * underneath it. So the sentence moved inside the drawer, which is also the only
+ * place the evidence it refers to actually lives.
+ *
+ * `retry` marks the one failure whose fix is already in place — a GPU that was
+ * banned while loading, where the very next attempt runs on the CPU and works —
+ * so the drawer can offer the retry instead of making the user find the button.
+ *
+ * It stays up until it is dismissed or a recording starts, not until the drawer
+ * is closed: the drawer is transient, the explanation is not, and a user who
+ * closes the log to read the app has not thereby understood what happened.
  */
-export const problem = writable<{ title: string; body: string } | null>(null)
+export const logNotice = writable<{ title: string; body: string; retry?: boolean } | null>(null)
 export const installLang = writable<Lang | null>(null)
 export const selfCheckReport = writable<SelfCheckReport | null>(null)
 export const selfCheckRunning = writable(false)

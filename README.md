@@ -1,190 +1,46 @@
-# 乔巴 · 实时语音翻译（realtime-chopper）
+# Realtime Chopper
 
-对着麦克风说话，屏幕上同时出现两列：左边是你说的原文，右边是译文，并且**边翻边读出来**。
-全部在浏览器里跑 —— 没有后端、没有账号、不用上传录音。
-
-- **识别在本地**：语音识别模型（62MB / 240MB）下载进浏览器缓存，之后识别不再联网；应用外壳也有 Service Worker 缓存（翻译本身当然还需要网络）。
-- **翻译在云端**：只把**文字**发出去（谷歌翻译，不通自动切微软；也可以填自己的 AI 模型 key）。
-- **朗读用系统声音**：`speechSynthesis`，不额外下载、不会被第三方限速，译文堆积时能即时加速。
-- **一句都不会丢**：整场录音存在浏览器里（可关），任何一句识别错了都能**从录音里重新识别**。
-- **可安装**：PWA，手机可以"添加到主屏幕"；iOS 竖屏自动把双栏变上下两栏。
+English | [简体中文](README.zh-CN.md)
 
 ---
 
-## 快速开始
+## Name
+**Realtime Chopper** is named after Tony Tony Chopper from *One Piece*, the reindeer doctor who understands both human and animal languages. 
 
-需要 Node 20.19+ / 22.12+（开发时用的是 24），以及一个**能用麦克风的浏览器**。
+It is a zero-backend, privacy-first, and serverless real-time speech translation web application. All speech recognition runs directly inside your browser: audio is processed on-device and never uploaded to any server.
 
+## Features
+- **On-Device Speech Recognition**: Runs AI models directly in the browser via WebGPU / WASM (Moonshine Base ~62MB for English, SenseVoice Small int8 ~240MB for Chinese & Korean). Models are cached locally after the first download.
+- **Multi-Provider Cloud Translation**: Built-in Google Translate with automatic fallback to Microsoft Translator, along with support for custom AI / LLM API keys.
+- **Real-Time Dual-Column Subtitles**: Displays original and translated text side-by-side with synchronized scrolling (automatically adapts to a top-and-bottom stacked layout on mobile).
+- **Adaptive Speech Synthesis (TTS)**: Reads translations aloud in real time using the browser's native Speech Synthesis API, with smart speed acceleration (up to 1.8x) to keep up with fast speech without dropping sentences.
+- **Audio History & Segment Re-decode**: Stores in-session audio in local memory so you can replay or re-transcribe any specific segment if recognition was inaccurate.
+- **PWA & Privacy-First**: 100% client-side architecture with zero account requirement. Can be installed as a PWA on mobile and desktop. Only text is sent to translation providers.
+
+## Quick Start
+
+### Requirements
+- Node.js 20+
+- A modern browser with microphone support (Chrome, Edge, Safari, Firefox)
+
+### Development
 ```bash
-npm ci          # 安装依赖
-npm run dev     # http://127.0.0.1:5273
+# Install dependencies
+npm ci
+
+# Start the dev server
+npm run dev
 ```
 
-打开后点最下面中间的圆钮 → 首次会弹「安装语音识别模块」，按当前源语言下载一个（英文约 62MB，中文/韩语共用约 240MB）→ 浏览器问麦克风权限时点允许 → 开始说话。
+### How to Use
+1. Click the center control button to launch.
+2. On first run, confirm to download the required speech recognition model (cached in browser storage).
+3. Grant microphone permission and speak naturally.
 
-> **必须走 `https://` 或 `localhost`**。用局域网 IP 打开时界面能出来，但点录音浏览器会直接拒绝麦克风 —— 这是浏览器的安全策略，不是应用的问题。手机上用请见 [DOCKER.md](DOCKER.md)（Tailscale 或 Caddy + 域名两条现成路径）。
+> **Important Notes**:
+> - Microphone access requires `localhost`, `127.0.0.1`, or `https://` due to browser security restrictions.
+> - Wearing headphones is strongly recommended to avoid audio loopback between your speakers and microphone.
 
-### 用的时候
-
-| 想做的事 | 怎么做 |
-|---|---|
-| 开始 / 停止 | 状态栏中间的圆钮（启动期间再点一次是"取消启动"） |
-| 换语言 | 标题栏中间「说 英文 → 译 中文」。切到中文/韩语不会重新下载模块（两者共用一份） |
-| 换声音、调语速 | 译文栏标题栏的音色下拉；语速在设置里 |
-| 某句没识别对 | 打开**调试模式**，那一行会出现 `▶ 原声` 和 `重新识别`（从整场录音里重新切一遍这段） |
-| 看队列 / 报错 | 调试模式下：副标题栏是队列读数，标题栏右边的 `⋮` 是从左侧滑出的日志抽屉（可导出 JSON） |
-| 装不上模块 / 报错 | 弹窗里点**复制诊断信息**，把那段文字发出来即可 —— 手机上不用装 devtools，原始报错就在「报错详情」里 |
-| 页面闪一下自己重开、没有任何报错 | 那就是被系统杀掉了（多半是内存）：重新打开后页面上方会出现一条提示条，说清是哪个模块、第几次、以及「查看日志」，日志里最后一行就是它倒下的位置 |
-| 报错后页面被手机重载了 | 日志不丢：最近的记录在 `sessionStorage` 里，重新打开就是在重载前那一刻，并会注明「页面重新加载过」 |
-| 看乔巴 | 点标题栏的名字左边那张图，或「乔巴」二字 |
-
----
-
-## 它怎么跑的
-
-```
-麦克风 ──► vad.worker ──► segQ ──► asr.worker ──► mtQ ──► mt.worker ──► readQ ──► speechSynthesis
-          (分段)                  (识别)                   (翻译)                 (朗读)
-              │                                            │
-              └─ 整场录音（OPFS 里的 WAV）                  └─ 谷歌 / 微软 / BYOK LLM
-```
-
-三条队列都是**顺序消费、绝不丢弃**：识别慢就排队，翻译慢就排队，朗读跟不上就**自动加快语速**（上限 1.8x，仅加速、不跳句）。唯一会丢东西的入口是状态栏那个「跳到最新」，而且只有用户点了才会发生。
-
-所有重活都在 Worker 里（识别、翻译、分段），主线程只管界面和朗读 —— `speechSynthesis` 在 Worker 里不存在，这也是它必须留在主线程的原因。
-
-### 识别：两个引擎，按源语言路由
-
-| 源语言 | 模块 | 引擎 | 为什么是它 |
-|---|---|---|---|
-| 英文 | 英文识别模块（约 62MB） | Moonshine Base · transformers.js | 这一档能用 **WebGPU**，失败自动回落 CPU |
-| 中文 / 韩语 | 中文和韩语识别模块（约 240MB） | SenseVoice Small **int8** · sherpa-onnx WASM | 一个模型同时认中韩（还有英日粤），非自回归，实测 RTF ≈ 0.40（同音频下 Whisper-base 约 0.9）；sherpa 的 WASM 构建自带 fbank，所以本项目里没有一行特征提取代码 |
-
-**一次只驻留一个模块**：切换源语言时先释放旧的再加载新的，所以手机上不会同时占几百兆内存。中文 ↔ 韩语之间不释放、不重载 —— 是同一份权重。
-
-### 翻译：多提供方，自动降级
-
-`谷歌（主）→ 微软（免 key 兜底）→ BYOK LLM（可选，绝不自动回退）`
-
-翻译来源始终显示在译文栏标题栏**最右端**：在用谷歌时是一个「文 A」标记，一旦降级成微软或 AI 模型就换成纯文字名字 —— 降级不该看起来像谷歌。
-
-### 朗读：为什么不是 Edge TTS
-
-原始需求写的是 Edge TTS。它做不了：微软的朗读接口要一个页面无法设置的握手头（浏览器不允许给 WebSocket 加自定义头），扩展能绕、网页不能。用系统的 `speechSynthesis` 换来三件更重要的东西：不需要服务端、不会被第三方限速、**语速是随时可改的活属性**（需求 6 要求按队列长度调速；要是用 Edge TTS，每次调速都得重新合成音频）。代价写在 `src/lib/tts/speech.ts` 的头注释里：拿不到音频缓冲、长句会被浏览器截断（所以按标点切好再读）。
-
----
-
-## 隐私
-
-| 数据 | 去哪 |
-|---|---|
-| 录音、音频 | **只有你的浏览器**。整场录音存在 OPFS 里，"保存整场录音"关掉就完全不落盘 |
-| 语音识别 | **在本地算**（下载到缓存里的模型，联网只为下载那一次） |
-| 识别出的文字 | 发给翻译服务（谷歌 / 微软，或你自己填的 AI 模型） |
-| API key | 只存在本机 localStorage，不上传，日志里脱敏 |
-| 日志 | 只在你的浏览器里（内存 + `localStorage`，只保留最近 2 分钟的尾巴以便崩溃后能看到，导出或清空由你手动点），导出 JSON 要你手动点 |
-
----
-
-## 设置
-
-全部在「设置」页，每一项的名字是人话，解释放在气泡里。完整清单见 [PLAN.md](PLAN.md) §7。挑几个最常改的：
-
-| 设置 | 默认 | 什么时候动它 |
-|---|---|---|
-| 说话停顿多久算一句 | 500ms | 说话快、老被切成两半 → 调长；想要更实时 → 调短 |
-| 一句话最长不超过 | 8s | 连说不换气时，这里会强制收尾（短句切分点在能量最低处，不切在词中间） |
-| 翻译用哪家 | 谷歌 | 公司网络连不上谷歌就选微软 |
-| 朗读音色 / 基础语速 / 忙时加速 | 跟随系统 / 1.0x / 开 | |
-| 保存整场录音 | 开 | 关掉省空间，但**「重新识别」和「▶ 原声」就没了** |
-| 调试模式 | 关 | 打开后每行显示时间轴、引擎、推理耗时、模型原始输出、音频播放器；标题栏出现 `⋮` |
-
----
-
-## 开发
-
-```bash
-npm run dev        # 开发服务器 127.0.0.1:5273
-npm run build      # 构建到 dist/（纯静态）
-npm run preview    # 预览 dist/，127.0.0.1:5274
-npm run typecheck  # tsc --noEmit
-npm run check      # svelte-check
-npm run icons      # 从 logo.ts 的几何重新渲染图标（见下）
-```
-
-```
-src/
-  App.svelte  main.ts
-  components/          三明治外壳、双栏面板、状态栏、日志抽屉、设置、弹窗、品牌标记
-  lib/audio/           capture / resample / recorder（OPFS 里的 WAV）
-  lib/asr/             models(模块注册表) / router / moonshine / segmenter(VAD)
-  lib/mt/              client / cache / probe / providers{google,microsoft,llm}
-  lib/tts/             speech.ts
-  lib/pipeline/        session(状态机) / queues / rate / latency
-  lib/brand/           logo.ts（标记几何 + 图标清单，唯一来源）/ apply.ts（favicon、manifest、iOS）
-  workers/             vad.worker.ts / asr.worker.ts / mt.worker.ts
-static/                manifest / sw.js / 图标 / 可选图标的原图 / zh-asr.worker.js（手写的 classic worker）
-static/icons/          非默认图标的各尺寸 PNG（由 npm run icons 生成）
-scripts/make-icons.mjs 图标渲染 + 裁切安全自检
-design/                设计稿原图（几 MB 那种）：不进构建、不进镜像、也不发到线上
-```
-
-**两个不要手改的地方**
-
-- **图标文件**（`static/icon*.png`、`apple-touch-icon.png`、`icon.svg`、`static/icons/`）：由
-  `npm run icons` 生成。可选图标清单、素材路径、输出文件名都在 `src/lib/brand/logo.ts` 一处
-  （图标素材要放在 `static/` 里 —— 那是会发给浏览器的目录；只当设计稿、不参与运行的大图放 `design/`）。
-  根目录那套永远是默认图标（页面和静态 manifest 在 JavaScript 之前就指着它）。
-  换图标请改清单再重新生成；脚本还会量出"图案最远点半径"与"越出圆角的像素数"，
-  确认 maskable / iOS 那两档仍在允许被裁的 80% 圆内。
-- **`static/zh-asr.worker.js`**：它必须是一个 classic 脚本（sherpa 的 glue 是脚本作用域的
-  lexical 声明），所以它不能 import 我们的模块 —— 里面的资源清单和 `src/lib/asr/models.ts`
-  里的版本号是配套的，改一边要改另一边。
-
----
-
-## 部署
-
-```bash
-docker compose up -d --build      # 默认只监听 127.0.0.1:8080
-```
-
-两阶段镜像：`node:24-alpine` 里 `npm ci` + `vite build`，产物交给 `nginx:alpine`。**没有 node、没有后端进程、没有数据卷、不需要环境变量** —— 因为整个应用就是静态文件加浏览器。
-
-为什么默认只绑本机、手机上怎么用（Tailscale / 域名 + HTTPS）、缓存头和排错，都在 **[DOCKER.md](DOCKER.md)**。
-
----
-
-## 已知限制（都是实测过的，不是猜的）
-
-- **外放会自己翻自己**：应用在朗读时麦克风照样在听（全程全双工，这是定案的行为）。戴耳机就没这个问题，「先戴上耳机」那个提示弹窗说的就是这件事。
-- **第一次点录音要等**：模型下载完之后还有一段**没有进度可报**的引擎启动时间（建 ONNX 会话 / 解包 wasm 运行时），这台机器上量到 6.6 秒（权重在缓存里）到约 20 秒（冷下载）不等。弹窗会明确显示「正在启动识别引擎」，不会再假装进度条卡住，但这段等待本身是真实的。
-- **WASM 是单线程**：多线程 wasm 需要 `SharedArrayBuffer`，也就需要 COOP/COEP 响应头；一旦开启，我们消费的每个第三方响应都必须带 CORP，代价大于收益，所以没开（`DOCKER.md` 里记了怎么试、失败的症状、怎么回滚）。
-- **iOS**：Safari 在标签页切到后台时会停止朗读；`apple-touch-icon` 从来不认 SVG（所以有 180px 的 PNG 兜底）；长期不用的站点存储会被系统回收，应用会主动请求 `storage.persist()`。
-- **已经装到桌面的图标不会跟着换**：浏览器只在"安装/添加到主屏幕"那一刻读 manifest，设置里换图标后要删掉重新添加。
-- **中文识别要先准备 240MB**：中韩共用一个模块，这是"一次只驻留一个模块"的取舍。
-- **iPhone / iPad 上不要用显卡加速**：实测（iPhone 14 Pro · iOS 18.7 · Safari 26.6，英文模块）是一启用 WebGPU 就在 ~2.7 秒后整页被系统关掉，两次都一样，没有任何异常可捕。所以 Apple 移动端 WebKit 的自动档直接走 CPU，并且「因为显卡加速崩的」只封显卡、不封模块（崩一次就自动改用 CPU，不会连着崩）。想要显卡也可以在设置里手动选「显卡优先」。
-  - **同在真机上已确认可行**：同一台 iPhone、同一个英文模块（Moonshine Base 62MB）改走 CPU（q8）之后**正常识别出文字**。所以「手机跑不了本地识别」不成立，成立的是「手机别走 WebGPU」；代价是 CPU 档比显卡档慢，句子的延迟会明显一些。
-- **iPhone 上内存最紧**：这个模块启动时要同时装下文件系统里的模型文件（228MB）和 ONNX 会话里的权重，而 iOS 上的浏览器给一个页面大约 1～1.5GB。这一版把模型进内存的路换掉了（不再走运行时自带的 `.data` 打包 + XHR 那条路，那条路会把最大那个文件常年钉住两份），并且识别器建好后连文件系统里那份和我们自己那份一起放掉（自检通过才放，实测释放后同一段语音仍逐字正确）。峰值因此明显低于以前，但**在真机上仍可能装不下**。真装不上时不会再让你反复看闪屏：连续两次之后，点录音会直接告诉你"这台设备装不下这个模块，先别试了"。
-- **手机请用 https 打开**：用局域网 `http://192.168.…` 打开时浏览器会同时收回麦克风、Cache Storage 和 WebGPU，应用会在状态栏直接说明这一点。
-
----
-
-## 文档
-
-| 文件 | 内容 |
-|---|---|
-| [realtime-chopper.md](realtime-chopper.md) | 最初的需求清单（20 条），一切的原点 |
-| [PLAN.md](PLAN.md) | 需求逐条挑战 → 决议 → 架构 → 模块设计 → UI 规范 → 设置清单 → 里程碑。**界面与行为的权威描述在这里** |
-| [DOCKER.md](DOCKER.md) | 部署、手机上访问、缓存策略、排错 |
-| 本文件 | 给第一次打开这个仓库的人 |
-
----
-
-## 名字
-
-「乔巴」是作者最喜欢的动漫《海贼王》里的角色：他是一只驯鹿，也有一半是人，所以动物说的话和人说的话他都听得懂 —— 当翻译再合适不过。
-
-图标有四款可选（设置 → 外观 → 应用图标）：三款是仓库里自带的素材（`static/chopper-hat*`，那顶红帽子带鹿角、只有帽子、戴耳机），另一款是**应用自己画的小鹿**（圆脸、宽鹿角、戴着耳机）—— 那个角色的形象有版权，名字可以用，画不能照抄，所以自己画了一只放在旁边当备选。选中的那款会出现在标题栏名字左边、弹窗配图、favicon 和装到桌面上的图标里。想看它，点标题栏的名字左边那张图。
-
-`package.json` 里写的是 `ISC`；仓库里目前没有 `LICENSE` 文件。
+## License
+This project is licensed under the [Apache-2.0 License](LICENSE).  
+Copyright © 2026 DogMing

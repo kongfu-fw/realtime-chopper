@@ -11,6 +11,9 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": false,
     "noEmit": true,
+    // Tests run on Node's own test runner, which resolves ESM specifiers literally:
+    // a test has to import `./blocks.ts`, extension and all.
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,

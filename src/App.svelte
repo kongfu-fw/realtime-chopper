@@ -12,24 +12,38 @@
     session,
     view,
     toast,
-    problem,
+    logNotice,
     logOpen,
     headphonePrompt,
     acknowledgeHeadphones,
-    copyText,
   } from './lib/app/state'
   import { getSettings, forgetModel, settings } from './lib/store/settings'
   import { applyAppIcon } from './lib/brand/apply'
-  import { configureLogging, error as logError, flushLogs, info, warn } from './lib/log/store'
+  import {
+    configureLogging,
+    error as logError,
+    flushLogs,
+    info,
+    releaseLogClaim,
+    restoredCount,
+    warn,
+  } from './lib/log/store'
   import { speechSupported } from './lib/tts/speech'
   import { MODULE_NAME, moduleFor, purgeRetiredModuleCaches } from './lib/asr/models'
   import { rememberGpuFailure } from './lib/asr/device'
   import { takeAsrCrashReport } from './lib/boot-guard'
-  import { diagnosticReport } from './lib/diag'
 
-  const { lines: linesStore } = session
+  const { lines: linesStore, state: sessionState } = session
   const lines = $derived($linesStore)
   const keepAudio = $derived($settings.keepAudio)
+
+  // The crash note exists to explain a failure the user has just lived through,
+  // and it stops being true the moment a recording actually starts. Left up, it
+  // would turn "the page died last time" into a permanent red headline over a
+  // session that is working fine.
+  $effect(() => {
+    if ($sessionState === 'recording' && $logNotice) logNotice.set(null)
+  })
 
   // Logging configuration follows the settings live.
   $effect(() => {
@@ -78,8 +92,13 @@
     }
     // Did the previous load of this page die while starting the engine? Nothing
     // else can tell us: a killed renderer throws no error, logs nothing, and the
-    // user is left looking at a page that just flashed. This is the only moment
-    // the evidence can be surfaced, so it goes in the log *and* on screen.
+    // user is left looking at a page that just flashed.
+    //
+    // So the diagnosis is written into the log and the drawer is opened on it.
+    // This used to raise a red box beside the title bar instead, which meant the
+    // failure was explained *outside* the log while the lines that prove it sat
+    // behind a switch — on a phone the box was the whole report, with no way to
+    // reach the evidence it was describing.
     const crash = takeAsrCrashReport()
     if (crash) {
       const name = crash.module === 'zh' || crash.module === 'en' ? MODULE_NAME[crash.module] : crash.module
@@ -93,22 +112,44 @@
         logError('asr', `上次启动${name}时页面被系统直接关掉了 —— 当时用的是显卡加速（WebGPU），已记住，下次改用 CPU`, {
           依据: 'iPhone / Safari 上启用 WebGPU 会把渲染进程带崩，一闪重开、无异常可捕',
         })
-        problem.set({
+        logNotice.set({
           title: '显卡加速把页面带崩了，已自动改用 CPU',
-          body: 'iPhone / Safari 上的 WebGPU 一启用就会把整个页面关掉，这个模块本身没问题。现在再点一次录音即可（设置里也可以自己确认「显卡加速」选的是 CPU）。',
+          body: `iPhone / Safari 上的 WebGPU 一启用就会把整个页面关掉，这个模块本身没问题。现在再试一次即可（设置里也可以自己确认「显卡加速」选的是 CPU）。${
+            restoredCount > 0 ? '下面标红的那一条记着当时用的是哪个加速器。' : ''
+          }`,
+          // The fix is already in place, so this is the one failure the drawer can
+          // offer to undo with a button rather than describe.
+          retry: true,
         })
       } else {
         logError('asr', `上次启动${name}时页面被系统直接关掉了（第 ${crash.count} 次，多半是内存不够）`, {
           提示: '弹窗闪一下就没了、控制台没有任何报错，通常就是这一种',
         })
-        problem.set({
+        // Where the evidence is decides what can be promised. A tail can still be
+        // missing — the page was killed before its first write reached storage,
+        // or it died long enough ago that the tail aged out — and pointing
+        // somebody at a line that is not there is worse than saying plainly that
+        // it did not survive.
+        //
+        // "标红的那一条", not "最后一条": the failure's line is logged by *this*
+        // load, so by the time anybody reads it there are already newer lines
+        // under it (startup, the storage probe, the visibility events). The line
+        // itself is unambiguous; its position is not.
+        const tail =
+          restoredCount > 0
+            ? '下面标红的那一条就是它倒下的地方，它前面几行是崩溃前的最后状态。'
+            : '这次没能找回崩溃前的日志尾巴，只能确认它是在这一步倒下的。'
+        logNotice.set({
           title: `上次启动${name}时，页面被系统直接关掉了`,
           body:
             crash.count >= 2
-              ? '这台设备装不下这个模块（240MB 的模型加上识别引擎）。再点还是会一样，先别试了 —— 日志里最后一行的位置就是它倒下的地方。'
-              : '多半是内存不够：这种失败不会弹任何错误，页面只是闪一下就重开了。日志里最后一行就是它倒下的地方。',
+              ? `这台设备装不下这个模块（240MB 的模型加上识别引擎）。再点还是会一样，先别试了。${tail}`
+              : `多半是内存不够：这种失败不会弹任何错误，页面只是闪一下就重开了。${tail}`,
         })
       }
+      // The evidence only exists in the log, so for this one failure the log comes
+      // to the user instead of waiting to be asked for.
+      logOpen.set(true)
     }
     // Where a phone session actually ends. A page that gets killed has no error
     // to report — the tab is simply gone — so the only trace of it is the last
@@ -123,6 +164,9 @@
     const onPageHide = () => {
       info('session', '页面正在关闭或重新加载')
       flushLogs()
+      // Flush first: the claim is what tells the next load whether this tab is
+      // still in use, so giving it up has to happen after this page's last write.
+      releaseLogClaim()
     }
     document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('pagehide', onPageHide)
@@ -154,39 +198,6 @@
   </header>
 
   <main>
-    {#if $problem}
-      <!-- The failure that cannot report itself. Rendered above everything, with
-           the log one click away and no debug switch in the way. -->
-      <div class="problem" role="alert">
-        <div class="problem-head">
-          <strong>{$problem.title}</strong>
-          <button
-            class="rc-btn ghost small"
-            aria-label="关闭提示"
-            onclick={() => problem.set(null)}>✕</button
-          >
-        </div>
-        <p>{$problem.body}</p>
-        <div class="problem-actions">
-          {#if $problem.title.includes('显卡加速')}
-            <!-- The one case where the fix is already in place: the accelerator
-                 was downgraded, so the very next attempt is the retry. -->
-            <button
-              class="rc-btn accent small"
-              onclick={() => void session.start().catch(() => undefined)}>现在再试一次</button
-            >
-          {/if}
-          <button class="rc-btn accent small" onclick={() => logOpen.set(true)}>查看日志</button>
-          <button
-            class="rc-btn ghost small"
-            onclick={() => void diagnosticReport($problem?.title ?? '启动失败').then((text) => copyText(text, '诊断信息已复制'))}
-          >
-            复制诊断信息
-          </button>
-        </div>
-      </div>
-    {/if}
-
     {#if $view === 'settings'}
       <SettingsView />
     {:else}
@@ -240,39 +251,3 @@
 {#if $toast}
   <div class="clone-toast">{$toast}</div>
 {/if}
-
-<style>
-  /* Deliberately loud: this is the one failure the user cannot get out of the
-     browser themselves, on a device with no devtools. */
-  .problem {
-    margin: 8px 10px 0;
-    padding: 10px 12px;
-    border: 2px solid var(--rc-ink);
-    border-radius: var(--rc-radius-s);
-    background: var(--rc-danger-soft);
-    font-size: 13px;
-  }
-
-  .problem-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .problem-head strong {
-    flex: 1;
-    line-height: 1.4;
-  }
-
-  .problem p {
-    margin: 6px 0 0;
-    color: var(--rc-ink-soft);
-    line-height: 1.5;
-  }
-
-  .problem-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
-  }
-</style>

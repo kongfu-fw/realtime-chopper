@@ -9,11 +9,12 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\"",
     "icons": "node scripts/make-icons.mjs"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "Apache-2.0",
   "type": "module",
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",

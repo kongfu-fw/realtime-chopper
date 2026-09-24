@@ -1,4 +1,4 @@
-import { exportLogs } from './log/store'
+import { exportLogs, formatStamp } from './log/store'
 import { gpuBlockReason, isAppleMobile, readGpuVerdict, webgpuAvailable } from './asr/device'
 
 /**
@@ -69,7 +69,7 @@ export async function storageLines(): Promise<string[]> {
 export async function diagnosticReport(headline: string): Promise<string> {
   const parts = [
     '# 乔巴 · 诊断信息',
-    `# ${new Date().toISOString()}`,
+    `# ${formatStamp(Date.now())}`,
     headline ? `情况：${headline}` : '',
     ...platformLines(),
     ...(await storageLines()),

@@ -43,4 +43,4 @@ npm run dev
 
 ## 许可
 本项目采用 [Apache-2.0 许可证](LICENSE) 开源。  
-Copyright © 2026 DogMing
+Copyright © 2026 Kongfu-fw

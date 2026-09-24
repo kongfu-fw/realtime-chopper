@@ -43,4 +43,4 @@ npm run dev
 
 ## License
 This project is licensed under the [Apache-2.0 License](LICENSE).  
-Copyright © 2026 DogMing
+Copyright © 2026 Kongfu-fw

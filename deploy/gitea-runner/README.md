@@ -1,37 +1,54 @@
-# Gitea Runner (act_runner) 部署说明
+# Gitea Runner 部署与触发说明
 
-本目录提供了在 Docker 中运行 Gitea CI/CD Runner 的完整配置。
-该 Runner 挂载了宿主机的 `/var/run/docker.sock`，因此在工作流触发时，能够直接在宿主机的 Docker 中构建并运行新的容器。
+本配置支持 **自动触发** 与 **手动触发** 两种部署模式。
 
 ---
 
-## 快速启动步骤
+## 触发方式说明
 
-### 第一步：获取 Gitea Runner 注册 Token
-1. 登录 Gitea（例如你的实例：`http://kongfu-onedrive.kooka-salmon.ts.net:23000`）。
-2. 进入当前仓库（或组织）：
-   - 点击 **仓库设置 (Settings)** -> **Actions** -> **Runners**。
-   - 点击右上角 **Create Runner**（创建 Runner）。
-   - 复制弹出的 **Registration Token**。
+### 模式一：自动触发（代码更新自动部署）
+- **触发条件**：向 `dev` 分支提交或推送代码（`git push origin dev`）。
+- **运行流程**：Gitea 检测到 `dev` 分支有变动，通知 Runner 自动拉取最新代码，重新构建 Docker 镜像，优雅替换容器并做健康检查。
 
-### 第二步：一键运行部署向导
-在目标服务器上运行：
+### 模式二：手动触发（按需一键部署）
+
+#### 方式 1：通过 Gitea 网页界面一键触发 (workflow_dispatch)
+1. 打开 Gitea 仓库后台，点击顶部 **Actions (操作)** 标签页。
+2. 在左侧列表中选择 **Deploy Dev to Docker**。
+3. 点击页面右上角的 **Run workflow (运行工作流)** 蓝色按钮。
+4. 在弹出的表单中可自定义配置：
+   - **部署目标分支**：默认 `dev`（可输入其它分支或 tag）
+   - **容器映射端口**：默认 `8080`
+   - **强制无缓存重新构建**：是否开启 `--no-cache`
+5. 点击提交，Runner 立即开始执行部署。
+
+> [!TIP]
+> **关于 Gitea 手动触发按钮的特别提示**：
+> Gitea/GitHub 规范要求：手动触发按钮 (`workflow_dispatch`) 只在工作流文件存在于仓库**默认分支**（通常为 `main`）时，才会在 Actions 列表中显示该工作流的“运行”按钮。
+> 因此，将 `.gitea/` 目录合并到 `main` 分支（或在仓库设置中将默认分支设为 `dev`）后，网页端即可正常看到并点击手动触发按钮。
+
+#### 方式 2：在服务器终端直接手动执行
+如果通过 SSH 登录了服务器，也可以在项目目录下直接运行部署脚本，无需经过 Git 推送：
 ```bash
-cd deploy/gitea-runner
-./setup.sh
-```
-根据提示粘贴 Token，脚本会自动生成 `.env` 并启动 `gitea-runner` 容器。
+# 默认部署 (端口 8080)
+./deploy/deploy.sh
 
-*(或者手动复制 `.env.example` 为 `.env`，填入 Token 后执行 `docker compose up -d`)*
+# 自定义端口部署 (例如 9000 端口)
+RC_PORT=9000 ./deploy/deploy.sh
+
+# 强制不使用缓存重新构建
+NO_CACHE=true ./deploy/deploy.sh
+```
 
 ---
 
-## 自动部署验证
-1. 打开 Gitea 仓库后台 **Actions -> Runners**，确认名为 `realtime-chopper-runner` 的 Runner 状态为绿色的就绪状态。
-2. 在本地提交或推送代码到 `dev` 分支：
+## Runner 初始化说明
+
+如果服务器尚未启动 Gitea Runner：
+1. Gitea 仓库设置 -> **Actions** -> **Runners** -> **Create Runner**，复制 Registration Token。
+2. 在服务器上运行：
    ```bash
-   git checkout dev
-   git commit -am "test dev deploy"
-   git push origin dev
+   cd deploy/gitea-runner
+   ./setup.sh
    ```
-3. 在 Gitea 仓库的 **Actions** 标签页即可实时查看自动构建与 Docker 部署日志！
+   输入 Token 即可一键在 Docker 启动 Runner 并关联到 Gitea。

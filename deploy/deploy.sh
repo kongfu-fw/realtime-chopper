@@ -32,6 +32,7 @@ cd "${PROJECT_ROOT}"
 # 可通过环境变量覆盖的配置
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-realtime-chopper}"
 RC_PORT="${RC_PORT:-8080}"
+NO_CACHE="${NO_CACHE:-false}"
 HEALTHCHECK_TIMEOUT="${HEALTHCHECK_TIMEOUT:-45}" # 秒
 HEALTHCHECK_INTERVAL=2
 
@@ -39,9 +40,10 @@ export COMPOSE_PROJECT_NAME
 export RC_PORT
 
 log_info "=================================================="
-log_info "🚀 开始部署项目: ${COMPOSE_PROJECT_NAME}"
-log_info "📂 项目根目录:   ${PROJECT_ROOT}"
-log_info "🔌 目标端口:     127.0.0.1:${RC_PORT}"
+log_info "🚀 开始部署项目:   ${COMPOSE_PROJECT_NAME}"
+log_info "📂 项目根目录:     ${PROJECT_ROOT}"
+log_info "🔌 目标端口:       127.0.0.1:${RC_PORT}"
+log_info "⚡ 禁用构建缓存:   ${NO_CACHE}"
 log_info "=================================================="
 
 # 1. 检查 Docker 环境
@@ -60,15 +62,23 @@ else
   USE_COMPOSE=false
 fi
 
+BUILD_OPTS=""
+if [ "${NO_CACHE}" = "true" ] || [ "${NO_CACHE}" = "1" ]; then
+  BUILD_OPTS="--no-cache"
+fi
+
 # 2. 构建并启动容器
 log_info "🔨 开始构建镜像并启动新容器..."
 if [ "${USE_COMPOSE}" = true ]; then
   log_info "使用 Compose 命令: ${COMPOSE_CMD}"
+  if [ -n "${BUILD_OPTS}" ]; then
+    ${COMPOSE_CMD} -p "${COMPOSE_PROJECT_NAME}" build ${BUILD_OPTS}
+  fi
   ${COMPOSE_CMD} -p "${COMPOSE_PROJECT_NAME}" up -d --build --remove-orphans
   CONTAINER_ID=$(${COMPOSE_CMD} -p "${COMPOSE_PROJECT_NAME}" ps -q app 2>/dev/null || true)
 else
   IMAGE_NAME="${COMPOSE_PROJECT_NAME}:latest"
-  docker build -t "${IMAGE_NAME}" -f Dockerfile .
+  docker build ${BUILD_OPTS} -t "${IMAGE_NAME}" -f Dockerfile .
   if docker ps -a --format '{{.Names}}' | grep -qx "${COMPOSE_PROJECT_NAME}"; then
     log_info "停止并移除旧容器: ${COMPOSE_PROJECT_NAME}..."
     docker stop "${COMPOSE_PROJECT_NAME}" >/dev/null 2>&1 || true

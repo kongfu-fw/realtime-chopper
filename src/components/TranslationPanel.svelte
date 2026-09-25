@@ -1,7 +1,7 @@
 <script lang="ts">
   import { session } from '../lib/app/state'
-  import { settings, setSetting } from '../lib/store/settings'
-  import { SpeechEngine, speechSupported, type VoiceOption } from '../lib/tts/speech'
+  import { settings, setSetting, ttsVoiceFor } from '../lib/store/settings'
+  import { createTtsEngine, ttsConfigFrom, type TtsEngine, type VoiceOption } from '../lib/tts/engine'
   import type { Line } from '../lib/types'
 
   interface Props {
@@ -11,25 +11,49 @@
   let { lines }: Props = $props()
 
   const { autoRead, providerLabel } = session
-  const engine = new SpeechEngine()
   let voices = $state<VoiceOption[]>([])
   let loadingVoices = $state(false)
+  /** Why the list is empty, when it is empty for a reason worth naming. */
+  let voiceError = $state('')
   let bodyEl: HTMLElement | undefined = $state()
   let pinned = $state(true)
 
-  // Voice lists are per-platform (iOS exposes only pre-installed voices) and
-  // arrive asynchronously, so they are re-read whenever the target changes.
+  const ttsEngine = $derived<TtsEngine>(createTtsEngine(ttsConfigFrom($settings)))
+  const chosenVoice = $derived(ttsVoiceFor($settings))
+
+  /**
+   * Voice lists are per-*engine* as much as per-platform: the system engine lists
+   * what the OS has (iOS exposes only pre-installed voices, and nothing at all
+   * until it feels like it), while the Edge engine lists what the proxy reports.
+   * Any of those inputs changing means re-reading, so all of them are watched.
+   */
   $effect(() => {
     const lang = $settings.targetLang
-    if (!speechSupported()) return
+    // Reading the derived registers both the choice and the proxy address as
+    // dependencies of this effect, which is what makes re-listing automatic.
+    const engine = ttsEngine
+    voiceError = ''
+    voices = []
+    if (!engine.available) {
+      loadingVoices = false
+      return
+    }
     let cancelled = false
     loadingVoices = true
-    void engine.voicesFor(lang, 2500).then((list) => {
-      if (!cancelled) {
+    void engine
+      .voicesFor(lang, 2500)
+      .then((list) => {
+        if (cancelled) return
         voices = list
         loadingVoices = false
-      }
-    })
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        // A failing proxy used to surface here as "没有可用音色", which reads as
+        // "your phone has no voices" — the opposite of what just happened.
+        voiceError = err instanceof Error ? err.message : String(err)
+        loadingVoices = false
+      })
     return () => {
       cancelled = true
     }
@@ -63,12 +87,18 @@
     <select
       class="rc-select voice"
       aria-label="朗读音色"
-      value={$settings.voiceURI}
+      title="朗读音色 · {ttsEngine.label}{voiceError ? ` · ${voiceError}` : ''}"
+      value={chosenVoice}
       disabled={loadingVoices || voices.length === 0}
-      onchange={(e) => setSetting('voiceURI', (e.currentTarget as HTMLSelectElement).value)}
+      onchange={(e) => {
+        const value = (e.currentTarget as HTMLSelectElement).value
+        setSetting($settings.ttsEngine === 'edge' ? 'edgeVoice' : 'voiceURI', value)
+      }}
     >
       {#if voices.length === 0}
-        <option value="">{loadingVoices ? '正在读取音色…' : '没有可用音色'}</option>
+        <option value="">
+          {loadingVoices ? '正在读取音色…' : voiceError ? '音色读取失败（见日志）' : '没有可用音色'}
+        </option>
       {:else}
         <option value="">默认音色</option>
         {#each voices as voice (voice.voiceURI)}

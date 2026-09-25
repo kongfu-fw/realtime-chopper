@@ -12,6 +12,7 @@
     LANG_LABEL,
   } from '../lib/store/settings'
   import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS, MODULE_SHORT } from '../lib/asr/models'
+  import { TTS_ENGINE_LABEL, type TtsEngineId } from '../lib/tts/engine'
   import { APP_ICONS, iconFor, iconPreviewUrl, type AppIconId } from '../lib/brand/logo'
   import { info } from '../lib/log/store'
   import type {
@@ -22,6 +23,19 @@
     Precision,
   } from '../lib/store/settings'
   import type { Lang, ModuleId } from '../lib/types'
+
+  /**
+   * Switching engines swaps a whole voice namespace, so the engine is rebuilt and
+   * the picker in the translation panel re-reads its list — the two engines have
+   * no voice names in common.
+   */
+  function pickTtsEngine(id: TtsEngineId) {
+    if (id === $settings.ttsEngine) return
+    setSetting('ttsEngine', id)
+    info('ui', `朗读引擎换为${TTS_ENGINE_LABEL[id]}`, {
+      说明: id === 'edge' ? `走代理 ${$settings.ttsProxyUrl}` : '用系统音色，不需网络',
+    })
+  }
 
   function pickIcon(id: AppIconId) {
     if (id === $settings.appIcon) return
@@ -284,6 +298,38 @@
 
   <section>
     <h2>朗读</h2>
+
+    <SettingRow
+      label="朗读引擎"
+      help="默认用系统自带的朗读：不需要网络，句子之间几乎没有间隙，手机上还能在「设置 → 辅助功能 → 朗读内容」里装更好的音色。换成「Edge TTS 代理」则读的是微软的在线神经音色（你自己的代理，见下），各平台听起来一样好，代价是每句一次网络请求、断网时读不出来。"
+    >
+      <select
+        class="rc-select"
+        value={$settings.ttsEngine}
+        onchange={(e) => pickTtsEngine((e.currentTarget as HTMLSelectElement).value as TtsEngineId)}
+      >
+        <option value="system">系统朗读（默认）</option>
+        <option value="edge">Edge TTS 代理</option>
+      </select>
+    </SettingRow>
+
+    {#if $settings.ttsEngine === 'edge'}
+      <SettingRow
+        label="TTS 代理地址"
+        help="你自己的 Edge TTS 代理（这个项目配的是 cloudflare-edge-tts）。音色表就是从它读的：改完地址、离开这一格，译文栏的音色下拉会重新读取。想确认通不通，去下面跑一次自检，看「朗读试读」那一行。"
+      >
+        <input
+          class="rc-input"
+          type="url"
+          inputmode="url"
+          spellcheck="false"
+          autocomplete="off"
+          value={$settings.ttsProxyUrl}
+          onchange={(e) => setSetting('ttsProxyUrl', (e.currentTarget as HTMLInputElement).value.trim())}
+        />
+      </SettingRow>
+    {/if}
+
     <SettingRow label="朗读基础语速">
       <input
         type="range"

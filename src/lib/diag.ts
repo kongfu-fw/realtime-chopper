@@ -1,6 +1,8 @@
 import { exportLogs, formatStamp } from './log/store'
 import { gpuBlockReason, isAppleMobile, readGpuVerdict, webgpuAvailable } from './asr/device'
 import { speechSnapshot, speechSupported } from './tts/speech'
+import { TTS_ENGINE_LABEL } from './tts/engine'
+import { getSettings } from './store/settings'
 
 /**
  * A failure report a user can *get off the phone*.
@@ -37,13 +39,22 @@ export function platformLines(): string[] {
   // console line to find: `paused` here means the platform stopped calling back
   // (切后台/锁屏之后), and `play-and-record` during recording is the audio session
   // in which iOS demotes system speech to the receiver — see `tts/speech.ts`.
-  const speech = speechSnapshot()
+  // Which engine, first: the rest of this line only describes one of them. An
+  // Edge read-out goes through the user's proxy, and "no sound" there is a
+  // network question, not a platform one.
+  const settings = getSettings()
   lines.push(
-    `朗读：${speechSupported() ? '可用' : '不支持'}` +
-      ` · 音色 ${speech.voices} 个` +
-      ` · 暂停态：${speech.paused ? '是（会没声音）' : '否'}` +
-      ` · 语音会话：${speech.session}`,
+    `朗读引擎：${TTS_ENGINE_LABEL[settings.ttsEngine]}` +
+      `（${settings.ttsEngine === 'edge' ? settings.ttsProxyUrl : speechSupported() ? '可用' : '浏览器不支持'}）`,
   )
+  if (settings.ttsEngine === 'system') {
+    const speech = speechSnapshot()
+    lines.push(
+      `系统朗读：音色 ${speech.voices} 个` +
+        ` · 暂停态：${speech.paused ? '是（会没声音）' : '否'}` +
+        ` · 语音会话：${speech.session}`,
+    )
+  }
   return lines
 }
 

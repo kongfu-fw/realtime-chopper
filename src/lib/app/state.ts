@@ -3,6 +3,7 @@ import { Session } from '../pipeline/session'
 import type { Lang } from '../types'
 import { runSelfCheck, type SelfCheckReport } from '../selfcheck'
 import { getSettings } from '../store/settings'
+import { ttsConfigFrom } from '../tts/engine'
 import { info } from '../log/store'
 
 /**
@@ -94,6 +95,7 @@ export async function runDiagnostics(burst: boolean): Promise<void> {
         model: settings.llmModel,
         apiKey: settings.llmApiKey,
       },
+      tts: ttsConfigFrom(settings),
       burst,
     })
     selfCheckReport.set(report)

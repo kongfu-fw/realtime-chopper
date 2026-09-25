@@ -8,7 +8,7 @@ import type {
   AsrLoadProgress,
 } from '../types'
 import type { Settings } from '../store/settings'
-import { getSettings } from '../store/settings'
+import { getSettings, ttsVoiceFor } from '../store/settings'
 import { asrCrashCount, clearAsrAttempt, forgetAsrCrashes, markAsrAttempt } from '../boot-guard'
 import { startCapture, type CaptureHandle } from '../audio/capture'
 import {
@@ -23,7 +23,8 @@ import { estimateLagSeconds, estimateSpeechSeconds } from './latency'
 import { AsrWorkerClient, MtWorkerClient, VadWorkerClient } from '../workers'
 import { describeModuleError, moduleIdFor, moduleSpec, moduleName } from '../asr/models'
 import { planDevice } from '../asr/moonshine'
-import { SpeechEngine, speechSnapshot, speechSupported, type SpeakOutcome } from '../tts/speech'
+import { createTtsEngine, ttsConfigFrom, type SpeakOutcome, type TtsEngine } from '../tts/engine'
+import { speechSnapshot } from '../tts/speech'
 import { resolveWorkingProvider } from '../mt/probe'
 import type { MtConfig, MtItemResult } from '../mt/client'
 import { debug, error as logError, info, warn } from '../log/store'
@@ -34,6 +35,17 @@ import { debug, error as logError, info, warn } from '../log/store'
  */
 function isAbort(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError'
+}
+
+/**
+ * Identity of the read-aloud engine a settings snapshot describes.
+ *
+ * The proxy URL is part of it because it is baked into the Edge engine at
+ * construction: editing the address has to build a new one, or the old URL would
+ * keep being asked for sentences.
+ */
+function speechKeyOf(settings: Settings): string {
+  return `${settings.ttsEngine}|${settings.ttsProxyUrl}`
 }
 
 /**
@@ -143,7 +155,16 @@ export class Session {
   private vad: VadWorkerClient | null = null
   private asr: AsrWorkerClient | null = null
   private mt: MtWorkerClient | null = null
-  private readonly speech = new SpeechEngine()
+  /**
+   * The read-aloud engine, replaced in place when the setting changes.
+   *
+   * Rebuilt rather than reconfigured because the choice changes what a voice even
+   * *is*: the platform's `voiceURI` and Edge's `ShortName` are different
+   * namespaces, and the two engines have nothing to share but this interface.
+   */
+  private speech: TtsEngine = createTtsEngine(ttsConfigFrom(getSettings()))
+  /** What the current engine was built from, so a rebuild only happens on a real change. */
+  private speechKey = speechKeyOf(getSettings())
 
   private readonly segQ = new OrderedQueue<SpeechSegment>('seg')
   private readonly mtQ = new OrderedQueue<Line>('mt')
@@ -366,7 +387,7 @@ export class Session {
       // either goes to the receiver at a whisper or is not heard at all, with no
       // error anywhere. Printing the session type next to the speaking state is
       // what makes that theory checkable from a phone (see `tts/speech.ts`).
-      info('tts', '开麦后的语音输出状态', speechSnapshot())
+      info('tts', '开麦后的语音输出状态', { 引擎: this.speech.label, ...speechSnapshot() })
 
       this.stage.set('')
       this.state.set('recording')
@@ -636,6 +657,26 @@ export class Session {
     }
     this.rateController.reset(settings.baseRate)
     this.rate.set(settings.baseRate)
+    this.syncSpeechEngine()
+  }
+
+  /**
+   * Swaps the read-aloud engine when the choice changes, and only then.
+   *
+   * The old engine is stopped first: a chunk still playing belongs to the engine
+   * being replaced, and leaving it talking would be the one way this switch could
+   * be audible as a bug.
+   */
+  private syncSpeechEngine(): void {
+    const settings = getSettings()
+    const key = speechKeyOf(settings)
+    if (key === this.speechKey) return
+    this.speech.stop()
+    this.speechKey = key
+    this.speech = createTtsEngine(ttsConfigFrom(settings))
+    info('tts', `朗读引擎切换为${this.speech.label}`, {
+      代理: settings.ttsEngine === 'edge' ? settings.ttsProxyUrl : undefined,
+    })
   }
 
   private async probeProviders(): Promise<void> {
@@ -734,7 +775,7 @@ export class Session {
       this.markLine(line.id, { ttsState: 'idle' })
       return
     }
-    if (!speechSupported()) {
+    if (!this.speech.available) {
       this.markLine(line.id, { ttsState: 'error' })
       return
     }
@@ -742,32 +783,51 @@ export class Session {
     this.markLine(line.id, { ttsState: 'speaking' })
     // Sampled *before* speaking on purpose: `speak()` resumes a synthesizer the
     // system left paused, so afterwards this reads false whichever way it went.
-    const state = speechSnapshot()
-    if (state.paused) {
+    // Only the platform engine has this state — the Edge one cannot be paused by
+    // the OS at all, it is ordinary media.
+    const state = this.speech.id === 'system' ? speechSnapshot() : null
+    if (state?.paused) {
       warn('tts', '系统把朗读留在了暂停状态（切后台或锁屏之后常见），已尝试恢复', state)
     }
     let outcome: SpeakOutcome = 'error'
     try {
       outcome = await this.speech.speak(text, {
-        voiceURI: settings.voiceURI,
+        voiceURI: ttsVoiceFor(settings),
         rate: this.rateController.rate,
         lang: settings.targetLang,
       })
-    } catch {
+    } catch (err) {
+      // The Edge engine rejects with a reason worth keeping (a 502 from the
+      // proxy, a DNS failure, no network); the platform engine never throws, it
+      // just goes quiet.
+      logError('tts', '朗读请求失败', {
+        引擎: this.speech.label,
+        原因: err instanceof Error ? err.message : String(err),
+      })
       outcome = 'error'
     }
     this.markLine(line.id, { ttsState: outcome === 'done' || outcome === 'cancelled' ? 'done' : 'error' })
     if (outcome === 'stalled') {
-      // Silence with no error: the platform accepted the utterance and never
-      // called back. Skipping is the only recovery — waiting is what used to
-      // wedge the reader for the rest of the session.
-      logError('tts', '朗读没有等到结束回调，这句跳过', { 文本: text.slice(0, 30), ...speechSnapshot() })
+      // Silence with no error: the engine accepted the work and never called
+      // back. Skipping is the only recovery — waiting is what used to wedge the
+      // reader for the rest of the session.
+      logError('tts', '朗读没有等到结束回调，这句跳过', {
+        文本: text.slice(0, 30),
+        引擎: this.speech.label,
+        ...(state ?? {}),
+      })
       this.notice.set('朗读卡住了（这句已跳过）；一直没声音就刷新页面再试')
     } else if (outcome === 'error') {
-      logError('tts', '朗读失败', { 文本: text.slice(0, 30), ...speechSnapshot() })
-      const voices = await this.speech.voicesFor(settings.targetLang)
-      if (voices.length === 0) this.notice.set('手机里没有这种语言的朗读声音')
-      else this.notice.set('朗读被系统拒绝了：先点一下页面，再确认侧面的静音开关')
+      logError('tts', '朗读失败', { 文本: text.slice(0, 30), 引擎: this.speech.label, ...(state ?? {}) })
+      const edge = settings.ttsEngine === 'edge'
+      const voices = await this.speech.voicesFor(settings.targetLang).catch(() => [])
+      if (voices.length === 0) {
+        this.notice.set(edge ? 'TTS 代理没有可用音色：检查设置里的代理地址' : '手机里没有这种语言的朗读声音')
+      } else {
+        this.notice.set(
+          edge ? 'Edge TTS 代理连不上了：检查网络和设置里的代理地址' : '朗读被系统拒绝了：先点一下页面，再确认侧面的静音开关',
+        )
+      }
     }
     this.updateRateFromBacklog()
     this.updateQueues()
@@ -789,7 +849,7 @@ export class Session {
 
   /**
    * Arms speech output, and it has to happen *inside* a user gesture (see
-   * `SpeechEngine.unlock`) — hence a method here for the tap handler to call,
+   * `TtsEngine.unlock`) — hence a method here for the tap handler to call,
    * rather than a call inside `start()`, which reaches the speech engine only
    * after the model download and the translator probe have awaited the gesture
    * away.

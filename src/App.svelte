@@ -28,7 +28,7 @@
     restoredCount,
     warn,
   } from './lib/log/store'
-  import { speechSupported } from './lib/tts/speech'
+  import { createTtsEngine, ttsConfigFrom } from './lib/tts/engine'
   import { moduleFor, moduleName, purgeRetiredModuleCaches } from './lib/asr/models'
   import { rememberGpuFailure } from './lib/asr/device'
   import { takeAsrCrashReport } from './lib/boot-guard'
@@ -79,10 +79,13 @@
     // report from a phone needs to say, and it is a decision made here (by the
     // source language) rather than typed in by the user anywhere.
     const spec = moduleFor($settings.sourceLang)
+    // Named here too, for the same reason as the module: a bug report that says
+    // which read-aloud engine was in use answers the first question about it.
+    const tts = createTtsEngine(ttsConfigFrom($settings))
     info('session', '应用已启动', {
       默认语向: `${$settings.sourceLang} → ${$settings.targetLang}`,
       识别模块: spec.label,
-      朗读: speechSupported() ? '可用' : '不可用',
+      朗读: `${tts.label}${tts.available ? '' : '（不可用）'}`,
     })
     if (!window.isSecureContext) {
       // On a phone this single fact explains almost everything that looks broken:
@@ -92,8 +95,13 @@
       warn('session', '当前不是安全上下文（https/localhost）：麦克风、模型缓存和显卡加速都会被浏览器禁用')
       session.notice.set('这个地址不能用麦克风：请用 https 或电脑上的 localhost 打开')
     }
-    if (!speechSupported()) {
-      warn('tts', '这个浏览器不支持语音朗读，译文不会自动读出来')
+    if (!tts.available) {
+      warn(
+        'tts',
+        $settings.ttsEngine === 'edge'
+          ? '没有填 Edge TTS 代理地址，译文不会自动读出来'
+          : '这个浏览器不支持语音朗读，译文不会自动读出来',
+      )
     }
     // Did the previous load of this page die while starting the engine? Nothing
     // else can tell us: a killed renderer throws no error, logs nothing, and the

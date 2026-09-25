@@ -1,7 +1,8 @@
 import type { Lang, ModuleId } from './types'
 import { getProvider, PROVIDER_LABEL, type MtProviderId } from './mt/providers'
 import { probeProvider } from './mt/probe'
-import { SpeechEngine, speechSnapshot, speechSupported } from './tts/speech'
+import { speechSnapshot } from './tts/speech'
+import { createTtsEngine, type SpeakOutcome, type TtsConfig, type TtsEngine } from './tts/engine'
 import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS } from './asr/models'
 import { planDevice } from './asr/moonshine'
 import { isAppleMobile } from './asr/device'
@@ -38,6 +39,14 @@ export interface SelfCheckOptions {
   tl: Lang
   googleApiKey: string
   llm: LlmConfig
+  /**
+   * The read-aloud engine the app is currently set to use.
+   *
+   * Travelled in rather than guessed: a report that measured the platform
+   * synthesiser while the user reads through the Edge proxy would answer a
+   * question nobody asked.
+   */
+  tts: TtsConfig
   /** Runs a short burst to see where rate limiting starts. Off by default. */
   burst?: boolean
 }
@@ -155,25 +164,37 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
   }
 
   // --- speech output -------------------------------------------------------
-  if (speechSupported()) {
-    const engine = new SpeechEngine()
+  // Whichever engine the app is set to. The label carries its name so a report
+  // from a phone says which one was measured without anyone having to remember.
+  const tts = createTtsEngine(options.tts)
+  if (tts.available) {
     // Deduplicated: the target language is usually also in the fixed list, and
     // duplicate labels would collide as `{#each}` keys in the drawer.
     const langs = [...new Set<Lang>([options.tl, 'en', 'zh', 'ko'])]
     for (const lang of langs) {
-      const voices = await engine.voicesFor(lang, 2500)
+      // A voice list that cannot be fetched is a result, not a crash: the Edge
+      // engine's list lives behind the proxy, and "proxy down" is exactly what
+      // this line is supposed to reveal.
+      const voices = await tts.voicesFor(lang, 2500).catch(() => [])
       results.push({
-        label: `${labelOf(lang)}朗读音色`,
+        label: `${labelOf(lang)}朗读音色（${tts.label}）`,
         ok: voices.length > 0 ? true : 'warn',
         detail:
           voices.length > 0
             ? `${voices.length} 个可用 · 例：${voices.slice(0, 3).map((v) => v.name).join(' / ')}`
-            : '没有可用音色，去系统里装一个',
+            : options.tts.engine === 'edge'
+              ? 'TTS 代理没有返回音色：检查设置里的代理地址'
+              : '没有可用音色，去系统里装一个',
       })
     }
-    results.push(await speechProbe(engine, options.tl))
+    results.push(await speechProbe(tts, options.tl))
   } else {
-    results.push({ label: '朗读音色', ok: false, detail: '这个浏览器不支持 speechSynthesis' })
+    results.push({
+      label: '朗读音色',
+      ok: false,
+      detail:
+        options.tts.engine === 'edge' ? '没有填 TTS 代理地址' : '这个浏览器不支持 speechSynthesis',
+    })
   }
 
   if (options.burst) {
@@ -190,30 +211,47 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
  * speech comes back: on iOS `speak()` is *accepted* and then never called back
  * from when the synthesizer was left paused (the page was backgrounded or the
  * screen locked mid-sentence), and a page holding the microphone open has its
- * system speech demoted to the receiver with no error at all. Both look like
- * "朗读坏掉了" and neither throws, so the only way to tell them apart on a phone
- * is to speak and see. This line is loud on purpose — that is the measurement.
+ * system speech demoted to the receiver with no error at all. The Edge engine
+ * fails differently again — a proxy that is down or a worker that answers 502.
+ * All of it looks like "朗读坏掉了" and none of it throws where a user can see,
+ * so the only way to tell the cases apart on a phone is to speak and see. This
+ * line is loud on purpose — that is the measurement.
  */
-async function speechProbe(engine: SpeechEngine, lang: Lang): Promise<CheckResult> {
-  const before = speechSnapshot()
+async function speechProbe(engine: TtsEngine, lang: Lang): Promise<CheckResult> {
+  const label = `朗读试读（${engine.label}）`
+  // Platform-specific state, sampled before speaking: `speak()` resumes a
+  // synthesizer the system left paused, so afterwards it reads false either way.
+  const before = engine.id === 'system' ? speechSnapshot() : null
   const text = lang === 'en' ? 'Reading test, one two three.' : '朗读测试，一二三。'
   const started = performance.now()
-  const outcome = await engine.speak(text, { rate: 1, lang })
+  let outcome: SpeakOutcome
+  try {
+    outcome = await engine.speak(text, { rate: 1, lang })
+  } catch (err) {
+    // The Edge engine is the one that rejects; its message names the status.
+    const reason = err instanceof Error ? err.message : String(err)
+    return { label, ok: false, detail: `朗读请求失败：${reason}` }
+  }
   const ms = Math.round(performance.now() - started)
-  const context = `语音会话 ${before.session} · 音色 ${before.voices} 个${
-    before.paused ? ' · 原来是暂停状态（已恢复）' : ''
-  }`
+  const context = [
+    `引擎 ${engine.label}`,
+    before ? `语音会话 ${before.session}` : '',
+    before ? `系统音色 ${before.voices} 个` : '',
+    before?.paused ? '原来是暂停状态（已恢复）' : '',
+  ]
+    .filter((part) => part !== '')
+    .join(' · ')
   if (outcome === 'done') {
-    return { label: '朗读试读', ok: true, detail: `读完「${text}」用了 ${ms} ms · ${context}` }
+    return { label, ok: true, detail: `读完「${text}」用了 ${ms} ms · ${context}` }
   }
   if (outcome === 'stalled') {
     return {
-      label: '朗读试读',
+      label,
       ok: false,
-      detail: `发了朗读请求但系统一直没回调结束（等了 ${ms} ms）—— 听不到声音多半就是这种 · ${context}`,
+      detail: `发了朗读请求但一直没等到结束（等了 ${ms} ms）—— 听不到声音多半就是这种 · ${context}`,
     }
   }
-  return { label: '朗读试读', ok: false, detail: `系统拒绝了朗读（${outcome}）· ${context}` }
+  return { label, ok: false, detail: `朗读被拒绝了（${outcome}）· ${context}` }
 }
 
 /**

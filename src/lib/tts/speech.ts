@@ -1,7 +1,21 @@
 import type { Lang } from '../types'
+import {
+  chunkForSpeech,
+  clampRate,
+  langPrefixes,
+  type SpeakOptions,
+  type SpeakOutcome,
+  type TtsEngine,
+  type VoiceOption,
+} from './engine'
 
 /**
  * Speech output through the browser's own TTS (requirement 4).
+ *
+ * This is the *default* engine; `edge.ts` adds an optional one that reaches
+ * Microsoft's neural voices through a proxy, and `engine.ts` is the contract both
+ * fill. Everything below is about the platform's own synthesiser, which is the
+ * one with the undocumented failure modes.
  *
  * Why not Edge TTS: Microsoft's read-aloud endpoint requires a handshake header
  * (`Sec-MS-GEC`) that a page cannot set — browsers forbid custom headers on
@@ -63,36 +77,12 @@ import type { Lang } from '../types'
  * `Sec-MS-GEC` — so nothing here ever asks it for anything.
  */
 
-/** Chrome truncates long utterances; keep well under the observed limit. */
-const MAX_CHUNK_CHARS = 150
-
 /**
  * How long a chunk may go without a `start` event before we call it dropped.
  * Short on purpose: the cost of guessing wrong is a re-read of one sentence, and
  * the cost of waiting is a silent gap the user reads as "broken".
  */
 const START_TIMEOUT_MS = 2500
-
-export interface VoiceOption {
-  voiceURI: string
-  name: string
-  lang: string
-  localService: boolean
-  default: boolean
-}
-
-export interface SpeakOptions {
-  voiceURI?: string
-  rate: number
-  lang: Lang
-}
-
-/**
- * `stalled` is separate from `error` because the platform said nothing at all:
- * no `error` event, no `end` event, just silence. It is the one outcome that used
- * to hang the reader permanently, so it has to be nameable in the log.
- */
-export type SpeakOutcome = 'done' | 'cancelled' | 'error' | 'stalled'
 
 /**
  * Everything the platform will tell us about why reading out loud did or did not
@@ -170,10 +160,17 @@ function speechBudgetMs(text: string, rate: number): number {
   return Math.round(5000 + (text.length / perSecond) * 1000 * 4)
 }
 
-export class SpeechEngine {
+export class SystemSpeechEngine implements TtsEngine {
+  readonly id = 'system'
+  readonly label = '系统朗读'
   private cancelRequested = false
   /** Set while we deliberately stopped so 'cancelled' is not logged as a bug. */
   private speakingFlag = false
+
+  /** Whether the platform exposes a speech synthesiser at all. */
+  get available(): boolean {
+    return speechSupported()
+  }
 
   get speaking(): boolean {
     return this.speakingFlag
@@ -377,53 +374,8 @@ export class SpeechEngine {
   }
 }
 
-/**
- * Splits text at sentence boundaries, then hard-wraps anything still too long.
- * Truncation is silent when it happens, so the split has to happen before the
- * browser sees the string.
- */
-export function chunkForSpeech(text: string, maxChars = MAX_CHUNK_CHARS): string[] {
-  const trimmed = text.replace(/\s+/g, ' ').trim()
-  if (!trimmed) return []
-  const sentences = trimmed.split(/(?<=[。！？!?；;])\s*/).flatMap((part) => hardWrap(part, maxChars))
-  return sentences.map((s) => s.trim()).filter((s) => s.length > 0)
-}
-
-function hardWrap(text: string, maxChars: number): string[] {
-  if (text.length <= maxChars) return [text]
-  const out: string[] = []
-  let rest = text
-  while (rest.length > maxChars) {
-    // Prefer a comma inside the window; fall back to a space; last resort is a
-    // hard cut, which is still better than the browser's silent truncation.
-    const window = rest.slice(0, maxChars)
-    const breakAt = Math.max(window.lastIndexOf(', '), window.lastIndexOf(' '), window.lastIndexOf('，'))
-    const cut = breakAt > maxChars * 0.4 ? breakAt + 1 : maxChars
-    out.push(rest.slice(0, cut))
-    rest = rest.slice(cut)
-  }
-  if (rest.trim()) out.push(rest)
-  return out
-}
-
-function langPrefixes(lang: Lang): string[] {
-  switch (lang) {
-    case 'zh':
-      return ['zh', 'cmn']
-    case 'ko':
-      return ['ko']
-    case 'en':
-      return ['en']
-  }
-}
-
 function langTag(lang: Lang): string {
   return lang === 'zh' ? 'zh-CN' : lang
-}
-
-function clampRate(rate: number): number {
-  if (!Number.isFinite(rate)) return 1
-  return Math.min(2, Math.max(0.5, rate))
 }
 
 function toOption(voice: SpeechSynthesisVoice): VoiceOption {

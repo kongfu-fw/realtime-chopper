@@ -2,6 +2,8 @@ import { writable, get } from 'svelte/store'
 import type { Lang, ModuleId, SourceLang, TargetLang } from '../types'
 import { ASR_MODULES, moduleIdFor } from '../asr/models'
 import { APP_ICONS, DEFAULT_APP_ICON, type AppIconId } from '../brand/logo'
+import { EDGE_TTS_DEFAULT_PROXY } from '../tts/edge'
+import type { TtsEngineId } from '../tts/engine'
 
 /**
  * User-facing settings (requirement 10).
@@ -41,7 +43,20 @@ export interface Settings {
   llmApiKey: string
 
   /** Speech output */
+  /**
+   * Which read-aloud engine to use (see `tts/engine.ts`).
+   *
+   * `system` is the default and stays the default: it needs no network, no proxy
+   * and no quota, and it is the only one that works offline. `edge` is the
+   * opt-in route to Microsoft's neural voices through the user's own proxy.
+   */
+  ttsEngine: TtsEngineId
+  /** Base URL of the Edge TTS proxy; only read when `ttsEngine` is `edge`. */
+  ttsProxyUrl: string
+  /** Voice for the *system* engine, as the platform's `voiceURI`. */
   voiceURI: string
+  /** Voice for the *Edge* engine, as a `ShortName`. '' means the engine default. */
+  edgeVoice: string
   baseRate: number
   autoSpeedup: boolean
   maxRate: number
@@ -83,7 +98,10 @@ export const DEFAULT_SETTINGS: Settings = {
   llmModel: 'gpt-4o-mini',
   llmApiKey: '',
 
+  ttsEngine: 'system',
+  ttsProxyUrl: EDGE_TTS_DEFAULT_PROXY,
   voiceURI: '',
+  edgeVoice: '',
   baseRate: 1,
   autoSpeedup: true,
   maxRate: 1.8,
@@ -122,6 +140,13 @@ function readStored(): Partial<Settings> {
     const icon = (parsed as Partial<Settings>).appIcon
     if (icon !== undefined && !APP_ICONS.some((choice) => choice.id === icon)) {
       delete (parsed as Record<string, unknown>).appIcon
+    }
+    // Same reasoning for the read-aloud engine: an id this build does not know
+    // (a hand-edited store, or a future one downgraded back) must not leave the
+    // picker with nothing selected while the app quietly speaks with the default.
+    const engine = (parsed as Partial<Settings>).ttsEngine
+    if (engine !== undefined && engine !== 'system' && engine !== 'edge') {
+      delete (parsed as Record<string, unknown>).ttsEngine
     }
     return parsed as Partial<Settings>
   } catch {
@@ -184,6 +209,17 @@ export function markModelInstalled(key: string, bytes?: number, version?: string
  */
 export function isModuleCurrent(module: ModuleId, record?: { version?: string }): boolean {
   return !!record && record.version === ASR_MODULES[module].version
+}
+
+/**
+ * The voice the read-aloud engine that is selected should use.
+ *
+ * Two engines, two voice namespaces: a platform `voiceURI` and an Edge
+ * `ShortName` mean nothing to each other, and both choices are kept side by side
+ * so that switching engines back and forth does not forget either of them.
+ */
+export function ttsVoiceFor(settings: Settings): string {
+  return settings.ttsEngine === 'edge' ? settings.edgeVoice : settings.voiceURI
 }
 
 /**

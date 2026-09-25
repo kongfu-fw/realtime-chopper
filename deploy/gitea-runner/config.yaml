@@ -1,0 +1,38 @@
+# Gitea act_runner 配置文件
+log:
+  level: info
+
+runner:
+  file: .runner
+  capacity: 1
+  timeout: 3h
+  shutdown_timeout: 0s
+  insecure: false
+  fetch_timeout: 5s
+  fetch_interval: 2s
+  labels:
+    # 启用 host 模式（推荐，直接执行宿主机命令，无需在容器里嵌套 Docker）
+    - "host:host"
+    # Docker 容器模式（如需要隔离环境运行）
+    - "ubuntu-latest:docker://catthehacker/ubuntu:act-latest"
+
+cache:
+  enabled: true
+  dir: ""
+  host: ""
+  port: 0
+  external_server: ""
+
+container:
+  network: ""
+  privileged: true
+  options: "-v /var/run/docker.sock:/var/run/docker.sock"
+  workdir_parent: ""
+  valid_volumes:
+    # 允许挂载宿主机的 Docker socket，使工作流能够调用 Docker 部署容器
+    - "/var/run/docker.sock"
+  docker_host: ""
+  force_pull: false
+
+host:
+  workdir_parent: ""

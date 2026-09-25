@@ -1,0 +1,37 @@
+name: Deploy Dev to Docker
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+# 避免并发部署造成冲突
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # 推荐配置说明：
+    # 1. runs-on: host (推荐)
+    #    适用于 Runner 直接运行在服务器上，或者以 host 模式注册。
+    #    这样直接使用宿主机上的 docker 与 docker compose，无需套娃，速度最快、权限最干净。
+    #
+    # 2. runs-on: ubuntu-latest
+    #    如果你的 Runner 仅配置了 Docker 容器执行模式，请修改为 ubuntu-latest，
+    #    并确保 Runner 的 config.yaml 允许挂载 /var/run/docker.sock。
+    runs-on: host
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Deployment
+        env:
+          COMPOSE_PROJECT_NAME: realtime-chopper
+          RC_PORT: 8080
+          HEALTHCHECK_TIMEOUT: 60
+        run: |
+          chmod +x ./deploy/deploy.sh
+          ./deploy/deploy.sh

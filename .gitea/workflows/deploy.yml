@@ -1,29 +1,14 @@
 name: Deploy Dev to Docker
 
 on:
-  # 1. 自动触发：当 dev 分支发生 push 时自动执行
+  # 自动触发：当 dev 分支更新（push）时自动运行
   push:
     branches:
       - dev
 
-  # 2. 手动触发：可在 Gitea 网页端的 Actions 页面点击 "Run workflow" 手动执行
+  # 手动触发：可在 Gitea Actions 网页端点击 "Run workflow" 手动运行
   workflow_dispatch:
-    inputs:
-      target_branch:
-        description: '部署目标分支'
-        required: true
-        default: 'dev'
-      port:
-        description: '容器映射端口 (RC_PORT)'
-        required: false
-        default: '8080'
-      no_cache:
-        description: '强制无缓存重新构建 (no-cache)'
-        type: boolean
-        required: false
-        default: false
 
-# 避免并发部署造成冲突
 concurrency:
   group: deploy-dev
   cancel-in-progress: false
@@ -35,16 +20,13 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          # 自动触发时使用当前触发分支，手动触发时使用表单选择的分支
-          ref: ${{ inputs.target_branch || github.ref }}
 
-      - name: Run Deployment
-        env:
-          COMPOSE_PROJECT_NAME: realtime-chopper
-          RC_PORT: ${{ inputs.port || '8080' }}
-          NO_CACHE: ${{ inputs.no_cache || 'false' }}
-          HEALTHCHECK_TIMEOUT: 60
+      - name: Deploy Container
         run: |
-          chmod +x ./deploy/deploy.sh
-          ./deploy/deploy.sh
+          echo "🚀 开始构建并启动新容器..."
+          docker compose up -d --build --remove-orphans
+
+          echo "🧹 清理旧镜像..."
+          docker image prune -f
+
+          echo "✅ 部署完成！服务运行在 http://127.0.0.1:8080"

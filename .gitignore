@@ -22,7 +22,6 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
-deploy/gitea-runner/data/
 
 
 # ---------------------------------------------------------------- 编辑器与系统

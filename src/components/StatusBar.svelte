@@ -20,6 +20,15 @@
   const preparing = $derived($sessionState === 'preparing' || $sessionState === 'stopping')
   const lagging = $derived($queues.lagSeconds > 8)
 
+  /**
+   * The live input level, as the fraction the ring on the button consumes.
+   *
+   * The raw level is a small number: the horizontal meter this replaced turned it
+   * into a percentage with `* 320` (`* 3.2` over 0..100), so the same factor is
+   * applied here and the meter answers to exactly the loudness it always did.
+   */
+  const meterLevel = $derived(Math.min(1, Math.max(0, ($level || 0) * 3.2)).toFixed(3))
+
   async function toggle() {
     // While we are waiting on the microphone permission prompt the button turns
     // into a way out, instead of being disabled with a spinner and no escape.
@@ -32,7 +41,7 @@
     try {
       if (recording) {
         await session.stop()
-      } else if (!isLangInstalled($settings.sourceLang, $settings.installedModels, $settings.enAsrModel)) {
+      } else if (!isLangInstalled($settings.sourceLang, $settings.installedModels)) {
         // Requirement 11: prompt on first use, and only for the language the
         // user actually selected — never pre-download every model.
         installLang.set($settings.sourceLang)
@@ -69,16 +78,26 @@
 </script>
 
 <div class="left">
-  {#if recording}
-    <span class="level" aria-hidden="true">
-      <i style={`width:${Math.min(100, Math.round(($level || 0) * 320))}%`}></i>
-    </span>
+  {#if preparing}
+    <!-- The real phase, not a guess: loading the module, probing the translator
+         and warming up the microphone are three different waits. -->
+    <span class="hint">{$stage || '浏览器问权限时点「允许」'}</span>
+  {/if}
+  {#if $notice}
+    <span class="hint warn" title={$notice}>{$notice}</span>
   {/if}
 </div>
 
+<!--
+ * The input level is drawn *on* the button: a halo that grows with the voice,
+ * inside a fixed ring that marks full scale. "It is recording" and "it can hear
+ * me" are then one look at one place, instead of two readings on either side of
+ * the bar.
+ -->
 <button
   class="record-btn"
   class:recording
+  style={`--level:${meterLevel}`}
   onclick={toggle}
   aria-label={recording ? '停止录音' : preparing ? '取消启动' : '开始录音'}
   title={recording ? '停止录音' : preparing ? '取消启动' : '开始录音'}
@@ -94,14 +113,6 @@
 </button>
 
 <div class="right">
-  {#if preparing}
-    <!-- The real phase, not a guess: loading the module, probing the translator
-         and warming up the microphone are three different waits. -->
-    <span class="hint">{$stage || '浏览器问权限时点「允许」'}</span>
-  {/if}
-  {#if $notice}
-    <span class="hint warn" title={$notice}>{$notice}</span>
-  {/if}
   {#if lagging}
     <!-- The only path in the app that discards queued speech, and it only
          happens when the user asks for it. -->
@@ -126,6 +137,16 @@
     min-width: 0;
   }
 
+  /*
+   * The hints moved to the left column, which is the one the level meter used to
+   * occupy. `min-width: 0` on the containers is what lets a long notice ellipsise
+   * instead of pushing the button off centre: the footer is a `1fr auto 1fr` grid,
+   * and a grid item's automatic minimum size would otherwise be its full text.
+   */
+  .left {
+    justify-content: flex-start;
+  }
+
   .right {
     justify-content: flex-end;
   }
@@ -134,29 +155,12 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 26vw;
+    max-width: 100%;
   }
 
   .hint.warn {
     color: var(--rc-warn);
     font-weight: 600;
-  }
-
-  .level {
-    display: block;
-    width: 56px;
-    height: 8px;
-    border: 1px solid var(--rc-line-strong);
-    border-radius: var(--rc-radius-pill);
-    overflow: hidden;
-    background: var(--rc-surface-alt);
-  }
-
-  .level i {
-    display: block;
-    height: 100%;
-    background: var(--rc-ok);
-    transition: width 90ms linear;
   }
 
   .dot {

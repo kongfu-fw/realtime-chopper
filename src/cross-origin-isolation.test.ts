@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { request } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { createServer } from 'vite'
@@ -83,6 +84,77 @@ test('dev server 的每一个响应都带跨源隔离头', async () => {
     await server.close()
   }
 })
+
+/**
+ * The other reason the phone could not load the dev server, and the one that has
+ * nothing to do with headers-on-304.
+ *
+ * Vite validates the `Host` header, and a reverse proxy forwards the *original*
+ * hostname — that is what `tailscale serve` is. So the one hostname the phone can
+ * actually use (`https://<machine>.<tailnet>.ts.net`, the only secure context this
+ * app has on a real device that is not a laptop) is precisely the one the dev
+ * server answers with
+ *
+ *     403 Blocked request. This host ("…ts.net") is not allowed.
+ *
+ * The fix is a config line, which is why it needs a test: the failure mode is a
+ * 403 that only appears from another device, and `localhost` — the path every
+ * other test and every developer uses — keeps working either way. The last
+ * assertion is the one that would catch an `allowedHosts` that accidentally
+ * replaced the built-in allowance for `localhost` and IP literals.
+ */
+test('dev server 认 tailnet 主机名，也继续认 localhost 和 IP', async () => {
+  const port = 40000 + Math.floor(Math.random() * 20000)
+  const server = await createServer({ server: { port, strictPort: false }, logLevel: 'silent' })
+  try {
+    await server.listen()
+    const address = server.httpServer?.address()
+    assert.ok(address && typeof address === 'object', 'dev server 没有监听端口')
+
+    // The real shape: `tailscale serve` terminates TLS on 443, so the forwarded
+    // host carries no port — the branch that matches on the `.ts.net` suffix.
+    const tailnet = await getWithHost(address.port, '/', 'shaomings-mac-mini.kooka-salmon.ts.net')
+    assert.equal(
+      tailnet.status,
+      200,
+      'tailnet 主机名被 Host 检查拦下了：`tailscale serve` 后面手机上打不开 dev server',
+    )
+    assertIsolated(tailnet, 'tailnet 主机名的响应')
+
+    const foreign = await getWithHost(address.port, '/', 'evil.example.com')
+    assert.equal(foreign.status, 403, '外来主机名不该访问得到 dev server')
+
+    const local = await getWithHost(address.port, '/', `127.0.0.1:${address.port}`)
+    assert.equal(local.status, 200, 'allowedHosts 不能把内置的 localhost / IP 一起顶掉')
+  } finally {
+    await server.close()
+  }
+})
+
+/**
+ * `node:http` rather than `fetch`, because `Host` is a forbidden header name in
+ * fetch and gets dropped — a test that cannot set the header cannot test the
+ * header. The response is wrapped in a `Response` so `assertIsolated` reads it the
+ * same way it reads a real one.
+ */
+function getWithHost(port: number, path: string, host: string): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, headers: { Host: host } }, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (chunk: Buffer) => chunks.push(chunk))
+      res.on('end', () =>
+        resolve(
+          new Response(Buffer.concat(chunks), {
+            status: res.statusCode ?? 0,
+            headers: res.headers as Record<string, string>,
+          }),
+        ),
+      )
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
 
 /**
  * The nginx side cannot be exercised without a container, so it is checked

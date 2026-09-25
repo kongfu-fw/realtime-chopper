@@ -43,10 +43,11 @@ const ISOLATION_HEADERS: Record<string, string> = {
  *     GET /sherpa-asr.worker.js → net::ERR_BLOCKED_BY_RESPONSE
  *     [session] asr 崩溃了
  *
- * Both sherpa modules — Chinese SenseVoice and the punctuated English one —
- * became unloadable, while Moonshine kept working. That asymmetry is what made it
- * look like a sherpa bug: Moonshine's worker is a bundler chunk on a URL with a
- * query string, so it never matched the stale cache entry.
+ * Every module on that runtime — Chinese SenseVoice, and the English one that was
+ * still shipped at the time — became unloadable, while Moonshine kept working.
+ * That asymmetry is what made it look like a sherpa bug: Moonshine's worker is a
+ * bundler chunk on a URL with a query string, so it never matched the stale cache
+ * entry.
  *
  * Middleware registered in `configureServer`/`configurePreviewServer` runs
  * *before* Vite's internal middleware, so even a 304 goes out stamped. Production
@@ -72,6 +73,28 @@ function crossOriginIsolation(): Plugin {
   }
 }
 
+/**
+ * Hostnames the dev/preview server accepts besides `localhost` and bare IPs.
+ *
+ * Vite's host check is not a detail that can be skipped: it works on the `Host`
+ * header, so a reverse proxy that forwards the original hostname — which is
+ * exactly what `tailscale serve` does — gets
+ *
+ *     Blocked request. This host ("shaomings-mac-mini.kooka-salmon.ts.net") is not allowed.
+ *
+ * Which is a dead end for the one device this app is really written for. A real
+ * iPhone cannot load `http://127.0.0.1:5273` (that is the phone talking to
+ * itself), and `http://192.168.x.x` costs the microphone, Cache Storage and
+ * `SharedArrayBuffer` because it is not a secure context. The tailnet name is:
+ * HTTPS with a certificate Safari already trusts, reachable from anywhere, and
+ * — the reason it beats a local CA — no certificate warning to click through on
+ * a device whose Safari you cannot easily clear a stale exception from.
+ *
+ * `localhost` and IP literals stay allowed regardless of this list; the test in
+ * `src/cross-origin-isolation.test.ts` keeps both paths honest.
+ */
+const TAILNET_HOSTS = ['.ts.net']
+
 export default defineConfig({
   plugins: [svelte(), crossOriginIsolation()],
   // PWA is served from a sub-path-friendly relative base.
@@ -94,9 +117,11 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 5273,
+    allowedHosts: TAILNET_HOSTS,
   },
   preview: {
     host: '127.0.0.1',
     port: 5274,
+    allowedHosts: TAILNET_HOSTS,
   },
 })

@@ -1,14 +1,8 @@
 import type { Lang, ModuleId } from './types'
 import { getProvider, PROVIDER_LABEL, type MtProviderId } from './mt/providers'
 import { probeProvider } from './mt/probe'
-import { SpeechEngine, speechSupported } from './tts/speech'
-import {
-  ASR_MODULES,
-  MODULE_CACHE_KEYS,
-  MODULE_IDS,
-  resolveEnModel,
-  type EnAsrModel,
-} from './asr/models'
+import { SpeechEngine, speechSnapshot, speechSupported } from './tts/speech'
+import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS } from './asr/models'
 import { planDevice } from './asr/moonshine'
 import { isAppleMobile } from './asr/device'
 import type { LlmConfig } from './mt/types'
@@ -44,11 +38,6 @@ export interface SelfCheckOptions {
   tl: Lang
   googleApiKey: string
   llm: LlmConfig
-  /**
-   * The English-module preference, so the report can name the module that will
-   * actually run rather than the one a default would have picked.
-   */
-  enAsrModel?: EnAsrModel
   /** Runs a short burst to see where rate limiting starts. Off by default. */
   burst?: boolean
 }
@@ -108,21 +97,6 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
   }
 
   // --- speech recognition modules -----------------------------------------
-  // Which English module `auto` means here, named out loud. It is the one line in
-  // this report that answers "why is this phone downloading 126 MB instead of 62?"
-  const enChoice = resolveEnModel(options.enAsrModel ?? 'auto')
-  if (options.sl === 'en') {
-    results.push({
-      label: '英文识别用哪个模块',
-      ok: 'warn',
-      detail: `${enChoice === 'parakeet' ? 'Parakeet TDT-CTC 110M int8（约 126 MB，只用 CPU）' : 'Moonshine Base（约 62 MB，桌面走显卡）'} · ${
-        options.enAsrModel === 'auto' || options.enAsrModel === undefined
-          ? `选择方式为自动，${isAppleMobile() ? 'iOS 上自动选 Parakeet' : '这个平台自动选 Moonshine'}`
-          : '在设置里手动指定'
-      }`,
-    })
-  }
-
   for (const module of MODULE_IDS) {
     const spec = ASR_MODULES[module]
     const installed = await isModuleCached(module)
@@ -197,6 +171,7 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
             : '没有可用音色，去系统里装一个',
       })
     }
+    results.push(await speechProbe(engine, options.tl))
   } else {
     results.push({ label: '朗读音色', ok: false, detail: '这个浏览器不支持 speechSynthesis' })
   }
@@ -206,6 +181,39 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
   }
 
   return { results, provider: primary }
+}
+
+/**
+ * Reads one sentence out loud and reports which ending it got.
+ *
+ * A voice list only proves the voices exist. It says nothing about whether
+ * speech comes back: on iOS `speak()` is *accepted* and then never called back
+ * from when the synthesizer was left paused (the page was backgrounded or the
+ * screen locked mid-sentence), and a page holding the microphone open has its
+ * system speech demoted to the receiver with no error at all. Both look like
+ * "朗读坏掉了" and neither throws, so the only way to tell them apart on a phone
+ * is to speak and see. This line is loud on purpose — that is the measurement.
+ */
+async function speechProbe(engine: SpeechEngine, lang: Lang): Promise<CheckResult> {
+  const before = speechSnapshot()
+  const text = lang === 'en' ? 'Reading test, one two three.' : '朗读测试，一二三。'
+  const started = performance.now()
+  const outcome = await engine.speak(text, { rate: 1, lang })
+  const ms = Math.round(performance.now() - started)
+  const context = `语音会话 ${before.session} · 音色 ${before.voices} 个${
+    before.paused ? ' · 原来是暂停状态（已恢复）' : ''
+  }`
+  if (outcome === 'done') {
+    return { label: '朗读试读', ok: true, detail: `读完「${text}」用了 ${ms} ms · ${context}` }
+  }
+  if (outcome === 'stalled') {
+    return {
+      label: '朗读试读',
+      ok: false,
+      detail: `发了朗读请求但系统一直没回调结束（等了 ${ms} ms）—— 听不到声音多半就是这种 · ${context}`,
+    }
+  }
+  return { label: '朗读试读', ok: false, detail: `系统拒绝了朗读（${outcome}）· ${context}` }
 }
 
 /**

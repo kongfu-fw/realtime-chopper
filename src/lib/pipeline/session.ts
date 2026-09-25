@@ -23,7 +23,7 @@ import { estimateLagSeconds, estimateSpeechSeconds } from './latency'
 import { AsrWorkerClient, MtWorkerClient, VadWorkerClient } from '../workers'
 import { describeModuleError, moduleIdFor, moduleSpec, moduleName } from '../asr/models'
 import { planDevice } from '../asr/moonshine'
-import { SpeechEngine, speechSupported } from '../tts/speech'
+import { SpeechEngine, speechSnapshot, speechSupported, type SpeakOutcome } from '../tts/speech'
 import { resolveWorkingProvider } from '../mt/probe'
 import type { MtConfig, MtItemResult } from '../mt/client'
 import { debug, error as logError, info, warn } from '../log/store'
@@ -299,7 +299,7 @@ export class Session {
       // Resolved once, here: `auto` depends on the device, and asking twice must
       // not be able to answer differently (the check below compares against the
       // same value the load was started with).
-      const wanted = moduleIdFor(settings.sourceLang, settings.enAsrModel)
+      const wanted = moduleIdFor(settings.sourceLang)
       if (this.modelModule !== wanted) {
         this.stage.set('正在加载识别模块')
         this.model.set({ status: '准备识别模块' })
@@ -349,7 +349,7 @@ export class Session {
       this.readQ.reopen()
       pump(this.readQ, (line) => this.readLine(line))
 
-      this.speech.unlock(settings.targetLang)
+      // Speech is armed by the tap itself, not here — see `unlockSpeech`.
 
       this.stage.set('正在准备麦克风')
       this.capture = await startCapture({
@@ -360,6 +360,13 @@ export class Session {
       if (!this.capture.constraintsHonoured) {
         this.notice.set('浏览器降低了录音质量，识别可能差一点')
       }
+
+      // An open microphone flips iOS into the `play-and-record` audio session,
+      // and that is the state in which Safari demotes system speech — the read-out
+      // either goes to the receiver at a whisper or is not heard at all, with no
+      // error anywhere. Printing the session type next to the speaking state is
+      // what makes that theory checkable from a phone (see `tts/speech.ts`).
+      info('tts', '开麦后的语音输出状态', speechSnapshot())
 
       this.stage.set('')
       this.state.set('recording')
@@ -465,12 +472,8 @@ export class Session {
    * share a worker kind. Switching to a language served by a *different* module
    * must never silently keep talking to the previous one — but switching between
    * two languages of the same module (zh ↔ ko) keeps the client, and with it the
-   * loaded model.
-   *
-   * That "same module" test is what makes the English model *setting* work: going
-   * from Moonshine to Parakeet is the same language and different bytes, so the
-   * comparison has to be on the module or the old recognizer would answer in
-   * silence with the wrong model.
+   * loaded model — and that is the whole point of comparing modules rather than
+   * languages.
    */
   private ensureAsrClient(module: ModuleId): AsrWorkerClient {
     if (!this.asr || this.asr.module !== module) {
@@ -737,7 +740,13 @@ export class Session {
     }
     const settings = getSettings()
     this.markLine(line.id, { ttsState: 'speaking' })
-    let outcome: 'done' | 'cancelled' | 'error' = 'error'
+    // Sampled *before* speaking on purpose: `speak()` resumes a synthesizer the
+    // system left paused, so afterwards this reads false whichever way it went.
+    const state = speechSnapshot()
+    if (state.paused) {
+      warn('tts', '系统把朗读留在了暂停状态（切后台或锁屏之后常见），已尝试恢复', state)
+    }
+    let outcome: SpeakOutcome = 'error'
     try {
       outcome = await this.speech.speak(text, {
         voiceURI: settings.voiceURI,
@@ -747,11 +756,18 @@ export class Session {
     } catch {
       outcome = 'error'
     }
-    this.markLine(line.id, { ttsState: outcome === 'error' ? 'error' : 'done' })
-    if (outcome === 'error') {
-      logError('tts', '朗读失败，可能是这个语言没有可用音色', { text: text.slice(0, 30) })
+    this.markLine(line.id, { ttsState: outcome === 'done' || outcome === 'cancelled' ? 'done' : 'error' })
+    if (outcome === 'stalled') {
+      // Silence with no error: the platform accepted the utterance and never
+      // called back. Skipping is the only recovery — waiting is what used to
+      // wedge the reader for the rest of the session.
+      logError('tts', '朗读没有等到结束回调，这句跳过', { 文本: text.slice(0, 30), ...speechSnapshot() })
+      this.notice.set('朗读卡住了（这句已跳过）；一直没声音就刷新页面再试')
+    } else if (outcome === 'error') {
+      logError('tts', '朗读失败', { 文本: text.slice(0, 30), ...speechSnapshot() })
       const voices = await this.speech.voicesFor(settings.targetLang)
       if (voices.length === 0) this.notice.set('手机里没有这种语言的朗读声音')
+      else this.notice.set('朗读被系统拒绝了：先点一下页面，再确认侧面的静音开关')
     }
     this.updateRateFromBacklog()
     this.updateQueues()
@@ -769,6 +785,17 @@ export class Session {
       this.rate.set(rate)
       debug('tts', `朗读语速调整为 ${rate.toFixed(2)}x（积压 ${this.readQ.size} 句）`)
     }
+  }
+
+  /**
+   * Arms speech output, and it has to happen *inside* a user gesture (see
+   * `SpeechEngine.unlock`) — hence a method here for the tap handler to call,
+   * rather than a call inside `start()`, which reaches the speech engine only
+   * after the model download and the translator probe have awaited the gesture
+   * away.
+   */
+  unlockSpeech(): void {
+    this.speech.unlock(getSettings().targetLang)
   }
 
   /**

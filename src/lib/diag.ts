@@ -1,5 +1,6 @@
 import { exportLogs, formatStamp } from './log/store'
 import { gpuBlockReason, isAppleMobile, readGpuVerdict, webgpuAvailable } from './asr/device'
+import { speechSnapshot, speechSupported } from './tts/speech'
 
 /**
  * A failure report a user can *get off the phone*.
@@ -31,6 +32,17 @@ export function platformLines(): string[] {
     `WebGPU：${webgpuAvailable() ? '浏览器提供' : '没有'}` +
       ` · 上次判定：${verdict ? `${verdict.ok ? '可用' : '失败'}（${verdict.reason}）` : '还没试过'}` +
       `${gpuBlockReason() ? ' · 本次将直接用 CPU' : ''}`,
+  )
+  // Speech output, because "朗读听不到" is the one failure with no error and no
+  // console line to find: `paused` here means the platform stopped calling back
+  // (切后台/锁屏之后), and `play-and-record` during recording is the audio session
+  // in which iOS demotes system speech to the receiver — see `tts/speech.ts`.
+  const speech = speechSnapshot()
+  lines.push(
+    `朗读：${speechSupported() ? '可用' : '不支持'}` +
+      ` · 音色 ${speech.voices} 个` +
+      ` · 暂停态：${speech.paused ? '是（会没声音）' : '否'}` +
+      ` · 语音会话：${speech.session}`,
   )
   return lines
 }

@@ -65,18 +65,20 @@
   })
 
   onMount(() => {
-    // Korean runs on the Chinese module now. Anyone who installed the old,
-    // dedicated Korean model is holding ~62 MB that nothing will open again:
-    // drop the record and the cache in the same breath, once.
+    // Korean runs on the Chinese module now, and English no longer has a second
+    // module (Parakeet) — anyone who installed either is holding 62 / 126 MB that
+    // nothing will open again. Drop the records and the caches in the same
+    // breath, once.
     if (getSettings().installedModels.ko) forgetModel('ko')
+    if (getSettings().installedModels['en-nemo']) forgetModel('en-nemo')
     void purgeRetiredModuleCaches().then((gone) => {
       if (gone.length) info('storage', `已清理不再使用的识别模块：${gone.join('、')}`)
     })
 
-    // Named at startup because which English module this resolves to is a device
-    // decision (`auto`), and the first thing a bug report from a phone needs to
-    // say is which one it picked.
-    const spec = moduleFor($settings.sourceLang, $settings.enAsrModel)
+    // Named at startup because "which module is running" is the first thing a bug
+    // report from a phone needs to say, and it is a decision made here (by the
+    // source language) rather than typed in by the user anywhere.
+    const spec = moduleFor($settings.sourceLang)
     info('session', '应用已启动', {
       默认语向: `${$settings.sourceLang} → ${$settings.targetLang}`,
       识别模块: spec.label,
@@ -171,6 +173,23 @@
       // still in use, so giving it up has to happen after this page's last write.
       releaseLogClaim()
     }
+    /*
+     * iOS only lets a page produce speech from inside a user gesture, and
+     * read-aloud is driven by the recognition pipeline — never by a tap. So the
+     * first tap the page gets is spent arming speech, before the user has any
+     * reason to press anything in particular: by the time the record button is
+     * pressed, the model download has already waited the gesture away.
+     *
+     * One tap is enough for the page's lifetime, and removing the listener after
+     * the first one keeps a mid-sentence tap from queueing anything behind the
+     * sentence being read.
+     */
+    const armSpeech = () => {
+      window.removeEventListener('pointerdown', armSpeech)
+      session.unlockSpeech()
+    }
+    window.addEventListener('pointerdown', armSpeech)
+
     document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('pagehide', onPageHide)
 
@@ -183,6 +202,7 @@
     }
 
     return () => {
+      window.removeEventListener('pointerdown', armSpeech)
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('pagehide', onPageHide)
     }

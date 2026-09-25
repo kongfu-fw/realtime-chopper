@@ -1,5 +1,5 @@
-import type { AsrLoadProgress, AsrResult, Lang } from '../types'
-import { moduleFor } from './models'
+import type { AsrLoadProgress, AsrResult, Lang, ModuleId } from '../types'
+import { moduleSpec } from './models'
 import {
   gpuBlockReason,
   looksLikeDeviceFailure,
@@ -199,18 +199,25 @@ function withAttemptTimeout<T>(work: Promise<T>, ms: number, message: string): P
 
 export class MoonshineEngine {
   readonly id = 'moonshine'
+  /** The module whose bytes this engine loaded — what a caller must compare. */
+  readonly module: ModuleId
+  /** The language it transcribes, taken from the module rather than passed twice. */
+  readonly lang: Lang
   private pipe: AsrPipeline | null = null
   private actual: DeviceChoice | null = null
 
   constructor(
-    readonly lang: Lang,
+    module: ModuleId,
     /**
      * The device decision made *before this worker was asked to load*; see
      * `DevicePlan`. Passed in rather than recomputed here because only the main
      * thread can read the verdict and write the note a killed page leaves behind.
      */
     private readonly plan: DevicePlan,
-  ) {}
+  ) {
+    this.module = module
+    this.lang = moduleSpec(module).lang
+  }
 
   get device(): DeviceChoice | null {
     return this.actual
@@ -222,8 +229,8 @@ export class MoonshineEngine {
 
   async load(onProgress?: ProgressCallback): Promise<DeviceChoice> {
     if (this.pipe && this.actual) return this.actual
-    const spec = moduleFor(this.lang)
-    if (!spec.hfModelId) throw new Error(`没有为 ${this.lang} 配置 Moonshine 模型`)
+    const spec = moduleSpec(this.module)
+    if (!spec.hfModelId) throw new Error(`没有为 ${this.module} 配置 Moonshine 模型`)
 
     const { env, pipeline } = await import('@huggingface/transformers')
     // Load from the Hugging Face CDN and keep the result in the browser cache;
@@ -289,7 +296,7 @@ export class MoonshineEngine {
     return {
       text: text.trim(),
       rawText: text,
-      engine: `moonshine-${this.lang}${this.actual ? `-${this.actual.device}` : ''}`,
+      engine: `moonshine-${this.module}${this.actual ? `-${this.actual.device}` : ''}`,
       inferMs: Math.round(performance.now() - started),
     }
   }

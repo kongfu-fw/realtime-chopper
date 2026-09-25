@@ -158,19 +158,90 @@ docker compose build --no-cache     # 依赖变了、缓存可疑时重建
 
 ---
 
-## 可选：跨源隔离（未验证）
+## 跨源隔离（已开启并实测）
 
-默认**没有**开 `Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy`。
-开了以后 `crossOriginIsolated` 为真，onnxruntime 那个线程版 wasm
-（`ort-wasm-simd-threaded-*.wasm`，26 MB 那个）才能用多线程，识别会更快。
+`Cross-Origin-Opener-Policy: same-origin` 和 `Cross-Origin-Embedder-Policy: require-corp`
+**现在是默认开的**：`deploy/nginx.conf` 的 server 块里各一行，`vite.config.ts` 里是一个
+把两个头盖到每一个响应上的中间件（dev 和 preview 都装，只配部署的写法等于本地测不了）。
+开了以后 `crossOriginIsolated` 为真、`SharedArrayBuffer` 才存在，onnxruntime 的线程版
+wasm 才能起来。
 
-代价是所有跨源资源都要带 CORS/CORP 头，而识别模块正好来自 `huggingface.co`。
-这一点在这个环境里没有实际验证过，所以默认不开。想试的话，在 `deploy/nginx.conf`
-的 server 块里加上这两行（各 location 都只用 `expires`，所以会被正常继承）：
+顺带一个其实早就存在的事实：构建产物里**从来只有线程版那一个 wasm**
+（`ort-wasm-simd-threaded.asyncify-*.wasm`，26.9 MB，dist 里就这一个）。所以缺的从来不是
+产物，而是那两个头 —— 没有头的时候同一个二进制自己降回单线程跑，一切看起来都正常。
 
-```nginx
-add_header Cross-Origin-Opener-Policy same-origin always;
-add_header Cross-Origin-Embedder-Policy require-corp always;
-```
+**实测收益**（Mac mini，10 核；同一段 7.43 秒英文音频；同一个 q8 Moonshine；同一份代码，
+唯一变量就是这两个头）。单线程是把构建好的 `crossOriginIsolated` 读成 false 量出来的：
 
-如果加了以后"安装模块"开始失败，就是这条路不通，删掉这两行重新构建即可。
+| | 首次 | 稳态 | 对应 RTF |
+|---|---|---|---|
+| 单线程 | 607 ms | 521 / 526 ms | 0.071 |
+| COI 开启（`min(4, 核数)` = 4 线程） | 429 ms | 280 / 291 / 291 ms | 0.039 |
+
+约 **1.8 倍**，而且两次的转写文本逐字相同 —— 多线程没有改变结果，只改变了用时。
+
+### 为什么可以开：跨源依赖逐条实测过
+
+`require-corp` 会拦掉**不满足 COEP 的跨源响应**，所以风险全在"我们还要跨源拿什么"。
+本应用的答案：全部是 CORS 模式的 `fetch`，一个 `no-cors` 都不需要。在隔离的页面里实发：
+
+| 请求 | 隔离后 |
+|---|---|
+| `edge.microsoft.com/translate/translatetext`（无密钥默认链路） | 200，正常返回译文 |
+| `translate-pa.googleapis.com/v1/translateHtml`（无密钥默认链路） | 200 `[["你好世界。"]]` |
+| `api.openai.com/v1/models`（LLM 转发，故意用假 key） | 401 —— 请求到达了服务器，说明没被 COEP 挡 |
+| `huggingface.co/...`（模型） | 200 |
+| 对照：同样两个跨源 URL 用 `mode: 'no-cors'` | **TypeError: Failed to fetch** |
+
+最后一行就是那条代价：**以后再加第三方图片、字体、CDN `<script>` 这类隐式 `no-cors` 资源会
+直接加载不出来**，而症状是"本地好好的、上线就白"。加之前先看有没有 `Cross-Origin-Resource-Policy`。
+
+### 两个踩过的坑
+
+1. **304 会把头弄丢，而丢掉的那个头修不好。** 这是整件事里最贵的一个坑，值得写清楚。
+
+   浏览器对已缓存的响应走条件请求，服务端回 `304 Not Modified`。**如果 304 里没有这两个头，
+   浏览器会继续沿用那份"没有头"的存储副本** —— 也就是说，一个在加头之前缓存过的条目，
+   之后无论重新加载多少次都拿不到隔离，`crossOriginIsolated` 永远是 false（线程数永远是 1）。
+   在它之上还长出了第二个故障：Chrome **拒绝启动**响应头不满足 COEP 的同源 classic worker，
+
+   ```
+   GET /sherpa-asr.worker.js → net::ERR_BLOCKED_BY_RESPONSE
+   [session] asr 崩溃了
+   ```
+
+   结果是**两个 sherpa 模块（Parakeet 和 SenseVoice）全废，而 Moonshine 好好的** —— 因为只有
+   Moonshine 的 worker 是构建产物、URL 带查询串，永远撞不上那个旧缓存条目。整个现象看起来
+   像 sherpa 的问题，其实一个都不是。
+
+   两边现在的行为（都是实测的，不是推的）：
+
+   | | 200 | 304 |
+   |---|---|---|
+   | nginx `add_header … always` | 带头 | **带头**（`always` 就是管这个的） |
+   | `vite.config.ts` 的插件（比静态中间件更靠前） | 带头 | **带头** |
+   | ~~`server.headers`~~（以前的写法） | 带头 | **一个头都不带** |
+
+   所以：**生产一直是对的，dev 是坏的**，而 dev 坏的样子恰好是"换个模型就好了"的错觉。
+   现在两种写法都被 `src/cross-origin-isolation.test.ts` 钉住了：它启一个真的 dev server，
+   对每个响应先请求一次、再带 `If-None-Match` 请求一次，两次都要带头。
+
+   如果你手上是一个**更早的**浏览器会话撞上的旧毛病（这个仓库第一次开这个功能之前的缓存），
+   硬刷新一次仍然是最快的解法 —— 但代码已经不需要你手动救了。
+2. **`static/sw.js` 的 `activate` 原来会删掉"所有"非当前外壳缓存** —— 包括识别引擎自己的
+   `rc-model-*` 桶和 transformers.js 的 `transformers-cache`。外壳版本一升，已装的 240MB 中文/
+   126MB 英文模块就全被清掉重下。现在只清理 `rc-shell-*` 前缀，外壳版本推到 `rc-shell-v2`。
+
+### 只对 Moonshine 有效
+
+**sherpa WASM 那份运行时是彻底单线程的**，开不开隔离都一样：它的胶水里
+`PThread` / `pthread_create` / `SharedArrayBuffer` / `Atomics` 出现次数全是 0
+（`sherpa-onnx-asr.js` 和 `sherpa-onnx-wasm-main-vad.js` 都查了），wasm 里只有一处弱桩
+`pthread_create`。这是没带 `-pthread` 编出来的产物，不是可以调参打开的开关。
+所以 **Parakeet 和 SenseVoice 在任何设备上都是单线程**；要它们多线程只能自己用 emscripten
+从 sherpa-onnx 源码重编一份，那是另一个工程。
+
+### 回滚
+
+删掉 `deploy/nginx.conf` 和 `vite.config.ts` 里的这两行重新构建。删除后 `crossOriginIsolated`
+回到 false，Moonshine 自动降到 1 线程（`moonshine.ts` 里是按这个判断的），其余功能不受影响。

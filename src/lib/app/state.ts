@@ -87,6 +87,7 @@ export async function runDiagnostics(burst: boolean): Promise<void> {
       provider: settings.mtProvider,
       sl: settings.sourceLang,
       tl: settings.targetLang,
+      enAsrModel: settings.enAsrModel,
       googleApiKey: settings.googleApiKey,
       llm: {
         format: settings.llmFormat,

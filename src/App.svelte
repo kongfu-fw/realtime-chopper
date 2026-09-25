@@ -29,7 +29,7 @@
     warn,
   } from './lib/log/store'
   import { speechSupported } from './lib/tts/speech'
-  import { MODULE_NAME, moduleFor, purgeRetiredModuleCaches } from './lib/asr/models'
+  import { moduleFor, moduleName, purgeRetiredModuleCaches } from './lib/asr/models'
   import { rememberGpuFailure } from './lib/asr/device'
   import { takeAsrCrashReport } from './lib/boot-guard'
 
@@ -73,7 +73,10 @@
       if (gone.length) info('storage', `已清理不再使用的识别模块：${gone.join('、')}`)
     })
 
-    const spec = moduleFor($settings.sourceLang)
+    // Named at startup because which English module this resolves to is a device
+    // decision (`auto`), and the first thing a bug report from a phone needs to
+    // say is which one it picked.
+    const spec = moduleFor($settings.sourceLang, $settings.enAsrModel)
     info('session', '应用已启动', {
       默认语向: `${$settings.sourceLang} → ${$settings.targetLang}`,
       识别模块: spec.label,
@@ -101,7 +104,7 @@
     // reach the evidence it was describing.
     const crash = takeAsrCrashReport()
     if (crash) {
-      const name = crash.module === 'zh' || crash.module === 'en' ? MODULE_NAME[crash.module] : crash.module
+      const name = moduleName(crash.module)
       if (crash.accelerator === 'webgpu') {
         // Measured on an iPhone 14 Pro: the page dies ~2.7 s after the engine is
         // asked for WebGPU, twice, silently — and the same module on the CPU is

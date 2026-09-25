@@ -11,17 +11,18 @@
     TARGET_ORDER,
     LANG_LABEL,
   } from '../lib/store/settings'
-  import {
-    ASR_MODULES,
-    MODULE_CACHE_KEYS,
-    MODULE_LANGS,
-    MODULE_SHORT,
-    type ModuleLang,
-  } from '../lib/asr/models'
+  import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS, MODULE_SHORT, resolveEnModel } from '../lib/asr/models'
   import { APP_ICONS, iconFor, iconPreviewUrl, type AppIconId } from '../lib/brand/logo'
   import { info } from '../lib/log/store'
-  import type { Accelerator, LlmFormat, LogLevelSetting, MtProviderId, Precision } from '../lib/store/settings'
-  import type { Lang } from '../lib/types'
+  import type {
+    Accelerator,
+    EnAsrModel,
+    LlmFormat,
+    LogLevelSetting,
+    MtProviderId,
+    Precision,
+  } from '../lib/store/settings'
+  import type { Lang, ModuleId } from '../lib/types'
 
   function pickIcon(id: AppIconId) {
     if (id === $settings.appIcon) return
@@ -30,26 +31,47 @@
     info('ui', `应用图标换成「${iconFor(id).label}」`, { note: '已经装到桌面的图标要删掉重新添加才会更新' })
   }
 
-  async function clearModule(moduleLang: ModuleLang) {
-    const owned = MODULE_CACHE_KEYS[moduleLang]
+  async function clearModule(module: ModuleId) {
+    const owned = MODULE_CACHE_KEYS[module]
     if (typeof caches !== 'undefined') {
       // The module's own bucket(s), plus anything an older build left under this
-      // module's prefix. See `MODULE_CACHE_KEYS`: English does not live under
+      // module's prefix. See `MODULE_CACHE_KEYS`: Moonshine does not live under
       // `rc-model-en-…` at all, so the prefix guess deleted nothing and the app
       // still reported the 62 MB as cleared.
       for (const key of await caches.keys()) {
-        if (owned.includes(key) || key.startsWith(`rc-model-${moduleLang}-`)) await caches.delete(key)
+        if (owned.includes(key) || key.startsWith(`rc-model-${module}-`)) await caches.delete(key)
       }
     }
-    forgetModel(moduleLang)
+    forgetModel(module)
     await session.releaseModel()
-    info('storage', `已清除 ${MODULE_SHORT[moduleLang]} 识别模块，下次使用需要重新下载`)
+    info('storage', `已清除 ${MODULE_SHORT[module]} 识别模块，下次使用需要重新下载`)
+  }
+
+  /**
+   * Switching the English module swaps a set of bytes, not a preference.
+   *
+   * So the resident recognizer has to go: only one is ever meant to be in memory,
+   * and the next start loads whichever the setting names instead of whatever the
+   * worker happens to be holding. Chinese and Korean are untouched by this — they
+   * are served by a third module this setting does not reach.
+   */
+  async function pickEnModel(choice: EnAsrModel) {
+    if (choice === $settings.enAsrModel) return
+    setSetting('enAsrModel', choice)
+    await session.releaseModel()
+    const chosen = resolveEnModel(choice)
+    info('ui', `英文识别换用${chosen === 'parakeet' ? ' Parakeet（只用 CPU）' : ' Moonshine'}模块`, {
+      说明:
+        choice === 'auto'
+          ? `按设备自动选，这台上面是${chosen === 'parakeet' ? ' Parakeet' : ' Moonshine'}`
+          : '下次开始录音时加载',
+    })
   }
 
   // Version-aware: a module whose bytes were replaced by a newer build is not
   // installed, so the download button comes back instead of lying to the user.
   const installed = $derived(
-    MODULE_LANGS.filter((key) => isModuleCurrent(key, $settings.installedModels[key])),
+    MODULE_IDS.filter((key) => isModuleCurrent(key, $settings.installedModels[key])),
   )
   const totalInstalledBytes = $derived(
     installed.reduce((sum, key) => sum + ($settings.installedModels[key]?.bytes ?? ASR_MODULES[key].approxBytes), 0),
@@ -152,6 +174,21 @@
       </select>
     </SettingRow>
 
+    <SettingRow
+      label="英文用哪个识别模型"
+      help="两个都能用，区别是下载大小和走哪条路：Moonshine 小（62 MB），桌面上会走显卡加速；Parakeet 大（126 MB），只在 CPU 上跑，从构造上就不会去碰那一启用就把页面带崩的显卡加速，所以自动档在 iPhone / iPad 上选它。两个都输出标点和大小写（同一段音频实测），所以标点不是选哪个的依据。"
+    >
+      <select
+        class="rc-select"
+        value={$settings.enAsrModel}
+        onchange={(e) => void pickEnModel((e.currentTarget as HTMLSelectElement).value as EnAsrModel)}
+      >
+        <option value="auto">自动（iPhone 用 Parakeet）</option>
+        <option value="moonshine">Moonshine · 62 MB</option>
+        <option value="parakeet">Parakeet · 126 MB · 只用 CPU</option>
+      </select>
+    </SettingRow>
+
     <SettingRow label="已下载的识别模块">
       <span class="value">
         {installed.length === 0 ? '还没有' : `${installed.length} 个 · ${formatBytes(totalInstalledBytes)}`}
@@ -159,7 +196,7 @@
     </SettingRow>
 
     <div class="module-list">
-      {#each MODULE_LANGS as key (key)}
+      {#each MODULE_IDS as key (key)}
         <div class="module">
           <span>{MODULE_SHORT[key]}</span>
           <span class="dim">{formatBytes(ASR_MODULES[key].approxBytes)}</span>
@@ -171,7 +208,7 @@
           {/if}
         </div>
       {/each}
-      <p class="dim note">中文和韩语共用同一个模块。</p>
+      <p class="dim note">中文和韩语共用同一个模块；英文有两个，用上面那个选项选。</p>
     </div>
   </section>
 

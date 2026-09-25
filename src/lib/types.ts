@@ -7,6 +7,17 @@ export type SourceLang = 'en' | 'zh' | 'ko'
 export type TargetLang = 'en' | 'zh' | 'ko'
 export type Lang = SourceLang
 
+/**
+ * A downloadable recognition module.
+ *
+ * Not the same thing as a language, and the difference is load-bearing in both
+ * directions: one module serves two languages (`zh` transcribes Chinese *and*
+ * Korean), and one language has two modules to choose from (`en` is Moonshine,
+ * `en-nemo` is the sherpa NeMo one). Anything keyed by language alone gets one of
+ * those two wrong.
+ */
+export type ModuleId = 'en' | 'en-nemo' | 'zh'
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 export type Stage =
@@ -114,6 +125,8 @@ export type AsrProgressCallback = (progress: AsrLoadProgress) => void
 export interface AsrEngine {
   readonly id: string
   readonly lang: Lang
+  /** The module this engine loaded — what a caller must compare, never the lang. */
+  readonly module: ModuleId
   readonly ready: boolean
   load(onProgress?: AsrProgressCallback): Promise<{ device?: string; dtype?: string; reason?: string }>
   recognize(samples: Float32Array): Promise<AsrResult>

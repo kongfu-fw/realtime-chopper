@@ -3,7 +3,7 @@
   import AboutChopper from './AboutChopper.svelte'
   import { session, logOpen, view } from '../lib/app/state'
   import { APP_NAME } from '../lib/brand/logo'
-  import { moduleLangFor } from '../lib/asr/models'
+  import { moduleIdFor } from '../lib/asr/models'
   import { settings, setSetting, SOURCE_ORDER, TARGET_ORDER, LANG_LABEL } from '../lib/store/settings'
   import { info } from '../lib/log/store'
   import type { SourceLang, TargetLang } from '../lib/types'
@@ -12,8 +12,11 @@
     if (lang === $settings.sourceLang) return
     // Chinese and Korean are served by the same module, so switching between
     // them must not throw it away — that would cost a full reload of the same
-    // 240 MB the user already has in memory.
-    const sameModule = moduleLangFor(lang) === moduleLangFor($settings.sourceLang)
+    // 240 MB the user already has in memory. English is the other way round: one
+    // language, two modules, and *this* is where changing the module setting
+    // takes effect, because the comparison is on the module and not the language.
+    const sameModule =
+      moduleIdFor(lang, $settings.enAsrModel) === moduleIdFor($settings.sourceLang, $settings.enAsrModel)
     setSetting('sourceLang', lang)
     // Otherwise: one model at a time (memory budget), so drop the old engine
     // before the new language's module is requested.

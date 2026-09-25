@@ -1,7 +1,7 @@
 import { get, writable, type Writable } from 'svelte/store'
 import type {
-  Lang,
   Line,
+  ModuleId,
   QueueSnapshot,
   SessionState,
   SpeechSegment,
@@ -21,7 +21,7 @@ import { OrderedQueue, pump } from './queues'
 import { RateController } from './rate'
 import { estimateLagSeconds, estimateSpeechSeconds } from './latency'
 import { AsrWorkerClient, MtWorkerClient, VadWorkerClient } from '../workers'
-import { describeModuleError, MODULE_NAME, moduleFor, moduleLangFor, type ModuleLang } from '../asr/models'
+import { describeModuleError, moduleIdFor, moduleSpec, moduleName } from '../asr/models'
 import { planDevice } from '../asr/moonshine'
 import { SpeechEngine, speechSupported } from '../tts/speech'
 import { resolveWorkingProvider } from '../mt/probe'
@@ -172,10 +172,11 @@ export class Session {
   private lagTimer: ReturnType<typeof setInterval> | null = null
   /**
    * Which *module* is resident — not which language: zh and ko are the same
-   * bytes, so switching between them must not reload 240 MB. `null` means
-   * nothing is loaded.
+   * bytes, so switching between them must not reload 240 MB. English has two
+   * modules to choose from, so the language would not be enough to answer this
+   * either. `null` means nothing is loaded.
    */
-  private modelModuleLang: ModuleLang | null = null
+  private modelModule: ModuleId | null = null
   private startAbort: AbortController | null = null
   private preferredProvider: MtProviderId | null = null
   private stopping = false
@@ -195,9 +196,8 @@ export class Session {
    * `start()` and the install dialog treat the returned promise as proof of a
    * finished install. Progress while it runs arrives through `onProgress`.
    */
-  async prepare(lang: Settings['sourceLang']): Promise<void> {
-    const client = this.ensureAsrClient(lang)
-    const module = moduleLangFor(lang)
+  async prepare(module: ModuleId): Promise<void> {
+    const client = this.ensureAsrClient(module)
     // Which accelerator this attempt will actually use, decided *before* the
     // engine starts — the crash note records it, and the log states it, because a
     // page that dies cannot tell anyone what it was doing. A report that says only
@@ -208,11 +208,11 @@ export class Session {
     // build is CPU-only, so Chinese/Korean has nothing to decide. The plan is
     // handed to the worker with the request; see `DevicePlan`.
     const plan =
-      moduleFor(lang).engine === 'moonshine' ? planDevice(settings.accelerator, settings.precision) : null
+      moduleSpec(module).engine === 'moonshine' ? planDevice(settings.accelerator, settings.precision) : null
     const accelerator = plan?.primary.device ?? 'wasm'
     info(
       'asr',
-      `准备启动${MODULE_NAME[module]}：${plan ? `${plan.primary.device}（${plan.primary.dtype}）—— ${plan.primary.reason}` : 'sherpa WebAssembly（CPU）'}`,
+      `准备启动${moduleName(module)}：${plan ? `${plan.primary.device}（${plan.primary.dtype}）—— ${plan.primary.reason}` : 'sherpa WebAssembly（CPU）'}`,
     )
     // A device that this module has already killed twice *the same way* does not
     // need a third demonstration. A killed page cannot report anything, so all a
@@ -223,7 +223,7 @@ export class Session {
       throw new Error(
         accelerator === 'webgpu'
           ? `这台设备已经在显卡加速（WebGPU）下被关掉页面两次了：请在设置里把「显卡加速」改成 CPU 再试`
-          : `${MODULE_NAME[module]}在这台设备上装不下：已经两次在启动时把整个页面关掉了（内存不够），先别试了`,
+          : `${moduleName(module)}在这台设备上装不下：已经两次在启动时把整个页面关掉了（内存不够），先别试了`,
       )
     }
     // A new install starts the bar over; without this the dialog would open
@@ -248,7 +248,7 @@ export class Session {
     }
     client.onLoaded = (loaded) => {
       this.model.set(null)
-      this.modelModuleLang = moduleLangFor(lang)
+      this.modelModule = module
       this.failure.set(null)
       info('asr', `识别模块已就绪（${loaded.device ?? 'unknown'}）`, { reason: loaded.reason })
     }
@@ -271,7 +271,7 @@ export class Session {
     markAsrAttempt(module, accelerator)
     try {
       await withTimeout(
-        client.load(lang, plan),
+        client.load(module, plan),
         MODEL_LOAD_TIMEOUT_MS,
         '下载太久没动静，检查网络后重试',
       )
@@ -296,11 +296,15 @@ export class Session {
     this.startAbort = abort
     try {
       const settings = getSettings()
-      if (this.modelModuleLang !== moduleLangFor(settings.sourceLang)) {
+      // Resolved once, here: `auto` depends on the device, and asking twice must
+      // not be able to answer differently (the check below compares against the
+      // same value the load was started with).
+      const wanted = moduleIdFor(settings.sourceLang, settings.enAsrModel)
+      if (this.modelModule !== wanted) {
         this.stage.set('正在加载识别模块')
         this.model.set({ status: '准备识别模块' })
-        await this.prepare(settings.sourceLang)
-        if (this.modelModuleLang !== moduleLangFor(settings.sourceLang)) {
+        await this.prepare(wanted)
+        if (this.modelModule !== wanted) {
           // Never "go and read the log drawer": that drawer only exists in debug
           // mode, so on a phone the old sentence was a dead end. The reason
           // itself travels to the status bar instead.
@@ -330,7 +334,7 @@ export class Session {
       if (settings.keepAudio) this.vad.startRecording()
       else this.vad.attachRecording()
 
-      this.ensureAsrClient(settings.sourceLang)
+      this.ensureAsrClient(wanted)
       this.ensureMtClient()
 
       // Recognition pump: one segment in flight at a time, in order.
@@ -457,25 +461,34 @@ export class Session {
   }
 
   /**
-   * A recognition client is bound to one module, because the two engines do not
-   * even share a worker kind. Switching to a language served by a *different*
-   * module must never silently keep talking to the previous one — but switching
-   * between two languages of the same module (zh ↔ ko) keeps the client, and with
-   * it the loaded model.
+   * A recognition client is bound to one module, because the engines do not even
+   * share a worker kind. Switching to a language served by a *different* module
+   * must never silently keep talking to the previous one — but switching between
+   * two languages of the same module (zh ↔ ko) keeps the client, and with it the
+   * loaded model.
+   *
+   * That "same module" test is what makes the English model *setting* work: going
+   * from Moonshine to Parakeet is the same language and different bytes, so the
+   * comparison has to be on the module or the old recognizer would answer in
+   * silence with the wrong model.
    */
-  private ensureAsrClient(lang: Lang): AsrWorkerClient {
-    if (!this.asr || this.asr.moduleLang !== moduleLangFor(lang)) {
+  private ensureAsrClient(module: ModuleId): AsrWorkerClient {
+    if (!this.asr || this.asr.module !== module) {
       this.asr?.dispose()
-      this.asr = new AsrWorkerClient(lang)
+      this.asr = new AsrWorkerClient(module)
     }
     return this.asr
   }
 
-  /** Releases the recognition model — used when the source language changes. */
+  /**
+   * Releases the recognition model — used when the source language, or the choice
+   * of English module, changes. That is a memory decision as much as a correctness
+   * one: only one recognizer is ever supposed to be resident.
+   */
   async releaseModel(): Promise<void> {
     this.asr?.dispose()
     this.asr = null
-    this.modelModuleLang = null
+    this.modelModule = null
   }
 
   async dispose(): Promise<void> {

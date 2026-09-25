@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import type { AsrEngine, AsrLoadProgress, Lang } from '../lib/types'
+import type { AsrEngine, AsrLoadProgress, ModuleId } from '../lib/types'
 import type { DevicePlan } from '../lib/asr/moonshine'
 import { createEngine } from '../lib/asr/router'
 
@@ -23,7 +23,8 @@ let chain: Promise<void> = Promise.resolve()
 type Inbound =
   | {
       type: 'load'
-      lang: Lang
+      /** Which module to load — a language is not enough, English has two. */
+      module: ModuleId
       /** Device decision made on the main thread; see `DevicePlan`. */
       plan: DevicePlan | null
     }
@@ -34,7 +35,7 @@ self.onmessage = (event: MessageEvent) => {
   const msg = event.data as Inbound
   switch (msg.type) {
     case 'load':
-      chain = chain.then(() => handleLoad(msg.lang, msg.plan))
+      chain = chain.then(() => handleLoad(msg.module, msg.plan))
       break
     case 'recognize':
       chain = chain.then(() => handleRecognize(msg.id, msg.samples, msg.startMs, msg.endMs))
@@ -49,25 +50,28 @@ self.onmessage = (event: MessageEvent) => {
   }
 }
 
-async function handleLoad(lang: Lang, plan: DevicePlan | null): Promise<void> {
-  if (engine && engine.lang === lang && engine.ready) {
-    postMessage({ type: 'loaded', lang, device: 'cached', reason: '模型已在内存中' })
+async function handleLoad(module: ModuleId, plan: DevicePlan | null): Promise<void> {
+  // Compared by module, not by language: English has two modules and they are
+  // different sets of bytes, so treating "still English" as "still loaded" would
+  // silently keep serving the model the user just switched away from.
+  if (engine && engine.module === module && engine.ready) {
+    postMessage({ type: 'loaded', module, device: 'cached', reason: '模型已在内存中' })
     return
   }
   engine?.dispose()
   engine = null
   try {
-    const next = createEngine(lang, plan)
+    const next = createEngine(module, plan)
     const info = await next.load((progress: AsrLoadProgress) => {
-      postMessage({ type: 'load-progress', lang, ...progress })
+      postMessage({ type: 'load-progress', module, ...progress })
     })
     engine = next
-    postMessage({ type: 'loaded', lang, ...info })
+    postMessage({ type: 'loaded', module, ...info })
   } catch (err) {
     postMessage({
       type: 'error',
       where: 'load',
-      lang,
+      module,
       message: err instanceof Error ? err.message : String(err),
     })
   }

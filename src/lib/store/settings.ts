@@ -1,7 +1,16 @@
 import { writable, get } from 'svelte/store'
-import type { Lang, SourceLang, TargetLang } from '../types'
-import { ASR_MODULES, moduleLangFor } from '../asr/models'
+import type { Lang, ModuleId, SourceLang, TargetLang } from '../types'
+import { ASR_MODULES, moduleIdFor, type EnAsrModel } from '../asr/models'
 import { APP_ICONS, DEFAULT_APP_ICON, type AppIconId } from '../brand/logo'
+
+/**
+ * Which English recognition module to install and run.
+ *
+ * Re-exported so the settings UI can talk about the choice without importing the
+ * ASR registry; `auto` means "pick per device" and is resolved in `models.ts`,
+ * where the reason it differs on iOS is written down.
+ */
+export type { EnAsrModel }
 
 /**
  * User-facing settings (requirement 10).
@@ -23,6 +32,14 @@ export interface Settings {
 
   /** Recognition */
   sourceLang: SourceLang
+  /**
+   * Which of the two English modules to use. Only consulted for English.
+   *
+   * A preference rather than a fact: `auto` is resolved per device on every
+   * lookup (`moduleIdFor`) so that a setting written on a desktop is not carried
+   * to a phone as a decision about the phone.
+   */
+  enAsrModel: EnAsrModel
   silenceMs: number
   minSegMs: number
   maxSegMs: number
@@ -67,6 +84,10 @@ export const DEFAULT_SETTINGS: Settings = {
   appIcon: DEFAULT_APP_ICON,
 
   sourceLang: 'en',
+  // The phone-first default: on iOS this resolves to the punctuated NeMo module,
+  // everywhere else to Moonshine. Stored as `auto` so the choice stays a policy
+  // and not a snapshot of the device it happened to be written on.
+  enAsrModel: 'auto',
   silenceMs: 500,
   minSegMs: 600,
   maxSegMs: 8000,
@@ -174,9 +195,12 @@ export function markModelInstalled(key: string, bytes?: number, version?: string
  * the store through `get()` inside a template renders once and then never
  * updates — which is exactly how the badge failed to appear after a successful
  * install the first time this existed.
+ *
+ * Takes a *module* id: English has two of them now, and asking "is English
+ * installed?" is no longer a question with one answer.
  */
-export function isModuleCurrent(lang: Lang, record?: { version?: string }): boolean {
-  return !!record && record.version === ASR_MODULES[moduleLangFor(lang)].version
+export function isModuleCurrent(module: ModuleId, record?: { version?: string }): boolean {
+  return !!record && record.version === ASR_MODULES[module].version
 }
 
 /**
@@ -185,10 +209,17 @@ export function isModuleCurrent(lang: Lang, record?: { version?: string }): bool
  * The install records are keyed by *module*, not by language (Chinese and Korean
  * are one download), so callers must not index the map themselves — asking "is
  * Korean installed?" by looking up `installedModels.ko` is how a shared module
- * ends up looking missing.
+ * ends up looking missing. The English module additionally depends on the user's
+ * `enAsrModel` preference, so that has to travel in too: the same call answers
+ * differently on a phone and on a desktop, on purpose.
  */
-export function isLangInstalled(lang: Lang, installed: Settings['installedModels']): boolean {
-  return isModuleCurrent(lang, installed[moduleLangFor(lang)])
+export function isLangInstalled(
+  lang: Lang,
+  installed: Settings['installedModels'],
+  enModel: EnAsrModel = 'auto',
+): boolean {
+  const module = moduleIdFor(lang, enModel)
+  return isModuleCurrent(module, installed[module])
 }
 
 export function forgetModel(key: string): void {

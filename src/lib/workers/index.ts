@@ -1,9 +1,9 @@
-import type { AsrLoadProgress, Lang, LogLevel, SpeechSegment } from '../types'
+import type { AsrLoadProgress, LogLevel, ModuleId, SpeechSegment } from '../types'
 import type { RecordingInfo } from '../audio/recorder'
 import type { MtConfig, MtItem, MtItemResult } from '../mt/client'
 import type { SegmenterOptions } from '../asr/segmenter'
 import type { DevicePlan } from '../asr/moonshine'
-import { describeModuleError, moduleFor, moduleLangFor, type ModuleLang } from '../asr/models'
+import { describeModuleError, moduleSpec } from '../asr/models'
 import { debug, error as logError, info, warn } from '../log/store'
 
 /**
@@ -33,19 +33,23 @@ function guard(worker: Worker, name: string): Worker {
 
 /**
  * Two recognition workers exist because their runtimes are loaded in mutually
- * exclusive ways: transformers.js (English, Korean) goes through `import()`, so
- * it must live in a module worker, while sherpa-onnx's published runtime is a
- * pair of classic scripts that install globals, so the Chinese engine lives in
- * `static/zh-asr.worker.js`.
+ * exclusive ways: transformers.js (the Moonshine English module) goes through
+ * `import()`, so it must live in a module worker, while sherpa-onnx's published
+ * runtime is a pair of classic scripts that install globals, so *both* sherpa
+ * modules — Chinese SenseVoice and the punctuated English NeMo one — live in
+ * `static/sherpa-asr.worker.js`.
+ *
+ * The split follows the runtime, not the language: two of the three modules are
+ * served by the same worker script, told apart by the module id it is handed.
  *
  * That URL is a plain string built from BASE_URL on purpose: writing
  * `new URL('…', import.meta.url)` here would make the bundler treat the file as
  * a worker chunk and emit it as a module, and a module worker has no
- * `importScripts` — which is the one API the Chinese runtime needs.
+ * `importScripts` — which is the one API the sherpa runtime needs.
  */
-function createAsrWorker(lang: Lang): Worker {
-  if (moduleFor(lang).engine === 'sherpa-zh') {
-    return new Worker(`${import.meta.env.BASE_URL}zh-asr.worker.js`)
+function createAsrWorker(module: ModuleId): Worker {
+  if (moduleSpec(module).engine !== 'moonshine') {
+    return new Worker(`${import.meta.env.BASE_URL}sherpa-asr.worker.js`)
   }
   return new Worker(new URL('../../workers/asr.worker.ts', import.meta.url), {
     type: 'module',
@@ -219,8 +223,12 @@ export class AsrWorkerClient {
    * language switch would throw away a model that answers both. Callers compare
    * this, never the language they asked for: after a zh → ko switch the resident
    * client is still the one the request for `zh` created, and that is correct.
+   *
+   * The comparison matters just as much for English, where the two modules are a
+   * *user setting*: switching Moonshine ⇄ Parakeet has to tear the worker down,
+   * because a worker holds exactly one recognizer and its model file.
    */
-  readonly moduleLang: ModuleLang
+  readonly module: ModuleId
   private readonly worker: Worker
   onResult:
     | ((result: {
@@ -244,11 +252,11 @@ export class AsrWorkerClient {
    * which is the difference between a real install dialog and one that marks a
    * 235 MB model as installed the instant you click.
    */
-  private pendingLoad: { lang: Lang; settle: (err?: Error) => void } | null = null
+  private pendingLoad: { module: ModuleId; settle: (err?: Error) => void } | null = null
 
-  constructor(lang: Lang) {
-    this.moduleLang = moduleLangFor(lang)
-    this.worker = guard(createAsrWorker(lang), 'asr')
+  constructor(module: ModuleId) {
+    this.module = module
+    this.worker = guard(createAsrWorker(module), 'asr')
     this.worker.onmessage = (event: MessageEvent) => {
       const msg = event.data as Record<string, unknown> & { type: string }
       switch (msg.type) {
@@ -318,18 +326,18 @@ export class AsrWorkerClient {
    * bytes have been downloaded, not after the request was sent. Rejects when the
    * worker reports a load failure, and only then can an install be recorded.
    */
-  load(lang: Lang, plan: DevicePlan | null): Promise<void> {
+  load(module: ModuleId, plan: DevicePlan | null): Promise<void> {
     // A second request supersedes the first; the old one must not hang forever.
     this.pendingLoad?.settle(new Error('已被新的加载请求取代'))
     const done = new Promise<void>((resolve, reject) => {
       this.pendingLoad = {
-        lang,
+        module,
         settle: (err) => (err ? reject(err) : resolve()),
       }
     })
     // The plan travels with the request: the verdict behind it lives in
     // `localStorage`, which a worker does not have. See `DevicePlan`.
-    this.worker.postMessage({ type: 'load', lang, plan })
+    this.worker.postMessage({ type: 'load', module, plan })
     return done
   }
 

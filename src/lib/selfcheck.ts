@@ -1,8 +1,14 @@
-import type { Lang } from './types'
+import type { Lang, ModuleId } from './types'
 import { getProvider, PROVIDER_LABEL, type MtProviderId } from './mt/providers'
 import { probeProvider } from './mt/probe'
 import { SpeechEngine, speechSupported } from './tts/speech'
-import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_LANGS, type ModuleLang } from './asr/models'
+import {
+  ASR_MODULES,
+  MODULE_CACHE_KEYS,
+  MODULE_IDS,
+  resolveEnModel,
+  type EnAsrModel,
+} from './asr/models'
 import { planDevice } from './asr/moonshine'
 import { isAppleMobile } from './asr/device'
 import type { LlmConfig } from './mt/types'
@@ -38,6 +44,11 @@ export interface SelfCheckOptions {
   tl: Lang
   googleApiKey: string
   llm: LlmConfig
+  /**
+   * The English-module preference, so the report can name the module that will
+   * actually run rather than the one a default would have picked.
+   */
+  enAsrModel?: EnAsrModel
   /** Runs a short burst to see where rate limiting starts. Off by default. */
   burst?: boolean
 }
@@ -97,9 +108,24 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
   }
 
   // --- speech recognition modules -----------------------------------------
-  for (const lang of MODULE_LANGS) {
-    const spec = ASR_MODULES[lang]
-    const installed = await isModuleCached(lang)
+  // Which English module `auto` means here, named out loud. It is the one line in
+  // this report that answers "why is this phone downloading 126 MB instead of 62?"
+  const enChoice = resolveEnModel(options.enAsrModel ?? 'auto')
+  if (options.sl === 'en') {
+    results.push({
+      label: '英文识别用哪个模块',
+      ok: 'warn',
+      detail: `${enChoice === 'parakeet' ? 'Parakeet TDT-CTC 110M int8（约 126 MB，只用 CPU）' : 'Moonshine Base（约 62 MB，桌面走显卡）'} · ${
+        options.enAsrModel === 'auto' || options.enAsrModel === undefined
+          ? `选择方式为自动，${isAppleMobile() ? 'iOS 上自动选 Parakeet' : '这个平台自动选 Moonshine'}`
+          : '在设置里手动指定'
+      }`,
+    })
+  }
+
+  for (const module of MODULE_IDS) {
+    const spec = ASR_MODULES[module]
+    const installed = await isModuleCached(module)
     results.push({
       label: `${spec.label}`,
       ok: installed ? true : 'warn',
@@ -218,9 +244,9 @@ async function burstProbe(
   }
 }
 
-async function isModuleCached(moduleLang: ModuleLang): Promise<boolean> {
+async function isModuleCached(module: ModuleId): Promise<boolean> {
   if (typeof caches === 'undefined') return false
-  const owned = MODULE_CACHE_KEYS[moduleLang]
+  const owned = MODULE_CACHE_KEYS[module]
   try {
     // Residency means the module's own bucket is there: for sherpa that is the
     // bucket it writes, for Moonshine the transformers.js cache. The old prefix

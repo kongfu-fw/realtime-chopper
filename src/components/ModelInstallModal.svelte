@@ -3,17 +3,16 @@
   import { session } from '../lib/app/state'
   import {
     ASR_MODULES,
-    MODULE_LANGS,
+    MODULE_IDS,
     MODULE_NAME,
     isMemoryFailure,
-    moduleLangFor,
-    type ModuleLang,
+    moduleIdFor,
   } from '../lib/asr/models'
   import { formatBytes, markModelInstalled, isModuleCurrent, settings } from '../lib/store/settings'
   import { info } from '../lib/log/store'
   import { diagnosticReport } from '../lib/diag'
   import { isAppleMobile } from '../lib/asr/device'
-  import type { Lang } from '../lib/types'
+  import type { Lang, ModuleId } from '../lib/types'
 
   interface Props {
     /** The language the user was trying to use, so we know where to continue. */
@@ -26,7 +25,7 @@
   let { want, ondone, oncancel }: Props = $props()
 
   const { model, failure } = session
-  let downloading = $state<ModuleLang | null>(null)
+  let downloading = $state<ModuleId | null>(null)
   let error = $state<string | null>(null)
   /** '' = not tried, 'ok' = on the clipboard, 'fail' = the report is on screen. */
   let copied = $state<'' | 'ok' | 'fail'>('')
@@ -51,7 +50,7 @@
   const memoryHint = $derived(
     rawError && isMemoryFailure(rawError)
       ? isAppleMobile()
-        ? 'iPhone 内存比较紧：先关掉其他 App 再试；只装英文模块（62 MB）基本都能装上。'
+        ? 'iPhone 内存比较紧：先关掉其他 App 再试；只装英文模块（62 MB / 126 MB）基本都能装上。'
         : '内存不够：关掉其他应用，或换用英文模块。'
       : '',
   )
@@ -98,21 +97,21 @@
    * module, and passing the module to `prepare` is what makes one download count
    * for both — the engine tells the languages apart from the audio itself.
    */
-  async function download(moduleLang: ModuleLang) {
-    downloading = moduleLang
+  async function download(module: ModuleId) {
+    downloading = module
     error = null
     copied = ''
     report = ''
     try {
-      info('storage', `开始安装识别模块：${ASR_MODULES[moduleLang].label}`, {
+      info('storage', `开始安装识别模块：${ASR_MODULES[module].label}`, {
         设备: navigator.userAgent,
         显卡加速: 'gpu' in navigator ? '浏览器有 WebGPU' : '没有 WebGPU，走 CPU',
       })
-      await session.prepare(moduleLang)
+      await session.prepare(module)
       // Only reachable once the module is genuinely usable — `prepare` no longer
       // resolves on "the request was sent".
-      markModelInstalled(moduleLang, ASR_MODULES[moduleLang].approxBytes, ASR_MODULES[moduleLang].version)
-      if (moduleLangFor(want) === moduleLang) {
+      markModelInstalled(module, ASR_MODULES[module].approxBytes, ASR_MODULES[module].version)
+      if (moduleIdFor(want, $settings.enAsrModel) === module) {
         ondone()
         return
       }
@@ -128,7 +127,7 @@
 </script>
 
 <Modal title="语音识别模块" onclose={downloading ? undefined : (reason) => oncancel(reason ?? '关闭')}>
-  {#each MODULE_LANGS as key (key)}
+  {#each MODULE_IDS as key (key)}
     <div class="module">
       <span class="name">{MODULE_NAME[key]}</span>
 

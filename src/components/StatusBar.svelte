@@ -32,7 +32,7 @@
     try {
       if (recording) {
         await session.stop()
-      } else if (!isLangInstalled($settings.sourceLang, $settings.installedModels)) {
+      } else if (!isLangInstalled($settings.sourceLang, $settings.installedModels, $settings.enAsrModel)) {
         // Requirement 11: prompt on first use, and only for the language the
         // user actually selected — never pre-download every model.
         installLang.set($settings.sourceLang)

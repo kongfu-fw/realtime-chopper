@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: host
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code

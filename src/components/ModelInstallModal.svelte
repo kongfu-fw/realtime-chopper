@@ -111,7 +111,7 @@
       // Only reachable once the module is genuinely usable — `prepare` no longer
       // resolves on "the request was sent".
       markModelInstalled(module, ASR_MODULES[module].approxBytes, ASR_MODULES[module].version)
-      if (moduleIdFor(want, $settings.enAsrModel) === module) {
+      if (moduleIdFor(want) === module) {
         ondone()
         return
       }

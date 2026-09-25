@@ -1,29 +1,21 @@
 /*
  * sherpa-onnx recognition worker.
  *
- * Runs both of the modules whose runtime is sherpa-onnx's browser WASM build:
+ * Runs the one module whose runtime is sherpa-onnx's browser WASM build:
  *
- *   zh       — SenseVoice-Small (int8, ~228 MB), Chinese/Korean
- *   en-nemo  — NVIDIA Parakeet TDT-CTC 110M (int8, ~126 MB), English, punctuated
+ *   zh  — SenseVoice-Small (int8, ~228 MB), Chinese/Korean
  *
- * They share every hard part — the runtime, the file-system hand-off, the
- * download accounting — and differ only in which two files are fetched and which
- * config key names them. So they share one worker, told apart by the module id
- * handed to `load`. See `src/lib/asr/models.ts` for the registry these ids mirror,
- * and `src/workers/asr.worker.ts` for the module-worker counterpart.
+ * It is the right model for Chinese and always was: non-autoregressive (one
+ * forward pass per utterance, roughly an order of magnitude faster than Whisper's
+ * token-by-token decode), and it recognises Chinese, English, Japanese, Korean and
+ * Cantonese in one model with inverse text normalisation — so Chinese speech with
+ * English words inside it survives, which a Mandarin-only CTC model cannot do.
  *
- * SenseVoice is the right model for Chinese and always was: it is
- * non-autoregressive (one forward pass per utterance, roughly an order of
- * magnitude faster than Whisper's token-by-token decode), and it recognises
- * Chinese, English, Japanese, Korean and Cantonese in one model with inverse text
- * normalisation — so Chinese speech with English words inside it survives, which
- * a Mandarin-only CTC model cannot do.
- *
- * The English one was chosen for a different reason: it is the only English model
- * available that outputs punctuation and capitalisation, which matters twice
- * downstream (sentence splitting for the translator, prosody for the reader). It
- * is a NeMo CTC export, which is a config key this very runtime already carries —
- * see `nemoCtc` below.
+ * This worker used to serve a second module as well (`en-nemo`, NVIDIA Parakeet on
+ * the same runtime). It is gone and the pack table below says why; what matters
+ * here is that the *runtime* stays, because `zh` is built out of it. See
+ * `src/lib/asr/models.ts` for the registry these ids mirror, and
+ * `src/workers/asr.worker.ts` for the module-worker counterpart.
  *
  * What was actually missing was never the model, it was the runtime:
  *   - the npm `sherpa-onnx` package is Node-only (`require('./…-nodejs.js')`,
@@ -146,45 +138,30 @@ const PACKS = {
       },
     }),
   },
-  'en-nemo': {
-    cache: 'rc-model-en-sherpa-nemo',
-    repo:
-      'https://huggingface.co/VocaHQ/sherpa-onnx-nemo-parakeet-tdt-ctc-110m-en-int8/resolve/43869f73831659dd8b0ccee617ee42474b7aa974/',
-    engine: 'sherpa-parakeet-int8',
-    reason: 'sherpa-onnx WASM + Parakeet TDT-CTC 110M int8（CPU，自带标点）',
-    files: {
-      tokens: { name: 'tokens.txt', bytes: 9953, label: '下载词表' },
-      model: { name: 'model.int8.onnx', bytes: 131652171, label: '下载英文模型' },
-    },
-    // `nemoCtc` is the NeMo CTC branch of the offline recognizer, and its presence
-    // is the reason this model can be used at all without shipping a second
-    // runtime: it was verified on *both* sides of this pinned build — the glue
-    // declares the key in initSherpaOnnxOfflineModelConfig, and the wasm binary
-    // carries OfflineNemoEncDecCtcModelConfig and NemoNormalizeFeatures.
-    //
-    // No `featConfig` on purpose: the export carries its own `normalize_type`,
-    // `subsampling_factor` and `vocab_size` in the ONNX metadata, and the runtime
-    // reads those to configure the feature frontend for us.
-    config: (paths) => ({
-      modelConfig: {
-        debug: 0,
-        tokens: paths.tokens,
-        nemoCtc: { model: paths.model },
-      },
-    }),
-  },
+  // `en-nemo` sat here: NVIDIA Parakeet TDT-CTC 110M int8, English, punctuated,
+  // served through the `nemoCtc` branch of this same runtime. Measured against
+  // Moonshine on the same audio it lost — after Moonshine's four threads it was
+  // 1.8× slower (521→291 ms against Parakeet's 448 ms), twice the download, and
+  // its punctuation turned out not to be an advantage (Moonshine punctuates too),
+  // so English goes back to being one module and this table has one entry.
+  //
+  // Kept as a note rather than deleted, because the shape is reusable if an
+  // English model ever lands on this runtime again: `modelConfig: { tokens,
+  // nemoCtc: { model } }` with **no** `featConfig`, since the export carries its
+  // own `normalize_type`, `subsampling_factor` and `vocab_size` in the ONNX
+  // metadata and the runtime configures the feature frontend from those.
 }
 
 /**
  * Where inside the emscripten file system each pack's files are written.
  *
- * Per-module filenames rather than the remote ones, because both packs ship a
- * `tokens.txt`: two modules installed in one worker session would otherwise have
- * to overwrite each other's files.
+ * Prefixed with the module id rather than using the remote filename: every pack on
+ * this runtime ships a `tokens.txt`, so a worker that has mounted two modules in
+ * its lifetime would otherwise have to overwrite the file the first one's
+ * recognizer is still pointing at.
  */
 const FS_PATHS = {
   zh: { model: './model.zh.int8.onnx', tokens: './tokens.zh.txt' },
-  'en-nemo': { model: './model.en-nemo.int8.onnx', tokens: './tokens.en-nemo.txt' },
 }
 
 /** The built recognizer, its module, and the runtime they belong to. */
@@ -392,7 +369,7 @@ async function initRuntime() {
  * Writes one module's bytes into the runtime's file system.
  *
  * `canOwn` is the whole point: the file system keeps *this* buffer instead of
- * copying it, so a 126 MB model exists once in this worker rather than twice. The
+ * copying it, so a 228 MB model exists once in this worker rather than twice. The
  * tokens stay mounted for the lifetime of the recognizer; the model does not. No
  * reference to either is kept here, so once the file system lets go — see
  * `releaseModelFile` — nothing else pins the bytes.
@@ -628,7 +605,7 @@ function dataScriptUrl(text) {
  *
  * It is dropped only after one throwaway decode has proven the recognizer works
  * without it: the opposite failure — a silent read of a file that is no longer
- * there, 126 MB into a session — would be far worse than the memory it saves.
+ * there, 228 MB into a session — would be far worse than the memory it saves.
  */
 function releaseModelFile(Module, recognizer, pack, modelPath) {
   let stream = null

@@ -11,12 +11,11 @@
     TARGET_ORDER,
     LANG_LABEL,
   } from '../lib/store/settings'
-  import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS, MODULE_SHORT, resolveEnModel } from '../lib/asr/models'
+  import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS, MODULE_SHORT } from '../lib/asr/models'
   import { APP_ICONS, iconFor, iconPreviewUrl, type AppIconId } from '../lib/brand/logo'
   import { info } from '../lib/log/store'
   import type {
     Accelerator,
-    EnAsrModel,
     LlmFormat,
     LogLevelSetting,
     MtProviderId,
@@ -45,27 +44,6 @@
     forgetModel(module)
     await session.releaseModel()
     info('storage', `已清除 ${MODULE_SHORT[module]} 识别模块，下次使用需要重新下载`)
-  }
-
-  /**
-   * Switching the English module swaps a set of bytes, not a preference.
-   *
-   * So the resident recognizer has to go: only one is ever meant to be in memory,
-   * and the next start loads whichever the setting names instead of whatever the
-   * worker happens to be holding. Chinese and Korean are untouched by this — they
-   * are served by a third module this setting does not reach.
-   */
-  async function pickEnModel(choice: EnAsrModel) {
-    if (choice === $settings.enAsrModel) return
-    setSetting('enAsrModel', choice)
-    await session.releaseModel()
-    const chosen = resolveEnModel(choice)
-    info('ui', `英文识别换用${chosen === 'parakeet' ? ' Parakeet（只用 CPU）' : ' Moonshine'}模块`, {
-      说明:
-        choice === 'auto'
-          ? `按设备自动选，这台上面是${chosen === 'parakeet' ? ' Parakeet' : ' Moonshine'}`
-          : '下次开始录音时加载',
-    })
   }
 
   // Version-aware: a module whose bytes were replaced by a newer build is not
@@ -175,18 +153,10 @@
     </SettingRow>
 
     <SettingRow
-      label="英文用哪个识别模型"
-      help="两个都能用，区别是下载大小和走哪条路：Moonshine 小（62 MB），桌面上会走显卡加速；Parakeet 大（126 MB），只在 CPU 上跑，从构造上就不会去碰那一启用就把页面带崩的显卡加速，所以自动档在 iPhone / iPad 上选它。两个都输出标点和大小写（同一段音频实测），所以标点不是选哪个的依据。"
+      label="英文识别模型"
+      help="英文只有一个识别模型（Moonshine Base，约 62 MB）：桌面上会走显卡加速，iPhone / iPad 上自动用 CPU 加多线程——同一段音频实测比 Parakeet 更快也更小。Parakeet 已经从这个版本里去掉了。"
     >
-      <select
-        class="rc-select"
-        value={$settings.enAsrModel}
-        onchange={(e) => void pickEnModel((e.currentTarget as HTMLSelectElement).value as EnAsrModel)}
-      >
-        <option value="auto">自动（iPhone 用 Parakeet）</option>
-        <option value="moonshine">Moonshine · 62 MB</option>
-        <option value="parakeet">Parakeet · 126 MB · 只用 CPU</option>
-      </select>
+      <span class="value">Moonshine Base</span>
     </SettingRow>
 
     <SettingRow label="已下载的识别模块">
@@ -208,7 +178,7 @@
           {/if}
         </div>
       {/each}
-      <p class="dim note">中文和韩语共用同一个模块；英文有两个，用上面那个选项选。</p>
+      <p class="dim note">中文和韩语共用同一个模块；英文用 Moonshine。</p>
     </div>
   </section>
 

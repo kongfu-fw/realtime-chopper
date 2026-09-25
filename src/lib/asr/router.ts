@@ -13,13 +13,13 @@ import { MoonshineEngine, type DevicePlan } from './moonshine'
  * monolingual (Moonshine Base, a Chinese zipformer CTC), so a wrong guess does
  * not degrade gracefully, it produces nonsense.
  *
- * Only the transformers.js engines are built here. Both sherpa engines (Chinese
- * via SenseVoice, and the punctuated English one via NeMo CTC) run on a runtime
- * that can only be evaluated as a classic script, so they live in their own
- * worker (static/sherpa-asr.worker.js) and never reach this module worker at all.
+ * Only the transformers.js engine is built here. The sherpa one (Chinese and
+ * Korean, via SenseVoice) runs on a runtime that can only be evaluated as a
+ * classic script, so it lives in its own worker (static/sherpa-asr.worker.js) and
+ * never reaches this module worker at all.
  *
- * Note the argument: a *module*, not a language. English now has two modules and
- * the choice between them is the user's, so a language is not enough to say which
+ * Note the argument: a *module*, not a language. One module serves two languages
+ * (`zh` transcribes Korean as well), so a language is not enough to say which
  * bytes should load.
  */
 export function createEngine(module: ModuleId, plan: DevicePlan | null): AsrEngine {

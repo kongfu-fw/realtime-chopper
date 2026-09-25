@@ -10,13 +10,18 @@ export type Lang = SourceLang
 /**
  * A downloadable recognition module.
  *
- * Not the same thing as a language, and the difference is load-bearing in both
- * directions: one module serves two languages (`zh` transcribes Chinese *and*
- * Korean), and one language has two modules to choose from (`en` is Moonshine,
- * `en-nemo` is the sherpa NeMo one). Anything keyed by language alone gets one of
- * those two wrong.
+ * Not the same thing as a language, and the difference is still load-bearing in
+ * one direction: one module serves two languages (`zh` transcribes Chinese *and*
+ * Korean), so anything keyed by language alone gets that wrong.
+ *
+ * `en-nemo` (NVIDIA Parakeet on the sherpa runtime) used to be a second English
+ * module and is gone — measured on the same audio it was not faster on the CPU,
+ * was twice the download, and ran single-threaded because that runtime ships no
+ * pthreads, so Moonshine stayed. The id is still *parsed* rather than deleted:
+ * an install record, a cache bucket and a crash note written by an older build
+ * all still mention it. It is simply never resolved to a module.
  */
-export type ModuleId = 'en' | 'en-nemo' | 'zh'
+export type ModuleId = 'en' | 'zh'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 

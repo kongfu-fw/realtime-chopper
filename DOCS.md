@@ -27,6 +27,8 @@
 
 **一次只驻留一个模块**：切换源语言时先释放旧的再加载新的，所以手机上不会同时占几百兆内存。中文 ↔ 韩语之间不释放、不重载 —— 是同一份权重。
 
+**Moonshine 的解码预算自己算，不用库的默认值**：论文（arXiv:2410.15608v2）给的规矩是「每秒钟音频最多 6 个输出 token」，用来挡住短句上的重复输出。transformers.js 自己算的是 `floor(秒数) * 6` —— **只按整秒算**，而本项目 VAD 的分段下限是 600ms：实测 0.85 秒的真话（`And so my`）在库的预算下只剩 `And`（预算 0 被当成「一个 token」），自己算就是 `And so`。`src/lib/asr/moonshine.ts` 因此用 `round` 而不是 `floor`。代价写在那个常量旁边：真正的重复会多跑约 4 个 token 才被截断（实测 1.9 秒的片段：库 `…fellow Merr`，我们 `…Merrimeters and so my`）—— 论文的 6/s 是**限幅**不是纠错，两错相权，不丢真话更重要。
+
 ### 翻译：多提供方，自动降级
 
 `谷歌（主）→ 微软（免 key 兜底）→ BYOK LLM（可选，绝不自动回退）`
@@ -36,6 +38,48 @@
 ### 朗读：为什么不是 Edge TTS
 
 原始需求写的是 Edge TTS。它做不了：微软的朗读接口要一个页面无法设置的握手头（浏览器不允许给 WebSocket 加自定义头），扩展能绕、网页不能。用系统的 `speechSynthesis` 换来三件更重要的东西：不需要服务端、不会被第三方限速、**语速是随时可改的活属性**（需求 6 要求按队列长度调速；要是用 Edge TTS，每次调速都得重新合成音频）。代价写在 `src/lib/tts/speech.ts` 的头注释里：拿不到音频缓冲、长句会被浏览器截断（所以按标点切好再读）。
+
+### 为什么 Mac 的 Edge 有微软的音色，iPhone 的 Edge 没有
+
+因为「哪个浏览器」在这件事上不算数，**「哪个内核 + 哪个平台」才算**。应用读的是
+`speechSynthesis.getVoices()`，而这张表由平台填：
+
+| 平台 | 音色表 | 备注 |
+|---|---|---|
+| 桌面 Edge / Chrome（Chromium） | 系统音色 + 浏览器自己接的一批**在线音色** | 音色下拉里标了「（网络）」的就是它们；也是「Edge 的声音」的来源 |
+| macOS Safari | 系统音色（下载了优质/增强音色才会出现） | 只能在系统里装 |
+| iPhone / iPad 上**所有**浏览器（Safari、Edge、Chrome、Firefox） | **只有 iOS 系统音色**，而且几个浏览器列出来的完全一样 | Apple 要求 iOS 浏览器都用 WebKit，Edge 在那上面只是个壳，微软那套在线音色根本不存在于这个 API 里 |
+
+两件事容易混：
+
+- **应用从来没用过「Edge TTS」那个服务**，任何平台都没有 —— 它需要页面设不了的握手头（`Sec-MS-GEC`，见上）。你在 Mac Edge 上听到的「Edge 声音」是 Edge 自己接进来的在线音色，不是那个接口。
+- **所以 iPhone 上想让朗读好听一点，只能在系统里装音色**：设置 → 辅助功能 → 朗读内容 → 声音 → 中文（中国大陆）→ 选带「增强/优质」标记的（下载完会被 `getVoices()` 列出来，应用里直接能选）。iOS 系统自带的音色本来就比边缘的在线神经音色差一截，这是平台的差距，不是页面的 bug。
+- **一个可以自己验证的预言**：同一台手机上用 Safari 和 Edge 分别跑一次应用自检，「朗读音色」那几行应该一模一样；和 Mac 上的对一下，差的就纯粹是平台。
+
+### 手机上「朗读坏了」按这几条查
+
+`speechSynthesis` 在 iOS 上的失败**一律不抛错**，所以同一个「没声音」有五种完全不同的成因，都记在
+`src/lib/tts/speech.ts` 的头注释里。按可修的程度排：
+
+1. **系统把它留在暂停态**（切后台 / 锁屏时正在读）。iOS 会把合成器挂成 `paused`，而 `cancel()` 清不掉这个
+   标志：之后每次 `speak()` 都被收下、排队、永远不播，`end` 回调也不来 —— 直到刷新页面。现在每段朗读前都会
+   检查并 `resume()`，并把「原来是暂停态」写进日志。
+2. **结束回调根本不回来**（有没有第 1 条都可能）。以前这意味着朗读泵永远等下去：一句不读，后面全卡死。现在
+   有两个看门狗（「没开始」2.5 秒、「没结束」按字数放宽到 4 倍预算），超时就按 `stalled` 记一笔并跳过这句，
+   状态栏会说「朗读卡住了（这句已跳过）」。
+3. **在用户手势之外说话**。iOS 只允许页面在手势里发出第一句话，而朗读是识别管线驱动的、永远不是点出来的。
+   所以页面把**第一次点击**花在解锁上（`App.svelte` 里的 `pointerdown`），而不是等 `start()` 跑到那一步 ——
+   那时模型下载早就把手势等没了。
+4. **开麦把系统朗读降级了**（这条页面修不了，只能说明）。同时开麦克风会把 iOS 的音频会话切到
+   `play-and-record`，Safari 会把「系统朗读」往听筒或极小音量上送：`end` 照样触发、队列照样走空、就是听不见。
+   这正是本应用的结构（全程全双工），所以真机上的处方是**戴耳机**；诊断报告里的「语音会话」一行会写死这个
+   状态（`navigator.audioSession.type`），桌面和手机一对比就知道是不是它。
+5. **侧面的静音开关**。硬件开关会静掉系统朗读，页面无法检测，也无法绕过。
+6. **别的应用占着系统语音引擎**（旁白、听写、第三方 TTS）：这时 `speak()` 会被收下然后丢弃，`start`
+   和 `error` 一个都不来。这就是「没开始」那个看门狗存在的理由：旧代码会在这里永远等下去。
+
+想一次分清是哪种：设置里的自检有一行**「朗读试读」**，它会真读一句短句并报出三种结局之一（读完 / 没等到回调 /
+被拒绝）以及当时的语音会话与音色数；诊断报告里另外有「朗读：… 暂停态：… 语音会话：…」一行。
 
 ---
 
@@ -128,19 +172,24 @@ design/                设计稿原图（几 MB 那种）：不进构建、不�
 - **`static/sherpa-asr.worker.js`**：它必须是一个 classic 脚本（sherpa 的 glue 是脚本作用域的
   lexical 声明），所以它不能 import 我们的模块 —— 里面 `PACKS` 的资源清单和
   `src/lib/asr/models.ts` 里的版本号是配套的，改一边要改另一边。它的运行时固定钉在
-  `9d5fc71` 那个 commit 上：那份构建同时带 `OfflineRecognizer` 的 SenseVoice 和 NeMo CTC
-  两条分支（`nemoCtc` 键在 glue 里、`OfflineNemoEncDecCtcModelConfig` 在 wasm 里），
-  这是两个模块能共用一个运行时的唯一原因。换 commit 前请把这两处重新确认一遍。
+  `9d5fc71` 那个 commit 上（那份构建带 SenseVoice 分支，也带 `nemoCtc` /
+  `OfflineNemoEncDecCtcModelConfig` —— 后者是已移除的英文模块用过的分支，留着不影响中文）。
+  换 commit 前请重新确认 `OfflineRecognizer` 和 `_SherpaOnnxFileExists` 这两处接口还在。
 
-**英文那个 int8 模型从哪来（一次性说清，免得以后又要重新查）**
+**已移除：英文的第二个模块（Parakeet）**
 
-`VocaHQ/sherpa-onnx-nemo-parakeet-tdt-ctc-110m-en-int8` 是把 NVIDIA 官方 fp32 导出
-量化成 `QUInt8` 后的产物，模型文件 131,652,171 字节、词表 9,953 字节，两者都有 SHA-256。
-它自带 `quantize.py`，钉死了上游 fp32 的 revision，所以**不必信任上传者**：本地重跑一遍
-就能得到同样字节并核对哈希。注意上游 `csukuangfj/…-36000-int8` 那个同名仓库是个空壳
-（`main` 上只有 `.gitattributes`，`model.int8.onnx` 404，但占着 125 MiB 的孤儿 LFS）——
-那个不能用作来源。想本地复现要 Python ≥3.10 加 `onnx==1.23.0` / `onnxruntime==1.30.0`。
-实测：7.44 秒英文音频，int8 推理 467 ms（RTF ≈ 0.06，桌面 CPU），输出自带标点与大小写。
+`VocaHQ/sherpa-onnx-nemo-parakeet-tdt-ctc-110m-en-int8`（NVIDIA Parakeet TDT-CTC 110M，
+int8，126MB，走 sherpa WASM）从这一版起不再是可选项 —— 实测它**在这台机器上更慢也更重**：
+同一段 7.43 秒音频，单线程 448ms，而 Moonshine 单线程 521ms、**四线程 291ms**（sherpa 那份
+运行时没带 pthread，永远拿不到多线程）；体积是 Moonshine 的两倍；标点也不是它的优势（实测
+Moonshine 一样带标点和大小写）。精度上它确实更好（官方数字：八套测试里赢七套，LS-clean
+2.40% 对 Moonshine 的 3.23%），但那是服务端 fp32/TDT 的数字，代价是两倍内存和更慢的句子延迟。
+所以英文回到只有一个模块。
+
+残留清理是自动的：`en-nemo` 的缓存桶（`rc-model-en-sherpa-nemo`，约 126MB）在启动时按
+「已退役前缀」删掉，安装记录一起忘掉；崩溃笔记里留下的 `en-nemo` 也会被 `moduleName()` 认出来
+写成「英文识别模块（Parakeet，已移除）」，不会变成 `undefined`。`static/sherpa-asr.worker.js`
+的 `PACKS` 里留了一条注释，记着它当时需要的配置形状（`nemoCtc`，且**不要** `featConfig`）。
 
 ---
 
@@ -160,17 +209,16 @@ docker compose up -d --build      # 默认只监听 127.0.0.1:8080
 
 - **外放会自己翻自己**：应用在朗读时麦克风照样在听（全程全双工，这是定案的行为）。戴耳机就没这个问题，「先戴上耳机」那个提示弹窗说的就是这件事。
 - **第一次点录音要等**：模型下载完之后还有一段**没有进度可报**的引擎启动时间（建 ONNX 会话 / 解包 wasm 运行时），这台机器上量到 6.6 秒（权重在缓存里）到约 20 秒（冷下载）不等。弹窗会明确显示「正在启动识别引擎」，不会再假装进度条卡住，但这段等待本身是真实的。
-- **多线程只对 Moonshine 生效**：`SharedArrayBuffer` 需要 COOP/COEP，这两个头**已经开了**（nginx 与 vite 都配了，代价和坑见 `DOCKER.md`），桌面实测**快约 1.8 倍**（同一段 7.43 秒音频、同一 q8：单线程 521～526ms → 4 线程 280～291ms，转写文本逐字不变）。但 **sherpa 那份运行时是彻底单线程的**（胶水里连 `PThread`/`Atomics` 都没有，没带 `-pthread` 编的），所以 **Parakeet 和 SenseVoice 在任何设备上都不会变快**。
-- **iOS**：Safari 在标签页切到后台时会停止朗读；`apple-touch-icon` 从来不认 SVG（所以有 180px 的 PNG 兜底）；长期不用的站点存储会被系统回收，应用会主动请求 `storage.persist()`。
+- **多线程只对英文（Moonshine）生效**：`SharedArrayBuffer` 需要 COOP/COEP，这两个头**已经开了**（nginx 与 vite 都配了，代价和坑见 `DOCKER.md`），桌面实测**快约 1.8 倍**（同一段 7.43 秒音频、同一 q8：单线程 521～526ms → 4 线程 280～291ms，转写文本逐字不变）。但 **sherpa 那份运行时是彻底单线程的**（胶水里连 `PThread`/`Atomics` 都没有，没带 `-pthread` 编的），所以 **中文（SenseVoice）在任何设备上都不会变快** —— 这也是移除 Parakeet 的原因之一。
+- **iOS 上的朗读**：Safari 在标签页切到后台时会停止朗读，把合成器留在暂停态，而 `cancel()` 清不掉它（页面刷新才行）；同时开麦克风还会把系统朗读降级到听筒。五条成因和对应的处理见上面「手机上『朗读坏了』按这几条查」。另外 `apple-touch-icon` 从来不认 SVG（所以有 180px 的 PNG 兜底）；长期不用的站点存储会被系统回收，应用会主动请求 `storage.persist()`。
 - **已经装到桌面的图标不会跟着换**：浏览器只在「安装/添加到主屏幕」那一刻读 manifest，设置里换图标后要删掉重新添加。
 - **中文识别要先准备 240MB**：中韩共用一个模块，这是「一次只驻留一个模块」的取舍。
 - **iPhone / iPad 上不要用显卡加速**：实测（iPhone 14 Pro · iOS 18.7 · Safari 26.6，英文模块）是一启用 WebGPU 就在 ~2.7 秒后整页被系统关掉，两次都一样，没有任何异常可捕。所以 Apple 移动端 WebKit 的自动档直接走 CPU，并且「因为显卡加速崩的」只封显卡、不封模块（崩一次就自动改用 CPU，不会连着崩）。想要显卡也可以在设置里手动选「显卡优先」。
   - **同在真机上已确认可行**：同一台 iPhone、同一个英文模块（Moonshine Base 62MB）改走 CPU（q8）之后**正常识别出文字**。所以「手机跑不了本地识别」不成立，成立的是「手机别走 WebGPU」；代价是 CPU 档比显卡档慢，句子的延迟会明显一些。
-  - 另一条根治的路已经接上了：自动档在 iOS 上用 Parakeet（sherpa WASM），那条路**没有** WebGPU 可走，所以那边的自动档根本不会去请求显卡。
-- **英文有两个模块，选哪个是设备相关的**：Moonshine Base（62MB，走 transformers.js）和 Parakeet TDT-CTC 110M int8（126MB，走 sherpa WASM）。设置里的默认档是「自动」，在 Apple 移动端 WebKit 上选 Parakeet，桌面自动档选 Moonshine。主要理由是**崩溃面**：Parakeet 走 CPU，从构造上就不存在显卡加速那条会把整页带崩的路；Moonshine 桌面走 WebGPU，而 WebGPU 恰恰是 iOS 上待验证的那条。
-  - 一条要更正的旧说法：文件里以前写着「Moonshine 不带标点」。**实测是错的** —— 同一段 LibriSpeech 音频上，Moonshine q8 输出 `"…observed Phoebe, turning away her eyes. It is certainly very like the old portrait."`，逗号和句号都在。两个模块都带标点，所以 PnC 不构成选择依据。
-  - 两个模块的真实取舍现在是这样（同一段音频，Mac）：**体积** 62MB vs 126MB（手机内存上差别很大）；**单线程 CPU** Moonshine 526ms vs Parakeet 467ms；**多线程 CPU** Moonshine 291ms（Parakeet 拿不到，见上一条）；**精度** Parakeet 有官方数字（LS-clean 2.40%），Moonshine 在这套器件上没有同类数字可比。所以手机自动档选 Parakeet 买的是"不会崩 + 精度有据"，付的是 60MB 内存和更慢的 CPU 推理。
-- **iPhone 上内存最紧**：这个模块启动时要同时装下文件系统里的模型文件（中文 228MB、英文 Parakeet 126MB）和 ONNX 会话里的权重，而 iOS 上的浏览器给一个页面大约 1～1.5GB。这一版把模型进内存的路换掉了（不再走运行时自带的 `.data` 打包 + XHR 那条路，那条路会把最大那个文件常年钉住两份），并且识别器建好后连文件系统里那份和我们自己那份一起放掉（自检通过才放，实测释放后同一段语音仍逐字正确）。峰值因此明显低于以前，但**在真机上仍可能装不下**。真装不上时不会再让你反复看闪屏：连续两次之后，点录音会直接告诉你「这台设备装不下这个模块，先别试了」。
+  - 所以现在保护 iOS 的只剩这一层：自动档在 Apple 移动端 WebKit 上先看「上次用显卡是不是把页面带崩过」，崩过就直接选 CPU（`device.ts` 的 `readGpuVerdict` / `gpuBlockReason`）。想手动试显卡随时可以在设置里选「显卡优先」。
+- **英文只有一个模块**：Moonshine Base（62MB，走 transformers.js，桌面可用 WebGPU、多线程）。第二个英文模块（Parakeet TDT-CTC 110M int8，126MB）已移除，取舍与残留清理见上面「已移除：英文的第二个模块（Parakeet）」。
+  - 一条要更正的旧说法：文件里以前写着「Moonshine 不带标点」。**实测是错的** —— 同一段 LibriSpeech 音频上，Moonshine q8 输出 `"…observed Phoebe, turning away her eyes. It is certainly very like the old portrait."`，逗号和句号都在。所以标点不能当作换模块的理由。
+- **iPhone 上内存最紧**：这个模块启动时要同时装下文件系统里的模型文件（中文 228MB、英文 62MB）和 ONNX 会话里的权重，而 iOS 上的浏览器给一个页面大约 1～1.5GB。这一版把模型进内存的路换掉了（不再走运行时自带的 `.data` 打包 + XHR 那条路，那条路会把最大那个文件常年钉住两份），并且识别器建好后连文件系统里那份和我们自己那份一起放掉（自检通过才放，实测释放后同一段语音仍逐字正确）。峰值因此明显低于以前，但**在真机上仍可能装不下**。真装不上时不会再让你反复看闪屏：连续两次之后，点录音会直接告诉你「这台设备装不下这个模块，先别试了」。
 - **手机请用 https 打开**：用局域网 `http://192.168.…` 打开时浏览器会同时收回麦克风、Cache Storage 和 WebGPU，应用会在状态栏直接说明这一点。
 
 ---

@@ -1,5 +1,4 @@
 import type { Lang, ModuleId } from '../types'
-import { isAppleMobile } from './device'
 
 /**
  * Speech-recognition module registry.
@@ -9,13 +8,18 @@ import { isAppleMobile } from './device'
  * plan is fixed — one single-language model per source language, loaded
  * lazily, never more than one resident at a time.
  *
- * The registry is keyed by *module*, not by language, and that distinction has
- * become load-bearing: `zh` and `ko` are one module (so the same download serves
- * both), while `en` has two (Moonshine on transformers.js, and a sherpa NeMo CTC
- * model with punctuation). A lookup keyed by language cannot express either case.
+ * The registry is keyed by *module*, not by language, and that distinction is
+ * load-bearing: `zh` and `ko` are one module, so the same download serves both and
+ * a lookup keyed by language cannot express that.
+ *
+ * There are two modules here and there might not be, on purpose: `en-nemo`
+ * (NVIDIA Parakeet TDT-CTC 110M int8 on the sherpa runtime) was built, measured
+ * against Moonshine on the same audio, and removed — see `types.ts` for what the
+ * numbers said. Its ids, cache bucket and crash-note spelling are still handled
+ * here, because a phone that installed it is holding the leftovers.
  */
 
-export type AsrEngineId = 'moonshine' | 'sherpa-zh' | 'sherpa-nemo'
+export type AsrEngineId = 'moonshine' | 'sherpa-zh'
 
 /**
  * The language a module transcribes.
@@ -25,31 +29,41 @@ export type AsrEngineId = 'moonshine' | 'sherpa-zh' | 'sherpa-nemo'
 export type ModuleLang = 'en' | 'zh'
 
 /** Every module, in the order the install dialog shows them (smallest first). */
-export const MODULE_IDS: readonly ModuleId[] = ['en', 'en-nemo', 'zh']
+export const MODULE_IDS: readonly ModuleId[] = ['en', 'zh']
 
 /** Title of each module in the install dialog. */
 export const MODULE_NAME: Record<ModuleId, string> = {
   en: '英文识别模块',
-  'en-nemo': '英文识别模块（Parakeet）',
   zh: '中文和韩语识别模块',
 }
 
 /** Shorter form, for the settings list where a size sits next to it. */
 export const MODULE_SHORT: Record<ModuleId, string> = {
   en: '英文 · Moonshine',
-  'en-nemo': '英文 · Parakeet',
   zh: '中文 / 韩语',
+}
+
+/**
+ * Modules this build no longer ships, spelled the way the id is spelled.
+ *
+ * `en-nemo` is the live example. A crash note is written by whatever build was
+ * running at the time — which can be an older one — so a module that has since
+ * been removed has to survive the lookup as words instead of indexing the table
+ * to `undefined` and printing that.
+ */
+const RETIRED_MODULE_NAME: Record<string, string> = {
+  'en-nemo': '英文识别模块（Parakeet，已移除）',
 }
 
 /**
  * A module id from a crash note, in words.
  *
- * The note is written by an *older* build's `localStorage` as often as by this
- * one, so an id we no longer ship has to survive the lookup instead of indexing
- * it to `undefined` and printing that.
+ * Never throws on an unknown id: the caller is already reporting a failure, and
+ * "那个模块" is a worse answer than the raw id.
  */
 export function moduleName(id: string): string {
-  return (MODULE_NAME as Record<string, string | undefined>)[id] ?? id
+  const table = MODULE_NAME as Record<string, string | undefined>
+  return table[id] ?? RETIRED_MODULE_NAME[id] ?? id
 }
 
 export interface AsrModuleSpec {
@@ -77,16 +91,6 @@ export interface AsrModuleSpec {
    * purely so the app can say where a download comes from.
    */
   source?: string
-  /**
-   * Whether this model emits punctuation and capitalisation on its own.
-   *
-   * Worth a field rather than prose in a label: downstream, the source text feeds
-   * both the translator and the reader, and a punctuated transcript is better for
-   * both — sentence splitting for translation and prosody for the read-out. It is
-   * the only reason the second English module exists, so the UI is allowed to say
-   * so out loud.
-   */
-  punctuated?: boolean
 }
 
 export const ASR_MODULES: Record<ModuleId, AsrModuleSpec> = {
@@ -98,30 +102,6 @@ export const ASR_MODULES: Record<ModuleId, AsrModuleSpec> = {
     hfModelId: 'onnx-community/moonshine-base-ONNX',
     approxBytes: 62 * 1024 * 1024,
     version: 'moonshine-base-onnx',
-  },
-  'en-nemo': {
-    id: 'en-nemo',
-    lang: 'en',
-    engine: 'sherpa-nemo',
-    label: '英文识别模块（Parakeet TDT-CTC 110M int8）',
-    // NVIDIA's Parakeet TDT-CTC 110M, quantised to int8 and re-exported for
-    // sherpa-onnx, so it runs on the *same* WASM runtime the Chinese module
-    // already uses — the one whose glue and binary were verified to carry both
-    // `nemoCtc` and `OfflineNemoEncDecCtcModelConfig`. That is the whole point of
-    // choosing this model over a transformers.js one on a phone: no WebGPU, no
-    // onnxruntime-web, and a single 126 MB graph instead of a 458 MB fp32 one.
-    //
-    // It is the *only* English module here whose output is punctuated and cased.
-    //
-    // Sizes are the measured bytes of the two files it fetches:
-    //   model.int8.onnx 131,652,171 + tokens.txt 9,953
-    // The publisher also lists SHA-256 for both, and ships the quantisation
-    // script pinned to the fp32 revision it was built from — see DOCS.md, which
-    // is where the supply-chain story for this file lives.
-    source: 'VocaHQ/sherpa-onnx-nemo-parakeet-tdt-ctc-110m-en-int8',
-    approxBytes: 131652171 + 9953,
-    version: 'parakeet-tdt-ctc-110m-int8-2026-09-19',
-    punctuated: true,
   },
   zh: {
     id: 'zh',
@@ -144,32 +124,6 @@ export const ASR_MODULES: Record<ModuleId, AsrModuleSpec> = {
 }
 
 /**
- * Which English module to use.
- *
- * `auto` is the interesting value and the default: it resolves per device rather
- * than per user, because the two modules trade download size against output
- * quality and the trade lands differently on a phone than on a desktop.
- */
-export type EnAsrModel = 'auto' | 'moonshine' | 'parakeet'
-
-/**
- * Turns the preference into a concrete choice.
- *
- * `auto` picks the NeMo module on Apple's mobile WebKit — not because the phone
- * needs a smaller model (it is the *larger* of the two, 126 MB against 62 MB) but
- * because of what it does *not* need: the transformers.js path is the only one
- * that can reach for WebGPU, and on iOS that request is what takes the whole page
- * down (see `device.ts`). Running English on the sherpa runtime removes that
- * failure mode by construction instead of guarding against it, and pays for it
- * with a bigger one-time download. It also happens to be the only English module
- * that produces punctuation.
- */
-export function resolveEnModel(choice: EnAsrModel): 'moonshine' | 'parakeet' {
-  if (choice === 'moonshine' || choice === 'parakeet') return choice
-  return isAppleMobile() ? 'parakeet' : 'moonshine'
-}
-
-/**
  * Which module transcribes a given source language.
  *
  * Korean runs on the Chinese module, and that is a deliberate choice rather than
@@ -183,24 +137,17 @@ export function resolveEnModel(choice: EnAsrModel): 'moonshine' | 'parakeet' {
  * them costs nothing, not even a reload, because the model decides the language
  * of each utterance from the audio itself.
  */
-export function moduleIdFor(lang: Lang, enModel: EnAsrModel = 'auto'): ModuleId {
-  if (lang !== 'en') return 'zh'
-  return resolveEnModel(enModel) === 'parakeet' ? 'en-nemo' : 'en'
+export function moduleIdFor(lang: Lang): ModuleId {
+  return lang === 'en' ? 'en' : 'zh'
 }
 
 export function moduleSpec(id: ModuleId): AsrModuleSpec {
   return ASR_MODULES[id]
 }
 
-export function moduleFor(lang: Lang, enModel: EnAsrModel = 'auto'): AsrModuleSpec {
-  return ASR_MODULES[moduleIdFor(lang, enModel)]
+export function moduleFor(lang: Lang): AsrModuleSpec {
+  return ASR_MODULES[moduleIdFor(lang)]
 }
-
-/** The English modules, in the order the settings picker shows them. */
-export const EN_MODULE_CHOICES: readonly { id: Exclude<EnAsrModel, 'auto'>; module: ModuleId }[] = [
-  { id: 'moonshine', module: 'en' },
-  { id: 'parakeet', module: 'en-nemo' },
-]
 
 /**
  * Turns a module-download failure into one short sentence.
@@ -259,17 +206,20 @@ export function isMemoryFailure(message: string): boolean {
  */
 export const MODULE_CACHE_KEYS: Record<ModuleId, readonly string[]> = {
   en: ['transformers-cache'],
-  'en-nemo': ['rc-model-en-sherpa-nemo'],
   zh: ['rc-model-zh-sherpa-zh'],
 }
 
 /**
- * Cache prefixes this build no longer reads.
+ * Cache buckets this build no longer reads.
  *
- * The dedicated Korean model is gone (Korean runs on the Chinese module now), so
- * anyone who installed it is holding ~62 MB that nothing will ever open again.
+ * Two modules are gone and their bytes are still on disk: the dedicated Korean
+ * model (Korean runs on the Chinese module now, ~62 MB) and the Parakeet English
+ * module (~126 MB). Nothing will ever open either of them again, and on a phone
+ * that is most of a quota.
+ *
+ * Matched as a prefix, so a bucket this worker created with a suffix still goes.
  */
-const RETIRED_CACHE_PREFIXES = ['rc-model-ko-']
+const RETIRED_CACHE_PREFIXES = ['rc-model-ko-', 'rc-model-en-sherpa-nemo']
 
 /** Deletes caches from retired modules; returns what went, so it can be logged. */
 export async function purgeRetiredModuleCaches(): Promise<string[]> {

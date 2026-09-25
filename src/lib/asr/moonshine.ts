@@ -15,6 +15,10 @@ import {
  * CMVN code of our own — and it is the only one of our two runtimes that can
  * use WebGPU, so this is the path the plan's "WebGPU first, WASM fallback"
  * decision actually applies to. sherpa-onnx's WASM build is CPU-only.
+ *
+ * One decode parameter is set by hand rather than left to the library: the output
+ * token budget, taken from this model's paper instead of from the library's
+ * whole-seconds approximation of it (`TOKENS_PER_SECOND`).
  */
 
 export interface LoadProgress {
@@ -100,6 +104,50 @@ export interface DeviceChoice {
   device: 'webgpu' | 'wasm'
   dtype: 'fp32' | 'q8' | 'q4'
   reason: string
+}
+
+/** Every segment in this app is already 16 kHz mono (`SpeechSegment`). */
+const SAMPLE_RATE = 16000
+
+/**
+ * How many output tokens a segment is allowed, from the model's own paper.
+ *
+ * Moonshine repeats itself on short utterances, so its authors' evaluation uses
+ * "a heuristic limit of 6 output tokens per second of audio to avoid repeated
+ * output sequences" (arXiv:2410.15608v2). transformers.js applies a version of
+ * that rule — `Math.floor(audio.length / rate) * 6`, i.e. **whole seconds only** —
+ * and for the segments this app actually produces that is measurably too tight:
+ * the VAD emits from 600 ms up (`minSegMs`), so anything under a second gets a
+ * budget of 0, which `generate` treats as "one token".
+ *
+ * Measured on this repo (Moonshine Base q8 on wasm, 0.6–1.9 s slices of a known
+ * 11 s speech sample, real audio):
+ *
+ *   0.85 s in  → library budget 0  → "And"          (the rest of the words are lost)
+ *              → our budget 5      → "And so"
+ *   1.10 s in  → library budget 6  → "And so my"     (identical either way)
+ *   1.90 s in  → library budget 6  → "And so my fellow Merr"
+ *              → our budget 11     → "…Merrimeters and so my"
+ *
+ * So the trade is explicit and worth keeping: the paper's rate, rounded rather
+ * than floored, stops sub-second utterances from being cut to their first word —
+ * and lets a genuine repetition run ~4 tokens longer before the cap bites it. The
+ * cap exists to *bound* looping (the paper keeps the same limit on datasets where
+ * WER is still >100%), not to make every loop short, so under-budgeting real words
+ * is the worse of the two errors. Do not "fix" this back to `floor` — a segment
+ * shorter than a second is normal here, not an edge case.
+ *
+ * Passing the budget in the call options works because the ASR pipeline spreads
+ * caller options *after* its own (`{ max_new_tokens, ...kwargs, ...inputs }` in
+ * `_call_moonshine`), so ours wins. A future transformers.js could reorder that;
+ * if it does, this silently reverts to the floor-based rule above — which is why
+ * the numbers are written down here instead of only in the commit.
+ */
+const TOKENS_PER_SECOND = 6
+
+/** The paper's per-second budget for one clip. `1` is a floor, nothing more. */
+function tokenBudget(samples: number): number {
+  return Math.max(1, Math.round((samples / SAMPLE_RATE) * TOKENS_PER_SECOND))
 }
 
 /**
@@ -238,9 +286,13 @@ export class MoonshineEngine {
     env.allowLocalModels = false
     env.useBrowserCache = true
     if (env.backends?.onnx?.wasm) {
-      // Threads need SharedArrayBuffer, which needs COOP/COEP headers. Those
-      // headers would also require every third-party response we consume to
-      // send CORP, so we stay single-threaded instead.
+      // Threads need SharedArrayBuffer, which needs COOP/COEP headers — the pair
+      // `vite.config.ts` and `deploy/nginx.conf` now send, so this is 4 workers
+      // instead of 1 on a desktop (measured 1.8× on a 7.4 s clip). It stays a
+      // capability check rather than a constant because those headers belong to
+      // the deployment, not the build: the same bundle served without them
+      // reports `crossOriginIsolated === false`, and the honest answer there is
+      // one thread, not a throw on a missing `SharedArrayBuffer`.
       env.backends.onnx.wasm.numThreads = crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1
     }
 
@@ -291,7 +343,11 @@ export class MoonshineEngine {
   async recognize(samples: Float32Array): Promise<AsrResult> {
     if (!this.pipe) throw new Error('识别模块还没准备好')
     const started = performance.now()
-    const output = await this.pipe(samples, { sampling_rate: 16000 })
+    // `max_new_tokens` is ours, not the library's default: see `TOKENS_PER_SECOND`.
+    const output = await this.pipe(samples, {
+      sampling_rate: SAMPLE_RATE,
+      max_new_tokens: tokenBudget(samples.length),
+    })
     const text = Array.isArray(output) ? (output[0]?.text ?? '') : (output.text ?? '')
     return {
       text: text.trim(),

@@ -35,12 +35,10 @@ function guard(worker: Worker, name: string): Worker {
  * Two recognition workers exist because their runtimes are loaded in mutually
  * exclusive ways: transformers.js (the Moonshine English module) goes through
  * `import()`, so it must live in a module worker, while sherpa-onnx's published
- * runtime is a pair of classic scripts that install globals, so *both* sherpa
- * modules — Chinese SenseVoice and the punctuated English NeMo one — live in
- * `static/sherpa-asr.worker.js`.
+ * runtime is a pair of classic scripts that install globals, so the Chinese
+ * SenseVoice module lives in `static/sherpa-asr.worker.js`.
  *
- * The split follows the runtime, not the language: two of the three modules are
- * served by the same worker script, told apart by the module id it is handed.
+ * The split follows the runtime, not the language.
  *
  * That URL is a plain string built from BASE_URL on purpose: writing
  * `new URL('…', import.meta.url)` here would make the bundler treat the file as
@@ -224,9 +222,8 @@ export class AsrWorkerClient {
    * this, never the language they asked for: after a zh → ko switch the resident
    * client is still the one the request for `zh` created, and that is correct.
    *
-   * The comparison matters just as much for English, where the two modules are a
-   * *user setting*: switching Moonshine ⇄ Parakeet has to tear the worker down,
-   * because a worker holds exactly one recognizer and its model file.
+   * A worker holds exactly one recognizer and its model file, so a module change
+   * has to tear it down.
    */
   readonly module: ModuleId
   private readonly worker: Worker

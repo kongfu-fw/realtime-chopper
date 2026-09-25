@@ -210,9 +210,9 @@ wasm 才能起来。
    [session] asr 崩溃了
    ```
 
-   结果是**两个 sherpa 模块（Parakeet 和 SenseVoice）全废，而 Moonshine 好好的** —— 因为只有
-   Moonshine 的 worker 是构建产物、URL 带查询串，永远撞不上那个旧缓存条目。整个现象看起来
-   像 sherpa 的问题，其实一个都不是。
+   结果是**跑在那个运行时上的模块全废（当时的英文 Parakeet 和中文 SenseVoice），而 Moonshine
+   好好的** —— 因为只有 Moonshine 的 worker 是构建产物、URL 带查询串，永远撞不上那个旧缓存
+   条目。整个现象看起来像 sherpa 的问题，其实一个都不是。
 
    两边现在的行为（都是实测的，不是推的）：
 
@@ -229,8 +229,8 @@ wasm 才能起来。
    如果你手上是一个**更早的**浏览器会话撞上的旧毛病（这个仓库第一次开这个功能之前的缓存），
    硬刷新一次仍然是最快的解法 —— 但代码已经不需要你手动救了。
 2. **`static/sw.js` 的 `activate` 原来会删掉"所有"非当前外壳缓存** —— 包括识别引擎自己的
-   `rc-model-*` 桶和 transformers.js 的 `transformers-cache`。外壳版本一升，已装的 240MB 中文/
-   126MB 英文模块就全被清掉重下。现在只清理 `rc-shell-*` 前缀，外壳版本推到 `rc-shell-v2`。
+   `rc-model-*` 桶和 transformers.js 的 `transformers-cache`。外壳版本一升，已装的 240MB 中文和
+   英文模块就全被清掉重下。现在只清理 `rc-shell-*` 前缀，外壳版本推到 `rc-shell-v2`。
 
 ### 只对 Moonshine 有效
 
@@ -238,8 +238,9 @@ wasm 才能起来。
 `PThread` / `pthread_create` / `SharedArrayBuffer` / `Atomics` 出现次数全是 0
 （`sherpa-onnx-asr.js` 和 `sherpa-onnx-wasm-main-vad.js` 都查了），wasm 里只有一处弱桩
 `pthread_create`。这是没带 `-pthread` 编出来的产物，不是可以调参打开的开关。
-所以 **Parakeet 和 SenseVoice 在任何设备上都是单线程**；要它们多线程只能自己用 emscripten
-从 sherpa-onnx 源码重编一份，那是另一个工程。
+所以 **中文（SenseVoice）在任何设备上都是单线程**，从前的英文 Parakeet 也一样；要它多线程只能
+自己用 emscripten 从 sherpa-onnx 源码重编一份，那是另一个工程。这也是英文模块只用
+transformers.js 那条路（真能吃到多线程）的原因之一。
 
 ### 回滚
 

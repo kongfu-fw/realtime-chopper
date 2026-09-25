@@ -9,7 +9,7 @@ import { createEngine } from '../lib/asr/router'
  * Two things live here that must not move to the main thread:
  *  - inference itself (a phone on WebGPU or WASM will happily eat an entire
  *    core for the duration of a segment);
- *  - model lifecycle, because loading a 60–230 MB model must never block
+ *  - model lifecycle, because loading a 60–240 MB model must never block
  *    rendering.
  *
  * Recognition requests are chained rather than parallelised: `segQ` guarantees
@@ -23,7 +23,7 @@ let chain: Promise<void> = Promise.resolve()
 type Inbound =
   | {
       type: 'load'
-      /** Which module to load — a language is not enough, English has two. */
+      /** Which module to load — a language is not enough, `zh` serves `ko` too. */
       module: ModuleId
       /** Device decision made on the main thread; see `DevicePlan`. */
       plan: DevicePlan | null
@@ -51,9 +51,9 @@ self.onmessage = (event: MessageEvent) => {
 }
 
 async function handleLoad(module: ModuleId, plan: DevicePlan | null): Promise<void> {
-  // Compared by module, not by language: English has two modules and they are
-  // different sets of bytes, so treating "still English" as "still loaded" would
-  // silently keep serving the model the user just switched away from.
+  // Compared by module, not by language: one module serves two languages, so
+  // treating "still Chinese" as "still loaded" would rebuild a model that already
+  // answers Korean as well.
   if (engine && engine.module === module && engine.ready) {
     postMessage({ type: 'loaded', module, device: 'cached', reason: '模型已在内存中' })
     return

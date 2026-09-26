@@ -1,9 +1,10 @@
 import type { Lang, ModuleId } from './types'
-import { getProvider, PROVIDER_LABEL, type MtProviderId } from './mt/providers'
-import { probeProvider } from './mt/probe'
+import { getProvider, type MtProviderId } from './mt/providers'
+import { providerLabel, probeProvider } from './mt/probe'
+import { t } from './i18n/index.ts'
 import { speechSnapshot } from './tts/speech'
 import { createTtsEngine, type SpeakOutcome, type TtsConfig, type TtsEngine } from './tts/engine'
-import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS } from './asr/models'
+import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS, moduleLabel } from './asr/models'
 import { planDevice } from './asr/moonshine'
 import { isAppleMobile } from './asr/device'
 import type { LlmConfig } from './mt/types'
@@ -61,19 +62,25 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
   }
 
   // --- environment ---------------------------------------------------------
+  // Read once: the value is optional (only Chrome reports it) and reading it
+  // twice inside a template is how an `undefined` slips past the check.
+  const deviceMemoryGb = (navigator as { deviceMemory?: number }).deviceMemory
   results.push({
-    label: '运行环境',
+    label: t('运行环境'),
     ok: 'warn',
     detail: [
-      `安全上下文：${window.isSecureContext ? '是' : '否（麦克风会不可用）'}`,
-      `线程隔离（SharedArrayBuffer）：${crossOriginIsolated ? '是' : '否（WASM 单线程）'}`,
-      `CPU 核心：${navigator.hardwareConcurrency || '未知'}`,
-      `设备：${isAppleMobile() ? `iOS（网页可用内存约 1～1.5 GB）` : '非 iOS'}${
-        (navigator as { deviceMemory?: number }).deviceMemory
-          ? ` · 内存约 ${(navigator as { deviceMemory?: number }).deviceMemory} GB`
-          : ''
-      }`,
-      `显示语言：${navigator.language}`,
+      t('安全上下文：{state}', {
+        state: window.isSecureContext ? t('是') : t('否（麦克风会不可用）'),
+      }),
+      t('线程隔离（SharedArrayBuffer）：{state}', {
+        state: crossOriginIsolated ? t('是') : t('否（WASM 单线程）'),
+      }),
+      t('CPU 核心：{cores}', { cores: navigator.hardwareConcurrency || t('未知') }),
+      t('设备：{device}{memory}', {
+        device: isAppleMobile() ? t('iOS（网页可用内存约 1～1.5 GB）') : t('非 iOS'),
+        memory: deviceMemoryGb ? t(' · 内存约 {gb} GB', { gb: deviceMemoryGb }) : '',
+      }),
+      t('显示语言：{lang}', { lang: navigator.language }),
     ].join(' · '),
   })
 
@@ -82,9 +89,13 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
   // declines to try.
   const plan = planDevice('auto', 'high')
   results.push({
-    label: '识别加速方式',
+    label: t('识别加速方式'),
     ok: plan.primary.device === 'webgpu' ? true : 'warn',
-    detail: `将使用 ${plan.primary.device}（${plan.primary.dtype}）—— ${plan.primary.reason}`,
+    detail: t('将使用 {device}（{dtype}）—— {reason}', {
+      device: plan.primary.device,
+      dtype: plan.primary.dtype,
+      reason: plan.primary.reason,
+    }),
   })
 
   // --- storage -------------------------------------------------------------
@@ -94,15 +105,18 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
       const quotaGb = (estimate.quota ?? 0) / 1024 / 1024 / 1024
       const usageMb = (estimate.usage ?? 0) / 1024 / 1024
       results.push({
-        label: '存储空间',
+        label: t('存储空间'),
         ok: quotaGb > 1 ? true : 'warn',
-        detail: `可用配额约 ${quotaGb.toFixed(2)} GB，已用 ${usageMb.toFixed(1)} MB · 中文模块需要约 230 MB`,
+        detail: t('可用配额约 {quota} GB，已用 {used} MB · 中文模块需要约 230 MB', {
+          quota: quotaGb.toFixed(2),
+          used: usageMb.toFixed(1),
+        }),
       })
     } else {
-      results.push({ label: '存储空间', ok: 'warn', detail: '这个浏览器不提供存储配额信息' })
+      results.push({ label: t('存储空间'), ok: 'warn', detail: t('这个浏览器不提供存储配额信息') })
     }
   } catch {
-    results.push({ label: '存储空间', ok: 'warn', detail: '无法读取存储配额' })
+    results.push({ label: t('存储空间'), ok: 'warn', detail: t('无法读取存储配额') })
   }
 
   // --- speech recognition modules -----------------------------------------
@@ -110,11 +124,11 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
     const spec = ASR_MODULES[module]
     const installed = await isModuleCached(module)
     results.push({
-      label: `${spec.label}`,
+      label: moduleLabel(spec),
       ok: installed ? true : 'warn',
       detail: installed
-        ? '已缓存，可直接使用'
-        : `未安装 · 约 ${(spec.approxBytes / 1024 / 1024).toFixed(0)} MB 下载`,
+        ? t('已缓存，可直接使用')
+        : t('未安装 · 约 {mb} MB 下载', { mb: (spec.approxBytes / 1024 / 1024).toFixed(0) }),
     })
   }
 
@@ -122,21 +136,25 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
   for (const id of ['google', 'microsoft'] as MtProviderId[]) {
     const probe = await probeProvider(id, ctx)
     results.push({
-      label: `${PROVIDER_LABEL[id]}连通性`,
+      label: t('{provider}连通性', { provider: providerLabel(id) }),
       ok: probe.ok,
-      detail: probe.ok ? `${probe.ms} ms 往返` : `不可用：${probe.detail ?? '未知原因'}`,
+      detail: probe.ok
+        ? t('{ms} ms 往返', { ms: probe.ms })
+        : t('不可用：{reason}', { reason: probe.detail ?? t('未知原因') }),
     })
   }
 
   if (options.llm.apiKey.trim() || options.llm.format === 'gemini') {
     const probe = await probeProvider('llm', ctx, 15000)
     results.push({
-      label: `AI 模型连通性（${options.llm.model}）`,
+      label: t('AI 模型连通性（{model}）', { model: options.llm.model }),
       ok: probe.ok,
-      detail: probe.ok ? `${probe.ms} ms 往返` : `不可用：${probe.detail ?? '未知原因'}`,
+      detail: probe.ok
+        ? t('{ms} ms 往返', { ms: probe.ms })
+        : t('不可用：{reason}', { reason: probe.detail ?? t('未知原因') }),
     })
   } else {
-    results.push({ label: 'AI 模型连通性', ok: 'warn', detail: '未配置密钥，跳过' })
+    results.push({ label: t('AI 模型连通性'), ok: 'warn', detail: t('未配置密钥，跳过') })
   }
 
   // --- batching behaviour --------------------------------------------------
@@ -149,15 +167,22 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
     const ms = Math.round(performance.now() - started)
     const aligned = out.length === samples.length && out.every((t) => typeof t === 'string' && t.length > 0)
     results.push({
-      label: `${provider.label}批量能力`,
+      label: t('{provider}批量能力', { provider: t(provider.label) }),
       ok: aligned,
       detail: aligned
-        ? `一次请求 ${samples.length} 句正常，${ms} ms · 示例：${out[0]}`
-        : `返回 ${out.length} 句，与请求的 ${samples.length} 句不匹配`,
+        ? t('一次请求 {n} 句正常，{ms} ms · 示例：{sample}', {
+            n: samples.length,
+            ms,
+            sample: out[0],
+          })
+        : t('返回 {got} 句，与请求的 {asked} 句不匹配', {
+            got: out.length,
+            asked: samples.length,
+          }),
     })
   } catch (err) {
     results.push({
-      label: `${PROVIDER_LABEL[primary]}批量能力`,
+      label: t('{provider}批量能力', { provider: providerLabel(primary) }),
       ok: false,
       detail: err instanceof Error ? err.message : String(err),
     })
@@ -177,23 +202,31 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
       // this line is supposed to reveal.
       const voices = await tts.voicesFor(lang, 2500).catch(() => [])
       results.push({
-        label: `${labelOf(lang)}朗读音色（${tts.label}）`,
+        label: t('{lang}朗读音色（{engine}）', { lang: labelOf(lang), engine: tts.label }),
         ok: voices.length > 0 ? true : 'warn',
         detail:
           voices.length > 0
-            ? `${voices.length} 个可用 · 例：${voices.slice(0, 3).map((v) => v.name).join(' / ')}`
+            ? t('{n} 个可用 · 例：{list}', {
+                n: voices.length,
+                list: voices
+                  .slice(0, 3)
+                  .map((v) => v.name)
+                  .join(' / '),
+              })
             : options.tts.engine === 'edge'
-              ? 'TTS 代理没有返回音色：检查设置里的代理地址'
-              : '没有可用音色，去系统里装一个',
+              ? t('TTS 代理没有可用音色：检查设置里的代理地址')
+              : t('没有可用音色，去系统里装一个'),
       })
     }
     results.push(await speechProbe(tts, options.tl))
   } else {
     results.push({
-      label: '朗读音色',
+      label: t('朗读音色'),
       ok: false,
       detail:
-        options.tts.engine === 'edge' ? '没有填 TTS 代理地址' : '这个浏览器不支持 speechSynthesis',
+        options.tts.engine === 'edge'
+          ? t('没有填 TTS 代理地址')
+          : t('这个浏览器不支持 speechSynthesis'),
     })
   }
 
@@ -218,11 +251,15 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
  * line is loud on purpose — that is the measurement.
  */
 async function speechProbe(engine: TtsEngine, lang: Lang): Promise<CheckResult> {
-  const label = `朗读试读（${engine.label}）`
+  const label = t('朗读试读（{engine}）', { engine: engine.label })
   // Platform-specific state, sampled before speaking: `speak()` resumes a
   // synthesizer the system left paused, so afterwards it reads false either way.
   const before = engine.id === 'system' ? speechSnapshot() : null
-  const text = lang === 'en' ? 'Reading test, one two three.' : '朗读测试，一二三。'
+  // English literal, everything else through the translator: the dictionaries carry
+  // the sentence in each interface language, so a Korean interface reads the test
+  // sentence in Korean rather than in Chinese characters a Korean voice has no use
+  // for.
+  const text = lang === 'en' ? 'Reading test, one two three.' : t('朗读测试，一二三。')
   const started = performance.now()
   let outcome: SpeakOutcome
   try {
@@ -230,28 +267,31 @@ async function speechProbe(engine: TtsEngine, lang: Lang): Promise<CheckResult> 
   } catch (err) {
     // The Edge engine is the one that rejects; its message names the status.
     const reason = err instanceof Error ? err.message : String(err)
-    return { label, ok: false, detail: `朗读请求失败：${reason}` }
+    return { label, ok: false, detail: t('朗读请求失败：{reason}', { reason }) }
   }
   const ms = Math.round(performance.now() - started)
   const context = [
-    `引擎 ${engine.label}`,
-    before ? `语音会话 ${before.session}` : '',
-    before ? `系统音色 ${before.voices} 个` : '',
-    before?.paused ? '原来是暂停状态（已恢复）' : '',
+    t('引擎 {engine}', { engine: engine.label }),
+    before ? t('语音会话 {session}', { session: before.session }) : '',
+    before ? t('系统音色 {n} 个', { n: before.voices }) : '',
+    before?.paused ? t('原来是暂停状态（已恢复）') : '',
   ]
     .filter((part) => part !== '')
     .join(' · ')
   if (outcome === 'done') {
-    return { label, ok: true, detail: `读完「${text}」用了 ${ms} ms · ${context}` }
+    return { label, ok: true, detail: t('读完「{text}」用了 {ms} ms · {context}', { text, ms, context }) }
   }
   if (outcome === 'stalled') {
     return {
       label,
       ok: false,
-      detail: `发了朗读请求但一直没等到结束（等了 ${ms} ms）—— 听不到声音多半就是这种 · ${context}`,
+      detail: t('发了朗读请求但一直没等到结束（等了 {ms} ms）—— 听不到声音多半就是这种 · {context}', {
+        ms,
+        context,
+      }),
     }
   }
-  return { label, ok: false, detail: `朗读被拒绝了（${outcome}）· ${context}` }
+  return { label, ok: false, detail: t('朗读被拒绝了（{outcome}）· {context}', { outcome, context }) }
 }
 
 /**
@@ -278,15 +318,18 @@ async function burstProbe(
       }
     }
   } catch (err) {
-    return { label: '连发探测', ok: false, detail: err instanceof Error ? err.message : String(err) }
+    return { label: t('连发探测'), ok: false, detail: err instanceof Error ? err.message : String(err) }
   }
   const total = Math.round(performance.now() - started)
   return {
-    label: '连发探测（5 次单句）',
+    label: t('连发探测（5 次单句）'),
     ok: failures === 0 ? true : failures < 5 ? 'warn' : false,
-    detail: `成功 ${5 - failures}/5 · 耗时 ${timings.join('/')} ms · 总计 ${total} ms${
-      failures > 0 ? ' · 出现限流或失败，攒批与缓存是必需项' : ''
-    }`,
+    detail:
+      t('成功 {ok}/5 · 耗时 {timings} ms · 总计 {total} ms', {
+        ok: 5 - failures,
+        timings: timings.join('/'),
+        total,
+      }) + (failures > 0 ? t(' · 出现限流或失败，攒批与缓存是必需项') : ''),
   }
 }
 
@@ -305,5 +348,5 @@ async function isModuleCached(module: ModuleId): Promise<boolean> {
 }
 
 function labelOf(lang: Lang): string {
-  return lang === 'zh' ? '中文' : lang === 'ko' ? '韩语' : '英文'
+  return lang === 'zh' ? t('中文') : lang === 'ko' ? t('韩语') : t('英文')
 }

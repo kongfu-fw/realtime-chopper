@@ -1,5 +1,6 @@
 import type { AsrEngine, ModuleId } from '../types'
-import { moduleSpec } from './models'
+import { t } from '../i18n/index.ts'
+import { moduleLabel, moduleSpec } from './models'
 import { MoonshineEngine, type DevicePlan } from './moonshine'
 
 /**
@@ -25,8 +26,13 @@ import { MoonshineEngine, type DevicePlan } from './moonshine'
 export function createEngine(module: ModuleId, plan: DevicePlan | null): AsrEngine {
   const spec = moduleSpec(module)
   if (spec.engine !== 'moonshine') {
-    throw new Error(`${spec.label} 不在本 worker 中运行（${spec.engine} 有自己的 worker）`)
+    throw new Error(
+      t('{module} 不在本 worker 中运行（{engine} 有自己的 worker）', {
+        module: moduleLabel(spec),
+        engine: spec.engine,
+      }),
+    )
   }
-  if (!plan) throw new Error(`没有为 ${spec.label} 决定用哪个加速器`)
+  if (!plan) throw new Error(t('没有为 {module} 决定用哪个加速器', { module: moduleLabel(spec) }))
   return new MoonshineEngine(module, plan)
 }

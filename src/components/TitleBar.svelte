@@ -4,9 +4,14 @@
   import { session, logOpen, view } from '../lib/app/state'
   import { APP_NAME } from '../lib/brand/logo'
   import { moduleIdFor } from '../lib/asr/models'
-  import { settings, setSetting, SOURCE_ORDER, TARGET_ORDER, LANG_LABEL } from '../lib/store/settings'
+  import { settings, setSetting, SOURCE_ORDER, TARGET_ORDER, langLabel } from '../lib/store/settings'
   import { info } from '../lib/log/store'
+  import { t, translator, uiLang } from '../lib/i18n/index.ts'
   import type { SourceLang, TargetLang } from '../lib/types'
+
+  // Markup uses `tr`, so that changing the language re-renders it; script code
+  // below uses `t`, which reads the language as it is at that moment.
+  const tr = $derived(translator($uiLang))
 
   async function changeSource(lang: SourceLang) {
     if (lang === $settings.sourceLang) return
@@ -18,8 +23,10 @@
     // Otherwise: one model at a time (memory budget), so drop the old engine
     // before the new language's module is requested.
     if (!sameModule) await session.releaseModel()
-    info('ui', `识别语言切换为${LANG_LABEL[lang]}`, {
-      note: sameModule ? '和上一个语言共用识别模块，不用重新加载' : '下次开始录音时会加载对应模块',
+    info('ui', t('识别语言切换为{lang}', { lang: langLabel(lang) }), {
+      note: sameModule
+        ? t('和上一个语言共用识别模块，不用重新加载')
+        : t('下次开始录音时会加载对应模块'),
     })
   }
 
@@ -27,7 +34,7 @@
     if (lang === $settings.targetLang) return
     setSetting('targetLang', lang)
     setSetting('voiceURI', '')
-    info('ui', `译文语言切换为${LANG_LABEL[lang]}`)
+    info('ui', t('译文语言切换为{lang}', { lang: langLabel(lang) }))
   }
 
   /** The mascot (or the name beside it) opens the easter egg. */
@@ -40,38 +47,38 @@
       type="button"
       class="brand"
       onclick={() => (about = true)}
-      title={`关于${APP_NAME}`}
-      aria-label={`关于${APP_NAME}`}
+      title={tr('关于{name}', { name: APP_NAME })}
+      aria-label={tr('关于{name}', { name: APP_NAME })}
     >
       <Logo size={24} />
       <span class="name">{APP_NAME}</span>
     </button>
 
-  <div class="langs" role="group" aria-label="语言选择">
+  <div class="langs" role="group" aria-label={tr('语言选择')}>
     <label class="lang">
-      <span class="lang-label">说</span>
+      <span class="lang-label">{tr('说')}</span>
       <select
         class="rc-select"
         value={$settings.sourceLang}
         onchange={(e) => changeSource((e.currentTarget as HTMLSelectElement).value as SourceLang)}
-        aria-label="源语言"
+        aria-label={tr('源语言')}
       >
         {#each SOURCE_ORDER as lang (lang)}
-          <option value={lang}>{LANG_LABEL[lang]}</option>
+          <option value={lang}>{langLabel(lang, $uiLang)}</option>
         {/each}
       </select>
     </label>
     <span class="arrow" aria-hidden="true">→</span>
     <label class="lang">
-      <span class="lang-label">译</span>
+      <span class="lang-label">{tr('译')}</span>
       <select
         class="rc-select"
         value={$settings.targetLang}
         onchange={(e) => changeTarget((e.currentTarget as HTMLSelectElement).value as TargetLang)}
-        aria-label="译文语言"
+        aria-label={tr('译文语言')}
       >
         {#each TARGET_ORDER as lang (lang)}
-          <option value={lang}>{LANG_LABEL[lang]}</option>
+          <option value={lang}>{langLabel(lang, $uiLang)}</option>
         {/each}
       </select>
     </label>
@@ -81,9 +88,9 @@
     <button
       class="rc-btn ghost small"
       onclick={() => view.set($view === 'settings' ? 'translate' : 'settings')}
-      aria-label={$view === 'settings' ? '返回翻译' : '打开设置'}
+      aria-label={$view === 'settings' ? tr('返回翻译') : tr('打开设置')}
     >
-      {$view === 'settings' ? '← 返回' : '设置'}
+      {$view === 'settings' ? tr('← 返回') : tr('设置')}
     </button>
 
     <!--
@@ -96,8 +103,8 @@
       <button
         class="rc-btn ghost dots"
         onclick={() => logOpen.set(true)}
-        aria-label="打开日志与自检"
-        title="日志与自检"
+        aria-label={tr('打开日志与自检')}
+        title={tr('日志与自检')}
       >
         ⋮
       </button>

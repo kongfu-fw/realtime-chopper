@@ -27,6 +27,8 @@ import { createTtsEngine, ttsConfigFrom, type SpeakOutcome, type TtsEngine } fro
 import { speechSnapshot } from '../tts/speech'
 import { resolveWorkingProvider } from '../mt/probe'
 import type { MtConfig, MtItemResult } from '../mt/client'
+import { providerName } from '../mt/providers'
+import { t } from '../i18n/index.ts'
 import { debug, error as logError, info, warn } from '../log/store'
 
 /**
@@ -128,6 +130,15 @@ export class Session {
   readonly rate: Writable<number> = writable(1)
   readonly level: Writable<number> = writable(0)
   readonly providerLabel: Writable<string> = writable('')
+  /**
+   * Which provider is answering, as an *id*.
+   *
+   * `providerLabel` is what a person reads and is therefore translated; the
+   * translation panel needs the id to decide whether to draw the Google mark, and
+   * matching on the label's text would stop working the moment the interface is
+   * not in Chinese (this used to be `/谷歌/.test(label)`).
+   */
+  readonly provider: Writable<MtProviderId | null> = writable(null)
   readonly model: Writable<ModelState | null> = writable(null)
   /** Last module failure, so the UI can explain it without a log drawer. */
   readonly failure: Writable<LoadFailure | null> = writable(null)
@@ -233,7 +244,16 @@ export class Session {
     const accelerator = plan?.primary.device ?? 'wasm'
     info(
       'asr',
-      `准备启动${moduleName(module)}：${plan ? `${plan.primary.device}（${plan.primary.dtype}）—— ${plan.primary.reason}` : 'sherpa WebAssembly（CPU）'}`,
+      t('准备启动{module}：{plan}', {
+        module: moduleName(module),
+        plan: plan
+          ? t('{device}（{dtype}）—— {reason}', {
+              device: plan.primary.device,
+              dtype: plan.primary.dtype,
+              reason: plan.primary.reason,
+            })
+          : t('sherpa WebAssembly（CPU）'),
+      }),
     )
     // A device that this module has already killed twice *the same way* does not
     // need a third demonstration. A killed page cannot report anything, so all a
@@ -243,14 +263,16 @@ export class Session {
     if (asrCrashCount(module, accelerator) >= 2) {
       throw new Error(
         accelerator === 'webgpu'
-          ? `这台设备已经在显卡加速（WebGPU）下被关掉页面两次了：请在设置里把「显卡加速」改成 CPU 再试`
-          : `${moduleName(module)}在这台设备上装不下：已经两次在启动时把整个页面关掉了（内存不够），先别试了`,
+          ? t('这台设备已经在显卡加速（WebGPU）下被关掉页面两次了：请在设置里把「显卡加速」改成 CPU 再试')
+          : t('{module}在这台设备上装不下：已经两次在启动时把整个页面关掉了（内存不够），先别试了', {
+              module: moduleName(module),
+            }),
       )
     }
     // A new install starts the bar over; without this the dialog would open
     // showing the last install's 100%.
     const lastFraction = { value: 0 }
-    this.model.set({ status: '准备识别模块', progress: 0 })
+    this.model.set({ status: t('准备识别模块'), progress: 0 })
     client.onProgress = (progress: AsrLoadProgress) => {
       // Merged, not replaced. Status-only reports ("Running...", "初始化识别模块")
       // carry no numbers, and replacing the whole state with them used to blank
@@ -261,7 +283,7 @@ export class Session {
         : undefined
       if (fraction !== undefined) lastFraction.value = fraction
       this.model.update((prev) => ({
-        status: progress.status || prev?.status || '准备识别模块',
+        status: progress.status || prev?.status || t('准备识别模块'),
         progress: fraction ?? prev?.progress,
         loadedBytes: progress.loaded ?? prev?.loadedBytes,
         totalBytes: progress.total ?? prev?.totalBytes,
@@ -271,11 +293,18 @@ export class Session {
       this.model.set(null)
       this.modelModule = module
       this.failure.set(null)
-      info('asr', `识别模块已就绪（${loaded.device ?? 'unknown'}）`, { reason: loaded.reason })
+      info('asr', t('识别模块已就绪（{device}）', { device: loaded.device ?? 'unknown' }), {
+        [t('原因')]: loaded.reason,
+      })
     }
     client.onResult = (result) => this.onAsrResult(result)
     client.onFailed = (where, message, id) => {
-      logError('asr', where === 'load' ? `识别模块加载失败：${message}` : `识别失败：${message}`)
+      logError(
+        'asr',
+        where === 'load'
+          ? t('识别模块加载失败：{message}', { message })
+          : t('识别失败：{message}', { message }),
+      )
       if (where === 'load') {
         this.failure.set({ where, message: describeModuleError(message), raw: message, at: Date.now() })
       }
@@ -294,7 +323,7 @@ export class Session {
       await withTimeout(
         client.load(module, plan),
         MODEL_LOAD_TIMEOUT_MS,
-        '下载太久没动静，检查网络后重试',
+        t('下载太久没动静，检查网络后重试'),
       )
       clearAsrAttempt()
       // It loaded, so whatever killed the page before was not this device being
@@ -322,18 +351,22 @@ export class Session {
       // same value the load was started with).
       const wanted = moduleIdFor(settings.sourceLang)
       if (this.modelModule !== wanted) {
-        this.stage.set('正在加载识别模块')
-        this.model.set({ status: '准备识别模块' })
+        this.stage.set(t('正在加载识别模块'))
+        this.model.set({ status: t('准备识别模块') })
         await this.prepare(wanted)
         if (this.modelModule !== wanted) {
           // Never "go and read the log drawer": that drawer only exists in debug
           // mode, so on a phone the old sentence was a dead end. The reason
           // itself travels to the status bar instead.
           const reason = get(this.failure)?.message
-          throw new Error(reason ? `识别模块没能装好：${reason}` : '识别模块没能装好，再试一次')
+          throw new Error(
+            reason
+              ? t('识别模块没能装好：{reason}', { reason })
+              : t('识别模块没能装好，再试一次'),
+          )
         }
       }
-      this.stage.set('正在连接翻译服务')
+      this.stage.set(t('正在连接翻译服务'))
       await this.probeProviders()
 
       this.vad = new VadWorkerClient()
@@ -346,8 +379,8 @@ export class Session {
       this.vad.onLevel = (level) => this.level.set(level)
       this.vad.onRecording = (info) => {
         this.recording.set(info)
-        if (info.stopped === 'limit') this.notice.set('录音已达上限，后面的不再保存')
-        else if (info.stopped === 'error') this.notice.set('录音中断了，语音识别不受影响')
+        if (info.stopped === 'limit') this.notice.set(t('录音已达上限，后面的不再保存'))
+        else if (info.stopped === 'error') this.notice.set(t('录音中断了，语音识别不受影响'))
       }
       this.vad.setRecordingLimit(settings.audioRetentionMin)
       // Recording is what makes every later decision reversible: a sentence the
@@ -372,14 +405,14 @@ export class Session {
 
       // Speech is armed by the tap itself, not here — see `unlockSpeech`.
 
-      this.stage.set('正在准备麦克风')
+      this.stage.set(t('正在准备麦克风'))
       this.capture = await startCapture({
         onChunk: (chunk, rate) => this.vad?.push(chunk, rate),
         onLevel: (level) => this.level.set(level),
         signal: abort.signal,
       })
       if (!this.capture.constraintsHonoured) {
-        this.notice.set('浏览器降低了录音质量，识别可能差一点')
+        this.notice.set(t('浏览器降低了录音质量，识别可能差一点'))
       }
 
       // An open microphone flips iOS into the `play-and-record` audio session,
@@ -387,14 +420,17 @@ export class Session {
       // either goes to the receiver at a whisper or is not heard at all, with no
       // error anywhere. Printing the session type next to the speaking state is
       // what makes that theory checkable from a phone (see `tts/speech.ts`).
-      info('tts', '开麦后的语音输出状态', { 引擎: this.speech.label, ...speechSnapshot() })
+      info('tts', t('开麦后的语音输出状态'), { [t('引擎')]: this.speech.label, ...speechSnapshot() })
 
       this.stage.set('')
       this.state.set('recording')
       this.startLagLoop()
-      info('session', '开始录音', {
-        sourceLang: settings.sourceLang,
-        targetLang: settings.targetLang,
+      // Not the bare 开始录音: that is the record button's label, and one string
+      // cannot be both a button and a log line in a language where the two read
+      // differently ("Start recording" against "Recording started").
+      info('session', t('开始录音了'), {
+        [t('源语言')]: settings.sourceLang,
+        [t('目标语言')]: settings.targetLang,
       })
     } catch (err) {
       await this.teardown()
@@ -403,14 +439,14 @@ export class Session {
         // failure, and no error should be shouted about it.
         this.stage.set('')
         this.state.set('idle')
-        this.notice.set('已取消启动')
-        info('session', '已取消启动')
+        this.notice.set(t('已取消启动'))
+        info('session', t('已取消启动'))
         return
       }
       this.stage.set('')
       this.state.set('error')
       const message = err instanceof Error ? err.message : String(err)
-      logError('session', `启动失败：${message}`)
+      logError('session', t('启动失败：{message}', { message }))
       this.notice.set(message)
       throw err
     }
@@ -434,7 +470,7 @@ export class Session {
       this.state.set('idle')
       this.stopping = false
       this.notice.set('')
-      info('session', '已停止录音', { lines: get(this.lines).length })
+      info('session', t('已停止录音'), { lines: get(this.lines).length })
     }
   }
 
@@ -550,7 +586,7 @@ export class Session {
       // A recogniser that never answers must not stall the queue forever.
       setTimeout(() => {
         if (this.asrWaiters.delete(segment.id)) {
-          warn('asr', '识别超时，跳过这一段', { segment: segment.id })
+          warn('asr', t('识别超时，跳过这一段'), { segment: segment.id })
           resolve({ text: '', rawText: '', engine: '', inferMs: 0 })
         }
       }, 30_000)
@@ -606,13 +642,13 @@ export class Session {
       if (next.length > MAX_LINES) {
         const overflow = next.slice(0, next.length - MAX_LINES)
         for (const dropped of overflow) this.linesById.delete(dropped.id)
-        warn('session', `记录超过 ${MAX_LINES} 行，最旧的已从界面上移除`)
+        warn('session', t('记录超过 {n} 行，最旧的已从界面上移除', { n: MAX_LINES }))
         return next.slice(next.length - MAX_LINES)
       }
       return next
     })
     this.mtQ.push(line)
-    debug('asr', `识别完成：${line.text.slice(0, 40)}`, {
+    debug('asr', t('识别完成：{text}', { text: line.text.slice(0, 40) }), {
       engine: line.engine,
       inferMs: line.inferMs,
       durationMs: line.endMs - line.startMs,
@@ -652,8 +688,8 @@ export class Session {
     this.vad?.setRecordingLimit(settings.audioRetentionMin)
     this.applyMtConfig()
     if (this.preferredProvider === null) {
-      const label = settings.mtProvider === 'llm' ? 'AI 模型' : settings.mtProvider === 'google' ? '谷歌翻译' : '微软翻译'
-      this.providerLabel.set(label)
+      this.providerLabel.set(providerName(settings.mtProvider))
+      this.provider.set(settings.mtProvider)
     }
     this.rateController.reset(settings.baseRate)
     this.rate.set(settings.baseRate)
@@ -674,8 +710,8 @@ export class Session {
     this.speech.stop()
     this.speechKey = key
     this.speech = createTtsEngine(ttsConfigFrom(settings))
-    info('tts', `朗读引擎切换为${this.speech.label}`, {
-      代理: settings.ttsEngine === 'edge' ? settings.ttsProxyUrl : undefined,
+    info('tts', t('朗读引擎切换为{engine}', { engine: this.speech.label }), {
+      [t('代理')]: settings.ttsEngine === 'edge' ? settings.ttsProxyUrl : undefined,
     })
   }
 
@@ -688,7 +724,8 @@ export class Session {
       return
     }
     if (settings.mtProvider === 'llm') {
-      this.providerLabel.set('AI 模型')
+      this.providerLabel.set(providerName('llm'))
+      this.provider.set('llm')
       this.applyMtConfig()
       return
     }
@@ -704,22 +741,32 @@ export class Session {
       },
     })
     this.preferredProvider = provider
-    const label = provider === 'google' ? '谷歌翻译' : '微软翻译'
+    const label = providerName(provider)
     this.providerLabel.set(label)
+    this.provider.set(provider)
     for (const result of results) {
-      const name = result.provider === 'google' ? '谷歌翻译' : '微软翻译'
+      const name = providerName(result.provider)
       // `attempts > 1` is worth saying out loud: it means the first request met a
       // cold connection rather than a broken provider.
       if (result.ok) {
-        const suffix = result.attempts && result.attempts > 1 ? `，第 ${result.attempts} 次尝试才通` : ''
-        info('translate', `${name}可用（${result.ms} ms${suffix}）`)
+        const suffix =
+          result.attempts && result.attempts > 1
+            ? t('，第 {n} 次尝试才通', { n: result.attempts })
+            : ''
+        info('translate', t('{name}可用（{ms} ms{suffix}）', { name, ms: result.ms, suffix }))
       } else {
-        warn('translate', `${name}不可用`, { detail: result.detail, attempts: result.attempts })
+        warn('translate', t('{name}不可用', { name }), {
+          detail: result.detail,
+          attempts: result.attempts,
+        })
       }
     }
     if (provider !== settings.mtProvider) {
-      this.notice.set(`谷歌翻译用不了，已换成${label}`)
-      warn('translate', `已自动从${settings.mtProvider}切换到${label}`)
+      this.notice.set(t('谷歌翻译用不了，已换成{label}', { label }))
+      warn(
+        'translate',
+        t('已自动从{from}切换到{to}', { from: providerName(settings.mtProvider), to: label }),
+      )
     }
     this.applyMtConfig()
   }
@@ -743,7 +790,14 @@ export class Session {
     this.linesById.set(updated.id, updated)
     this.patchLine(updated)
     if (result.text) {
-      debug('translate', `译文（${result.provider}${result.cached ? ' · 缓存' : ''}）：${result.text.slice(0, 40)}`)
+      debug(
+        'translate',
+        t('译文（{provider}{cached}）：{text}', {
+          provider: result.provider,
+          cached: result.cached ? t(' · 缓存') : '',
+          text: result.text.slice(0, 40),
+        }),
+      )
     }
     this.advanceReadPointer()
     this.updateQueues()
@@ -787,7 +841,7 @@ export class Session {
     // the OS at all, it is ordinary media.
     const state = this.speech.id === 'system' ? speechSnapshot() : null
     if (state?.paused) {
-      warn('tts', '系统把朗读留在了暂停状态（切后台或锁屏之后常见），已尝试恢复', state)
+      warn('tts', t('系统把朗读留在了暂停状态（切后台或锁屏之后常见），已尝试恢复'), state)
     }
     let outcome: SpeakOutcome = 'error'
     try {
@@ -800,9 +854,9 @@ export class Session {
       // The Edge engine rejects with a reason worth keeping (a 502 from the
       // proxy, a DNS failure, no network); the platform engine never throws, it
       // just goes quiet.
-      logError('tts', '朗读请求失败', {
-        引擎: this.speech.label,
-        原因: err instanceof Error ? err.message : String(err),
+      logError('tts', t('朗读请求失败'), {
+        [t('引擎')]: this.speech.label,
+        [t('原因')]: err instanceof Error ? err.message : String(err),
       })
       outcome = 'error'
     }
@@ -811,21 +865,31 @@ export class Session {
       // Silence with no error: the engine accepted the work and never called
       // back. Skipping is the only recovery — waiting is what used to wedge the
       // reader for the rest of the session.
-      logError('tts', '朗读没有等到结束回调，这句跳过', {
-        文本: text.slice(0, 30),
-        引擎: this.speech.label,
+      logError('tts', t('朗读没有等到结束回调，这句跳过'), {
+        [t('文本')]: text.slice(0, 30),
+        [t('引擎')]: this.speech.label,
         ...(state ?? {}),
       })
-      this.notice.set('朗读卡住了（这句已跳过）；一直没声音就刷新页面再试')
+      this.notice.set(t('朗读卡住了（这句已跳过）；一直没声音就刷新页面再试'))
     } else if (outcome === 'error') {
-      logError('tts', '朗读失败', { 文本: text.slice(0, 30), 引擎: this.speech.label, ...(state ?? {}) })
+      logError('tts', t('朗读失败'), {
+        [t('文本')]: text.slice(0, 30),
+        [t('引擎')]: this.speech.label,
+        ...(state ?? {}),
+      })
       const edge = settings.ttsEngine === 'edge'
       const voices = await this.speech.voicesFor(settings.targetLang).catch(() => [])
       if (voices.length === 0) {
-        this.notice.set(edge ? 'TTS 代理没有可用音色：检查设置里的代理地址' : '手机里没有这种语言的朗读声音')
+        this.notice.set(
+          edge
+            ? t('TTS 代理没有可用音色：检查设置里的代理地址')
+            : t('手机里没有这种语言的朗读声音'),
+        )
       } else {
         this.notice.set(
-          edge ? 'Edge TTS 代理连不上了：检查网络和设置里的代理地址' : '朗读被系统拒绝了：先点一下页面，再确认侧面的静音开关',
+          edge
+            ? t('Edge TTS 代理连不上了：检查网络和设置里的代理地址')
+            : t('朗读被系统拒绝了：先点一下页面，再确认侧面的静音开关'),
         )
       }
     }
@@ -843,7 +907,10 @@ export class Session {
     })
     if (changed) {
       this.rate.set(rate)
-      debug('tts', `朗读语速调整为 ${rate.toFixed(2)}x（积压 ${this.readQ.size} 句）`)
+      debug(
+        'tts',
+        t('朗读语速调整为 {rate}x（积压 {n} 句）', { rate: rate.toFixed(2), n: this.readQ.size }),
+      )
     }
   }
 
@@ -890,7 +957,7 @@ export class Session {
     this.rate.set(getSettings().baseRate)
     this.advanceReadPointer()
     this.updateQueues()
-    info('tts', `已跳到最新，放弃 ${skipped} 句待读内容`, { pendingInWorker })
+    info('tts', t('已跳到最新，放弃 {n} 句待读内容', { n: skipped }), { pendingInWorker })
   }
 
   retryLine(lineId: number): void {
@@ -940,15 +1007,15 @@ export class Session {
     if (!line) return
     const samples = await this.recordingSamples(line.startMs, line.endMs)
     if (!samples || samples.length === 0) {
-      this.notice.set('这句没有录音，无法重新识别')
+      this.notice.set(t('这句没有录音，无法重新识别'))
       return
     }
     const id = this.nextRetryId--
-    info('asr', `从录音重新识别这一句（${(samples.length / 16000).toFixed(1)} 秒）`)
+    info('asr', t('从录音重新识别这一句（{sec} 秒）', { sec: (samples.length / 16000).toFixed(1) }))
     const result = await this.recognizeSamples({ id, startMs: line.startMs, endMs: line.endMs, samples })
     const text = result.text.trim()
     if (!text) {
-      this.notice.set('重新识别没有听出内容')
+      this.notice.set(t('重新识别没有听出内容'))
       return
     }
     const updated: Line = {
@@ -989,7 +1056,7 @@ export class Session {
     try {
       const out = await client.translateOnce([text])
       const translation = out?.texts[0] ?? null
-      if (!translation) throw new Error('翻译没有返回内容')
+      if (!translation) throw new Error(t('翻译没有返回内容'))
       return translation
     } finally {
       if (borrowed && get(this.state) !== 'recording') {
@@ -1011,7 +1078,7 @@ export class Session {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       this.markLine(line.id, { mtState: 'failed', error: message })
-      warn('translate', `重新翻译失败：${message}`)
+      warn('translate', t('重新翻译失败：{message}', { message }))
     }
     this.updateQueues()
   }
@@ -1020,7 +1087,7 @@ export class Session {
   async exportRecording(): Promise<void> {
     const file = this.vad ? await this.vad.recordingFile() : this.recordingFile
     if (!file) {
-      this.notice.set('还没有录音可以导出')
+      this.notice.set(t('还没有录音可以导出'))
       return
     }
     this.recordingFile = file
@@ -1031,7 +1098,7 @@ export class Session {
     anchor.download = `realtime-chopper-${stamp}.wav`
     anchor.click()
     setTimeout(() => URL.revokeObjectURL(url), 30_000)
-    info('storage', `已导出录音（${(file.size / 1024 / 1024).toFixed(1)} MB）`)
+    info('storage', t('已导出录音（{mb} MB）', { mb: (file.size / 1024 / 1024).toFixed(1) }))
   }
 
   async clearRecording(): Promise<void> {
@@ -1039,7 +1106,7 @@ export class Session {
     if (this.vad) await this.vad.clearRecording()
     else await deleteRecordingFile()
     this.recording.set(this.vad ? get(this.recording) : { mode: 'off', seconds: 0, bytes: 0, stopped: null })
-    info('storage', '已删除录音')
+    info('storage', t('已删除录音'))
   }
 
   // ------------------------------------------------------------------ helpers
@@ -1093,6 +1160,6 @@ export class Session {
       if (idle) return
       await new Promise((resolve) => setTimeout(resolve, 150))
     }
-    info('session', '等待流水线清空超时，剩余内容已放弃')
+    info('session', t('等待流水线清空超时，剩余内容已放弃'))
   }
 }

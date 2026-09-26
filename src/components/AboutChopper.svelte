@@ -3,6 +3,9 @@
   import { APP_NAME, iconPreviewUrl } from '../lib/brand/logo'
   import { APP_VERSION } from '../lib/app/version'
   import { settings } from '../lib/store/settings'
+  import { translator, uiLang } from '../lib/i18n/index.ts'
+
+  const tr = $derived(translator($uiLang))
 
   interface Props {
     onclose: () => void
@@ -26,23 +29,23 @@
   Copy rules of the house apply: short sentences a child could follow, one idea
   per line, and no explaining anything the reader did not ask about.
 -->
-<Modal title={`我是${APP_NAME}`} {onclose}>
+<Modal title={tr('我是{name}', { name: APP_NAME })} {onclose}>
   <div class="hero">
     <!-- Decorative: the heading above it already says who is speaking. -->
     <img src={art} alt="" width="132" height="132" />
   </div>
 
-  <p class="lead">我来自《海贼王》，作者最喜欢的动漫。</p>
-  <p>我是一只驯鹿，也有一半是人。</p>
-  <p>动物说的话、人说的话，我都能听懂。</p>
-  <p class="hope">所以在这儿当翻译，正合适 —— 希望我帮得上你。</p>
-  <p class="hint">想再见到我，点标题栏的小鹿就行。</p>
+  <p class="lead">{tr('我来自《海贼王》，作者最喜欢的动漫。')}</p>
+  <p>{tr('我是一只驯鹿，也有一半是人。')}</p>
+  <p>{tr('动物说的话、人说的话，我都能听懂。')}</p>
+  <p class="hope">{tr('所以在这儿当翻译，正合适 —— 希望我帮得上你。')}</p>
+  <p class="hint">{tr('想再见到我，点标题栏的小鹿就行。')}</p>
 
   {#snippet footer()}
     <!-- The version, in the one dialog a person opens on purpose: it is what a
          bug report should lead with, and "关于" is where anyone looks for it. -->
-    <span class="ver">版本 {APP_VERSION}</span>
-    <button class="rc-btn accent" onclick={onclose}>好，翻译去</button>
+    <span class="ver">{tr('版本')} {APP_VERSION}</span>
+    <button class="rc-btn accent" onclick={onclose}>{tr('好，翻译去')}</button>
   {/snippet}
 </Modal>
 

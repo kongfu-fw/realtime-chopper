@@ -8,7 +8,10 @@
   } from '../lib/app/state'
   import { isLangInstalled, settings } from '../lib/store/settings'
   import { info, warn } from '../lib/log/store'
+  import { t, translator, uiLang } from '../lib/i18n/index.ts'
   import ModelInstallModal from './ModelInstallModal.svelte'
+
+  const tr = $derived(translator($uiLang))
 
   // `state` is renamed on destructuring: a local called `state` would collide
   // with the `$state` rune.
@@ -52,7 +55,7 @@
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      warn('ui', `操作失败：${message}`)
+      warn('ui', t('操作失败：{error}', { error: message }))
       showToast(message)
     } finally {
       busy = false
@@ -68,12 +71,12 @@
     })
   }
 
-  function onInstallCancel(reason = '未知') {
+  function onInstallCancel(reason = t('未知')) {
     installLang.set(null)
     // The reason matters: on a phone a tap on the backdrop closes this dialog
     // just as easily as the close button, and "cancelled" with no reason reads
     // like the install failed on its own.
-    info('storage', `已取消安装识别模块（${reason}）`)
+    info('storage', t('已取消安装识别模块（{reason}）', { reason }))
   }
 </script>
 
@@ -81,7 +84,7 @@
   {#if preparing}
     <!-- The real phase, not a guess: loading the module, probing the translator
          and warming up the microphone are three different waits. -->
-    <span class="hint">{$stage || '浏览器问权限时点「允许」'}</span>
+    <span class="hint">{$stage || tr('浏览器问权限时点「允许」')}</span>
   {/if}
   {#if $notice}
     <span class="hint warn" title={$notice}>{$notice}</span>
@@ -99,8 +102,8 @@
   class:recording
   style={`--level:${meterLevel}`}
   onclick={toggle}
-  aria-label={recording ? '停止录音' : preparing ? '取消启动' : '开始录音'}
-  title={recording ? '停止录音' : preparing ? '取消启动' : '开始录音'}
+  aria-label={recording ? tr('停止录音') : preparing ? tr('取消启动') : tr('开始录音')}
+  title={recording ? tr('停止录音') : preparing ? tr('取消启动') : tr('开始录音')}
   disabled={$sessionState === 'stopping'}
 >
   {#if preparing}
@@ -117,7 +120,7 @@
     <!-- The only path in the app that discards queued speech, and it only
          happens when the user asks for it. -->
     <button class="rc-btn small accent" onclick={() => session.skipToLatest()}>
-      跳到最新（落后 {$queues.lagSeconds.toFixed(0)} 秒）
+      {tr('跳到最新（落后 {sec} 秒）', { sec: $queues.lagSeconds.toFixed(0) })}
     </button>
   {/if}
 </div>

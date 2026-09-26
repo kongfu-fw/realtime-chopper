@@ -4,6 +4,7 @@ import { providerChainFrom, type MtProviderId } from './providers'
 import { PROMPT_VERSION } from './providers/llm'
 import { normalizeKey } from './text'
 import { MtError, type LlmConfig, type MtContext, type MtProvider } from './types'
+import { t } from '../i18n/index.ts'
 
 /**
  * Translation client.
@@ -138,7 +139,7 @@ export class MtClient {
         })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        this.onLog?.('warn', `整批翻译失败，改为逐句重试：${message}`)
+        this.onLog?.('warn', t('整批翻译失败，改为逐句重试：{message}', { message }))
         await this.dispatchIndividually(missing, config, groups)
       }
     }
@@ -176,17 +177,21 @@ export class MtClient {
           if (!retryable) break
           if (attempt === MAX_ATTEMPTS) break
           const wait = BACKOFF_BASE_MS * attempt * attempt
-          this.onLog?.('debug', `${provider.label} 第 ${attempt} 次失败，${wait}ms 后重试`, {
+          this.onLog?.('debug', t('{provider} 第 {n} 次失败，{wait}ms 后重试', {
+            provider: t(provider.label),
+            n: attempt,
+            wait,
+          }), {
             error: err instanceof Error ? err.message : String(err),
           })
           await delay(wait)
         }
       }
-      this.onLog?.('warn', `${provider.label} 不可用，尝试下一个翻译来源`, {
+      this.onLog?.('warn', t('{provider} 不可用，尝试下一个翻译来源', { provider: t(provider.label) }), {
         error: lastError instanceof Error ? lastError.message : String(lastError),
       })
     }
-    throw lastError instanceof Error ? lastError : new Error('所有翻译来源都失败了')
+    throw lastError instanceof Error ? lastError : new Error(t('所有翻译来源都失败了'))
   }
 
   private async dispatchIndividually(
@@ -204,7 +209,9 @@ export class MtClient {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
-        this.onLog?.('error', `这一句翻译失败了：${text.slice(0, 40)}`, { error: message })
+        this.onLog?.('error', t('这一句翻译失败了：{text}', { text: text.slice(0, 40) }), {
+          error: message,
+        })
         for (const id of groups.get(text) ?? []) {
           this.onResult({ id, text: null, provider: 'none', cached: false, error: message })
         }

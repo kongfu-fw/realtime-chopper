@@ -1,7 +1,8 @@
 /// <reference lib="webworker" />
-import type { AsrEngine, AsrLoadProgress, ModuleId } from '../lib/types'
+import type { AsrEngine, AsrLoadProgress, Lang, ModuleId } from '../lib/types'
 import type { DevicePlan } from '../lib/asr/moonshine'
 import { createEngine } from '../lib/asr/router'
+import { setUiLang, t } from '../lib/i18n/index.ts'
 
 /**
  * Recognition worker.
@@ -27,6 +28,14 @@ type Inbound =
       module: ModuleId
       /** Device decision made on the main thread; see `DevicePlan`. */
       plan: DevicePlan | null
+      /**
+       * The interface language, which has to be sent over: a worker is a separate
+       * thread with its own copy of the i18n module, so without it every line this
+       * worker writes — the load progress, the plan's reasons, the failures — would
+       * come out in whatever language the *browser* is set to instead of the one
+       * the user picked.
+       */
+      uiLang?: Lang
     }
   | { type: 'recognize'; id: number; samples: Float32Array; startMs: number; endMs: number }
   | { type: 'dispose' }
@@ -35,6 +44,7 @@ self.onmessage = (event: MessageEvent) => {
   const msg = event.data as Inbound
   switch (msg.type) {
     case 'load':
+      if (msg.uiLang) setUiLang(msg.uiLang)
       chain = chain.then(() => handleLoad(msg.module, msg.plan))
       break
     case 'recognize':
@@ -55,7 +65,7 @@ async function handleLoad(module: ModuleId, plan: DevicePlan | null): Promise<vo
   // treating "still Chinese" as "still loaded" would rebuild a model that already
   // answers Korean as well.
   if (engine && engine.module === module && engine.ready) {
-    postMessage({ type: 'loaded', module, device: 'cached', reason: '模型已在内存中' })
+    postMessage({ type: 'loaded', module, device: 'cached', reason: t('模型已在内存中') })
     return
   }
   engine?.dispose()
@@ -84,7 +94,7 @@ async function handleRecognize(
   endMs: number,
 ): Promise<void> {
   if (!engine || !engine.ready) {
-    postMessage({ type: 'error', where: 'recognize', id, message: '识别模块还没准备好' })
+    postMessage({ type: 'error', where: 'recognize', id, message: t('识别模块还没准备好') })
     return
   }
   try {

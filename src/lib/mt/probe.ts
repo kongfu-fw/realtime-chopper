@@ -1,4 +1,5 @@
 import type { Lang } from '../types'
+import { currentLang, t, translate } from '../i18n/index.ts'
 import { MtError, type MtContext } from './types'
 import { getProvider, PROVIDERS, type MtProviderId } from './providers'
 
@@ -88,7 +89,7 @@ async function attemptProbe(
       ok,
       ms: Math.round(performance.now() - started),
       retryable: true,
-      ...(ok ? {} : { detail: '返回内容为空' }),
+      ...(ok ? {} : { detail: t('返回内容为空') }),
     }
   } catch (err) {
     const aborted = err instanceof Error && err.name === 'AbortError'
@@ -97,7 +98,7 @@ async function attemptProbe(
       ok: false,
       ms: Math.round(performance.now() - started),
       detail: aborted
-        ? `等待 ${timeoutMs} ms 没有响应（可能是冷连接或网络不通）`
+        ? t('等待 {ms} ms 没有响应（可能是冷连接或网络不通）', { ms: timeoutMs })
         : err instanceof Error
           ? err.message
           : String(err),
@@ -131,8 +132,9 @@ export async function resolveWorkingProvider(
   return { provider: primary, results }
 }
 
-export function providerLabel(id: MtProviderId): string {
-  return PROVIDERS[id].label
+/** A provider's name, in the interface language; markup passes `$uiLang` in. */
+export function providerLabel(id: MtProviderId, uiLang: Lang = currentLang()): string {
+  return translate(uiLang, PROVIDERS[id].label)
 }
 
 export function needsKey(id: MtProviderId): boolean {

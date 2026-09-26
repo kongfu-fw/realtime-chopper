@@ -1,5 +1,8 @@
 <script lang="ts">
   import { session } from '../lib/app/state'
+  import { translator, uiLang } from '../lib/i18n/index.ts'
+
+  const tr = $derived(translator($uiLang))
 
   // Svelte's `$` prefix treats the *identifier* as the store, so member stores
   // are pulled out into locals first.
@@ -9,18 +12,18 @@
 </script>
 
 <!-- Requirement 20: one line showing how much work is waiting at each stage. -->
-<div class="subtitle" role="status" aria-label="流水线状态">
-  <span class="chip" title="还没识别的">识别 <b>{$queues.seg}</b></span>
-  <span class="chip" title="还没翻译的">翻译 <b>{$queues.mt}</b></span>
-  <span class="chip" title="还没读的">朗读 <b>{$queues.tts}</b></span>
+<div class="subtitle" role="status" aria-label={tr('流水线状态')}>
+  <span class="chip" title={tr('还没识别的')}>{tr('识别')} <b>{$queues.seg}</b></span>
+  <span class="chip" title={tr('还没翻译的')}>{tr('翻译')} <b>{$queues.mt}</b></span>
+  <span class="chip" title={tr('还没读的')}>{tr('朗读')} <b>{$queues.tts}</b></span>
   {#if $queues.failed > 0}
-    <span class="chip danger" title="翻译失败的，点译文可以重试">失败 <b>{$queues.failed}</b></span>
+    <span class="chip danger" title={tr('翻译失败的，点译文可以重试')}>{tr('失败')} <b>{$queues.failed}</b></span>
   {/if}
-  <span class="chip" class:lagging={$queues.lagSeconds > 8} title="朗读落后了多久">
-    滞后 <b>{format($queues.lagSeconds)}</b>
+  <span class="chip" class:lagging={$queues.lagSeconds > 8} title={tr('朗读落后了多久')}>
+    {tr('滞后')} <b>{format($queues.lagSeconds)}</b>
   </span>
   {#if $rate > 1.001}
-    <span class="chip accent" title="正在自动加速">语速 <b>{$rate.toFixed(2)}x</b></span>
+    <span class="chip accent" title={tr('正在自动加速')}>{tr('语速')} <b>{$rate.toFixed(2)}x</b></span>
   {/if}
 </div>
 

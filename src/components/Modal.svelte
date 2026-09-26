@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
+  import { t } from '../lib/i18n/index.ts'
 
   interface Props {
     title: string
@@ -19,11 +20,11 @@
   let { title, onclose, children, footer, wide = false }: Props = $props()
 
   function onBackdrop(event: MouseEvent) {
-    if (event.target === event.currentTarget) onclose?.('点遮罩')
+    if (event.target === event.currentTarget) onclose?.(t('点遮罩'))
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') onclose?.('按 Esc')
+    if (event.key === 'Escape') onclose?.(t('按 Esc'))
   }
 </script>
 

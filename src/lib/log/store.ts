@@ -1,4 +1,5 @@
 import { writable, get } from 'svelte/store'
+import { t } from '../i18n/index.ts'
 import type { LogEntry, LogLevel, Stage } from '../types'
 
 /**
@@ -539,8 +540,10 @@ if (restored.length) {
     'info',
     'session',
     restoredFromTab
-      ? `页面重新加载过：已恢复上一个标签页留下的 ${restored.length} 条日志（那个标签页已经不在了）`
-      : `页面重新加载过：已恢复上次的 ${restored.length} 条日志`,
+      ? t('页面重新加载过：已恢复上一个标签页留下的 {n} 条日志（那个标签页已经不在了）', {
+          n: restored.length,
+        })
+      : t('页面重新加载过：已恢复上次的 {n} 条日志', { n: restored.length }),
   )
 }
 

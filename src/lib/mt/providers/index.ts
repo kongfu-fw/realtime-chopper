@@ -1,3 +1,5 @@
+import { currentLang, translate } from '../../i18n/index.ts'
+import type { Lang } from '../../types'
 import type { MtProvider } from '../types'
 import { googleProvider } from './google'
 import { microsoftProvider } from './microsoft'
@@ -11,7 +13,20 @@ export const PROVIDERS: Record<MtProviderId, MtProvider> = {
   llm: createLlmProvider(),
 }
 
-export const PROVIDER_LABEL: Record<MtProviderId, string> = {
+/**
+ * What a translation provider is called on screen and in the log.
+ *
+ * A function, not a table: these are interface strings and follow the interface
+ * language. The Chinese source strings stay in one place below, so the three
+ * names cannot drift apart between the places that print them. Markup passes
+ * `$uiLang` in, which is what makes a picker follow a language switch; see the
+ * note on `t` in `lib/i18n`.
+ */
+export function providerName(id: MtProviderId, uiLang: Lang = currentLang()): string {
+  return translate(uiLang, PROVIDER_SOURCE[id])
+}
+
+const PROVIDER_SOURCE: Record<MtProviderId, string> = {
   google: '谷歌翻译',
   microsoft: '微软翻译',
   llm: 'AI 模型',

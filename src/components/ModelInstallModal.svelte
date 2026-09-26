@@ -4,15 +4,19 @@
   import {
     ASR_MODULES,
     MODULE_IDS,
-    MODULE_NAME,
     isMemoryFailure,
     moduleIdFor,
+    moduleLabel,
+    moduleTitle,
   } from '../lib/asr/models'
   import { formatBytes, markModelInstalled, isModuleCurrent, settings } from '../lib/store/settings'
   import { info } from '../lib/log/store'
   import { diagnosticReport } from '../lib/diag'
   import { isAppleMobile } from '../lib/asr/device'
+  import { t, translator, uiLang } from '../lib/i18n/index.ts'
   import type { Lang, ModuleId } from '../lib/types'
+
+  const tr = $derived(translator($uiLang))
 
   interface Props {
     /** The language the user was trying to use, so we know where to continue. */
@@ -50,8 +54,8 @@
   const memoryHint = $derived(
     rawError && isMemoryFailure(rawError)
       ? isAppleMobile()
-        ? 'iPhone 内存比较紧：先关掉其他 App 再试；只装英文模块（62 MB / 126 MB）基本都能装上。'
-        : '内存不够：关掉其他应用，或换用英文模块。'
+        ? tr('iPhone 内存比较紧：先关掉其他 App 再试；只装英文模块（62 MB / 126 MB）基本都能装上。')
+        : tr('内存不够：关掉其他应用，或换用英文模块。')
       : '',
   )
 
@@ -63,7 +67,7 @@
    * Either way the user ends up holding text they can paste into a message.
    */
   async function copyReport() {
-    report = await diagnosticReport(error ?? '识别模块安装失败')
+    report = await diagnosticReport(error ?? t('识别模块安装失败'))
     try {
       await navigator.clipboard.writeText(report)
       copied = 'ok'
@@ -103,9 +107,9 @@
     copied = ''
     report = ''
     try {
-      info('storage', `开始安装识别模块：${ASR_MODULES[module].label}`, {
-        设备: navigator.userAgent,
-        显卡加速: 'gpu' in navigator ? '浏览器有 WebGPU' : '没有 WebGPU，走 CPU',
+      info('storage', t('开始安装识别模块：{module}', { module: moduleLabel(ASR_MODULES[module]) }), {
+        [t('设备')]: navigator.userAgent,
+        [t('显卡加速')]: 'gpu' in navigator ? t('浏览器有 WebGPU') : t('没有 WebGPU，走 CPU'),
       })
       await session.prepare(module)
       // Only reachable once the module is genuinely usable — `prepare` no longer
@@ -126,26 +130,25 @@
   }
 </script>
 
-<Modal title="语音识别模块" onclose={downloading ? undefined : (reason) => oncancel(reason ?? '关闭')}>
+<Modal title={tr('语音识别模块')} onclose={downloading ? undefined : (reason) => oncancel(reason ?? t('关闭'))}>
   {#each MODULE_IDS as key (key)}
-    <div class="module">
-      <span class="name">{MODULE_NAME[key]}</span>
+    <div class="module">        <span class="name">{moduleTitle(key, $uiLang)}</span>
 
       <span class="spacer"></span>
 
       {#if isModuleCurrent(key, $settings.installedModels[key])}
-        <span class="badge">已安装</span>
+        <span class="badge">{tr('已安装')}</span>
       {:else if downloading === key}
         <span class="bar" class:starting><i style={`width:${percent ?? 6}%`}></i></span>
-        <span class="size">{percent !== null ? `${percent}%` : '准备中'}</span>
+        <span class="size">{percent !== null ? `${percent}%` : tr('准备中')}</span>
       {:else}
-        <span class="size">约 {formatBytes(ASR_MODULES[key].approxBytes)}</span>
+        <span class="size">{tr('约 {size}', { size: formatBytes(ASR_MODULES[key].approxBytes) })}</span>
         <button
           class="rc-btn small accent"
           disabled={downloading !== null}
           onclick={() => void download(key)}
         >
-          下载
+          {tr('下载')}
         </button>
       {/if}
     </div>
@@ -156,9 +159,9 @@
     <p class="stage" role="status">
       <span class="spin" aria-hidden="true"></span>
       {#if starting}
-        正在启动识别引擎，第一次会慢一些
+        {tr('正在启动识别引擎，第一次会慢一些')}
       {:else}
-        正在下载，别关掉这个窗口
+        {tr('正在下载，别关掉这个窗口')}
       {/if}
     </p>
   {/if}
@@ -170,13 +173,13 @@
     {/if}
     {#if rawError && rawError !== error}
       <details class="raw">
-        <summary>报错详情</summary>
+        <summary>{tr('报错详情')}</summary>
         <pre>{rawError}</pre>
       </details>
     {/if}
     <div class="diag">
-      <button class="rc-btn ghost small" onclick={() => void copyReport()}>复制诊断信息</button>
-      {#if copied === 'ok'}<span class="ok">已复制，把它发给开发者就行</span>{/if}
+      <button class="rc-btn ghost small" onclick={() => void copyReport()}>{tr('复制诊断信息')}</button>
+      {#if copied === 'ok'}<span class="ok">{tr('已复制，把它发给开发者就行')}</span>{/if}
       {#if copied === 'fail'}
         <!-- Long-press → 全选 → 拷贝: the fallback that always works on a phone. -->
         <textarea readonly rows="6" onfocus={(event) => event.currentTarget.select()}>{report}</textarea>
@@ -185,7 +188,7 @@
   {/if}
 
   {#snippet footer()}
-    <button class="rc-btn ghost" onclick={() => oncancel('点关闭')} disabled={downloading !== null}>关闭</button>
+    <button class="rc-btn ghost" onclick={() => oncancel(t('点关闭'))} disabled={downloading !== null}>{tr('关闭')}</button>
   {/snippet}
 </Modal>
 

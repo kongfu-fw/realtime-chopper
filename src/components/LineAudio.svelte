@@ -1,6 +1,9 @@
 <script lang="ts">
   import { session } from '../lib/app/state'
+  import { translator, uiLang } from '../lib/i18n/index.ts'
   import type { Line } from '../lib/types'
+
+  const tr = $derived(translator($uiLang))
 
   /**
    * The original audio of one line, loaded on demand.
@@ -41,7 +44,7 @@
 {#if url}
   <audio controls src={url} style="width:100%;margin-top:6px"></audio>
 {:else if missing}
-  <div>（这句没有录音，可能是录音已删除）</div>
+  <div>{tr('（这句没有录音，可能是录音已删除）')}</div>
 {:else}
-  <div>正在取出录音…</div>
+  <div>{tr('正在取出录音…')}</div>
 {/if}

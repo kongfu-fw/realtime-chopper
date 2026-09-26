@@ -1,9 +1,10 @@
 import { mount } from 'svelte'
 import App from './App.svelte'
+import { t } from './lib/i18n/index.ts'
 import './app.css'
 
 const target = document.getElementById('app')
-if (!target) throw new Error('缺少 #app 挂载点')
+if (!target) throw new Error(t('缺少 #app 挂载点'))
 
 mount(App, { target })
 

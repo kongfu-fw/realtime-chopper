@@ -4,6 +4,7 @@ import type { MtConfig, MtItem, MtItemResult } from '../mt/client'
 import type { SegmenterOptions } from '../asr/segmenter'
 import type { DevicePlan } from '../asr/moonshine'
 import { describeModuleError, moduleSpec } from '../asr/models'
+import { currentLang, t } from '../i18n/index.ts'
 import { debug, error as logError, info, warn } from '../log/store'
 
 /**
@@ -26,7 +27,7 @@ import { debug, error as logError, info, warn } from '../log/store'
  */
 function guard(worker: Worker, name: string): Worker {
   worker.onerror = (event) => {
-    logError('session', `${name} 崩溃了`, { message: event.message, filename: event.filename })
+    logError('session', t('{name} 崩溃了', { name }), { message: event.message, filename: event.filename })
   }
   return worker
 }
@@ -310,7 +311,7 @@ export class AsrWorkerClient {
           }
           this.onFailed?.(
             String(msg.where ?? 'unknown'),
-            String(msg.message ?? '未知错误'),
+            String(msg.message ?? t('未知错误')),
             msg.id as number | undefined,
           )
           break
@@ -325,7 +326,7 @@ export class AsrWorkerClient {
    */
   load(module: ModuleId, plan: DevicePlan | null): Promise<void> {
     // A second request supersedes the first; the old one must not hang forever.
-    this.pendingLoad?.settle(new Error('已被新的加载请求取代'))
+    this.pendingLoad?.settle(new Error(t('已被新的加载请求取代')))
     const done = new Promise<void>((resolve, reject) => {
       this.pendingLoad = {
         module,
@@ -334,7 +335,16 @@ export class AsrWorkerClient {
     })
     // The plan travels with the request: the verdict behind it lives in
     // `localStorage`, which a worker does not have. See `DevicePlan`.
-    this.worker.postMessage({ type: 'load', module, plan })
+    // The language travels with the request because the worker is a separate
+    // thread with its own copy of the i18n module: without this it would log in
+    // whatever language the *browser* asks for rather than the one the user
+    // picked. See `setUiLang`.
+    //
+    // Spelled `uiLang`, not `lang`: the classic sherpa worker has already spent
+    // `lang` on the module name (an older cached copy of it reads that field),
+    // and a second meaning for one key is how a Chinese module ends up being
+    // requested with the string "en".
+    this.worker.postMessage({ type: 'load', module, plan, uiLang: currentLang() })
     return done
   }
 
@@ -345,7 +355,7 @@ export class AsrWorkerClient {
   }
 
   dispose(): void {
-    this.pendingLoad?.settle(new Error('识别模块加载已取消'))
+    this.pendingLoad?.settle(new Error(t('识别模块加载已取消')))
     this.pendingLoad = null
     this.worker.postMessage({ type: 'dispose' })
     this.worker.terminate()
@@ -398,9 +408,9 @@ export class MtWorkerClient {
           break
         }
         case 'stats':
-          info('translate', '翻译缓存状态', {
-            cacheSize: msg.cacheSize,
-            queued: msg.queued,
+          info('translate', t('翻译缓存状态'), {
+            [t('缓存条数')]: msg.cacheSize,
+            [t('排队数')]: msg.queued,
           })
           break
       }
@@ -408,7 +418,9 @@ export class MtWorkerClient {
   }
 
   configure(config: MtConfig): void {
-    this.worker.postMessage({ type: 'configure', config })
+    // Same reason as the load message above: the worker translates its own log
+    // lines, so it has to be told which language to translate them into.
+    this.worker.postMessage({ type: 'configure', config, uiLang: currentLang() })
   }
 
   translate(items: MtItem[]): void {
@@ -421,7 +433,7 @@ export class MtWorkerClient {
       this.pendingOnce.set(requestId, { resolve, reject })
       this.worker.postMessage({ type: 'once', requestId, texts, overrides })
       setTimeout(() => {
-        if (this.pendingOnce.delete(requestId)) reject(new Error('翻译自检超时'))
+        if (this.pendingOnce.delete(requestId)) reject(new Error(t('翻译自检超时')))
       }, 20000)
     })
   }

@@ -1,8 +1,11 @@
 <script lang="ts">
   import { session } from '../lib/app/state'
   import { settings, setSetting, ttsVoiceFor } from '../lib/store/settings'
-  import { createTtsEngine, ttsConfigFrom, type TtsEngine, type VoiceOption } from '../lib/tts/engine'
+  import { createTtsEngine, ttsConfigFrom, ttsEngineLabel, type TtsEngine, type VoiceOption } from '../lib/tts/engine'
+  import { translator, uiLang } from '../lib/i18n/index.ts'
   import type { Line } from '../lib/types'
+
+  const tr = $derived(translator($uiLang))
 
   interface Props {
     lines: Line[]
@@ -10,7 +13,7 @@
 
   let { lines }: Props = $props()
 
-  const { autoRead, providerLabel } = session
+  const { autoRead, provider, providerLabel } = session
   let voices = $state<VoiceOption[]>([])
   let loadingVoices = $state(false)
   /** Why the list is empty, when it is empty for a reason worth naming. */
@@ -70,24 +73,24 @@
     pinned = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 40
   }
 
-  const GOOGLE = /谷歌/
-
+  // `tr`, not `t`: the result is rendered under a line, so a language switch has
+  // to be able to change what these two read.
   function label(line: Line): string {
     if (line.translation) return line.translation
-    if (line.mtState === 'failed') return '翻译失败'
-    return '翻译中…'
+    if (line.mtState === 'failed') return tr('翻译失败')
+    return tr('翻译中…')
   }
 </script>
 
-<section class="panel" aria-label="翻译结果">
+<section class="panel" aria-label={tr('翻译结果')}>
   <div class="panel-head">
-    <span class="panel-title">译文</span>
+    <span class="panel-title">{tr('译文')}</span>
 
     <!-- Requirement 19: the voice picker lives in the translation header. -->
     <select
       class="rc-select voice"
-      aria-label="朗读音色"
-      title="朗读音色 · {ttsEngine.label}{voiceError ? ` · ${voiceError}` : ''}"
+      aria-label={tr('朗读音色')}
+      title={`${tr('朗读音色')} · ${ttsEngineLabel($settings.ttsEngine, $uiLang)}${voiceError ? ` · ${voiceError}` : ''}`}
       value={chosenVoice}
       disabled={loadingVoices || voices.length === 0}
       onchange={(e) => {
@@ -97,12 +100,16 @@
     >
       {#if voices.length === 0}
         <option value="">
-          {loadingVoices ? '正在读取音色…' : voiceError ? '音色读取失败（见日志）' : '没有可用音色'}
+          {loadingVoices
+            ? tr('正在读取音色…')
+            : voiceError
+              ? tr('音色读取失败（见日志）')
+              : tr('没有可用音色')}
         </option>
       {:else}
-        <option value="">默认音色</option>
+        <option value="">{tr('默认音色')}</option>
         {#each voices as voice (voice.voiceURI)}
-          <option value={voice.voiceURI}>{voice.name}{voice.localService ? '' : '（网络）'}</option>
+          <option value={voice.voiceURI}>{voice.name}{voice.localService ? '' : tr('（网络）')}</option>
         {/each}
       {/if}
     </select>
@@ -113,8 +120,8 @@
          label next to it only competed with the voice picker. -->
     <button
       class="rc-btn ghost small speaking-toggle"
-      title={$autoRead ? '暂停自动朗读' : '恢复自动朗读'}
-      aria-label={$autoRead ? '暂停自动朗读' : '恢复自动朗读'}
+      title={$autoRead ? tr('暂停自动朗读') : tr('恢复自动朗读')}
+      aria-label={$autoRead ? tr('暂停自动朗读') : tr('恢复自动朗读')}
       aria-pressed={$autoRead}
       onclick={() => autoRead.set(!$autoRead)}
     >
@@ -130,10 +137,10 @@
     {#if $providerLabel}
       <span
         class="provider"
-        class:fallback={!GOOGLE.test($providerLabel)}
-        title="翻译来源：{$providerLabel}"
+        class:fallback={$provider !== 'google'}
+        title={tr('翻译来源：{source}', { source: $providerLabel })}
       >
-        {#if GOOGLE.test($providerLabel)}
+        {#if $provider === 'google'}
           <span class="brand-zh">文</span><span class="brand-en">A</span>
         {:else}
           {$providerLabel}
@@ -144,7 +151,7 @@
 
   <div class="panel-body" bind:this={bodyEl} onscroll={onScroll}>
     {#if lines.length === 0}
-      <p class="empty">译文会出现在这里。</p>
+      <p class="empty">{tr('译文会出现在这里。')}</p>
     {:else}
       {#each lines as line (line.id)}
         <div
@@ -152,7 +159,7 @@
           class:failed={line.mtState === 'failed'}
           role="button"
           tabindex="0"
-          title="从这里开始读"
+          title={tr('从这里开始读')}
           onclick={() => session.speakFrom(line.id)}
           onkeydown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') session.speakFrom(line.id)
@@ -161,10 +168,10 @@
           {#if $settings.debugMode || line.ttsState === 'speaking'}
             <div class="line-meta">
               {#if $settings.debugMode && line.mtProvider}
-                <span>{line.mtProvider}{line.mtState === 'cached' ? ' · 缓存' : ''}</span>
+                <span>{line.mtProvider}{line.mtState === 'cached' ? tr(' · 缓存') : ''}</span>
               {/if}
               {#if line.ttsState === 'speaking'}
-                <span class="speaking">正在朗读…</span>
+                <span class="speaking">{tr('正在朗读…')}</span>
               {/if}
             </div>
           {/if}
@@ -177,7 +184,7 @@
                 session.retryLine(line.id)
               }}
             >
-              重试
+              {tr('重试')}
             </button>
             {#if line.error}
               <div class="debug-box">{line.error}</div>

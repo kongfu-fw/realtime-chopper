@@ -1,7 +1,10 @@
 <script lang="ts">
   import { settings } from '../lib/store/settings'
   import { session, showToast } from '../lib/app/state'
+  import { t, translator, uiLang } from '../lib/i18n/index.ts'
   import LineAudio from './LineAudio.svelte'
+
+  const tr = $derived(translator($uiLang))
 
   interface Props {
     lines: import('../lib/types').Line[]
@@ -35,7 +38,7 @@
   async function play(line: import('../lib/types').Line) {
     const blob = await session.lineAudio(line.id)
     if (!blob) {
-      showToast('这句没有录音')
+      showToast(t('这句没有录音'))
       return
     }
     const url = URL.createObjectURL(blob)
@@ -51,10 +54,9 @@
   }
 </script>
 
-<section class="panel" aria-label="识别结果">
+<section class="panel" aria-label={tr('原文')}>
   <div class="panel-head">
-    <span class="panel-title">识别</span>
-    <span class="count">{lines.length} 句</span>
+    <span class="panel-title">{tr('原文')}</span>
     <span class="spacer"></span>
     {#if !pinned}
       <button
@@ -64,14 +66,14 @@
           if (bodyEl) bodyEl.scrollTop = bodyEl.scrollHeight
         }}
       >
-        回到最新
+        {tr('回到最新')}
       </button>
     {/if}
   </div>
 
   <div class="panel-body" bind:this={bodyEl} onscroll={onScroll}>
     {#if lines.length === 0}
-      <p class="empty">点下面的按钮开始说话。</p>
+      <p class="empty">{tr('点下面的按钮开始说话。')}</p>
     {:else}
       {#each lines as line (line.id)}
         <article class="line">
@@ -83,23 +85,23 @@
           {#if $settings.debugMode}
             <div class="line-meta">
               <span>{time(line.startMs, line.endMs)}</span>
-              <span title="识别引擎">{line.engine || '—'}</span>
-              <span title="推理耗时">{line.inferMs} ms</span>
+              <span title={tr('识别引擎')}>{line.engine || '—'}</span>
+              <span title={tr('推理耗时')}>{line.inferMs} ms</span>
               {#if audioAvailable}
                 <button
                   class="rc-btn ghost small"
-                  title="播放这句的原始录音"
+                  title={tr('播放这句的原始录音')}
                   onclick={() => void play(line)}
                 >
-                  ▶ 原声
+                  {tr('▶ 原声')}
                 </button>
               {/if}
               <button
                 class="rc-btn ghost small"
-                title="用录音里的这段音频重新识别一次"
+                title={tr('用录音里的这段音频重新识别一次')}
                 onclick={() => void session.reRecognize(line.id)}
               >
-                重新识别
+                {tr('重新识别')}
               </button>
             </div>
           {/if}
@@ -109,13 +111,19 @@
             <!-- Requirement 12: put the audio and the text side by side so the
                  recognition can be judged by ear. -->
             <div class="debug-box">
-              <div>原文（模型原始输出）：{line.rawText || '—'}</div>
-              <div>引擎：{line.engine || '—'} · 推理 {line.inferMs} ms · 时长 {((line.endMs - line.startMs) / 1000).toFixed(2)}s</div>
-              <div>时间轴：{line.startMs} → {line.endMs} ms</div>
+              <div>{tr('模型原始输出：{text}', { text: line.rawText || '—' })}</div>
+              <div>
+                {tr('引擎：{engine} · 推理 {ms} ms · 时长 {sec}s', {
+                  engine: line.engine || '—',
+                  ms: line.inferMs,
+                  sec: ((line.endMs - line.startMs) / 1000).toFixed(2),
+                })}
+              </div>
+              <div>{tr('时间轴：{start} → {end} ms', { start: line.startMs, end: line.endMs })}</div>
               {#if audioAvailable}
                 <LineAudio {line} />
               {:else}
-                <div>（没有录音，可在设置里打开「保存整场录音」）</div>
+                <div>{tr('（没有录音，可在设置里打开「保存整场录音」）')}</div>
               {/if}
             </div>
           {/if}
@@ -126,12 +134,6 @@
 </section>
 
 <style>
-  .count,
-  .spacer {
-    font-size: 12px;
-    color: var(--rc-ink-soft);
-  }
-
   .spacer {
     flex: 1 1 auto;
   }

@@ -2,6 +2,7 @@ import type { MtContext, MtProvider } from '../types'
 import { MtError } from '../types'
 import { decodeEntities, escapeText } from '../text'
 import { microsoftCode } from '../lang'
+import { t } from '../../i18n/index.ts'
 
 /**
  * Microsoft Translate — the keyless fallback.
@@ -44,25 +45,27 @@ export const microsoftProvider: MtProvider = {
         signal: ctx.signal,
       })
     } catch (err) {
-      throw new MtError(`微软翻译网络错误：${err instanceof Error ? err.message : String(err)}`, {
+      throw new MtError(
+        t('微软翻译网络错误：{error}', { error: err instanceof Error ? err.message : String(err) }),
+        {
         retryable: true,
         cause: err,
       })
     }
     if (!response.ok) {
-      throw new MtError(`微软翻译返回 HTTP ${response.status}`, {
+      throw new MtError(t('微软翻译返回 HTTP {status}', { status: response.status }), {
         retryable: response.status === 429 || response.status >= 500,
         status: response.status,
       })
     }
     const payload: unknown = await response.json().catch(() => undefined)
     if (!Array.isArray(payload) || payload.length !== texts.length) {
-      throw new MtError('微软翻译返回的句子数量与请求不一致', { retryable: false })
+      throw new MtError(t('微软翻译返回的句子数量与请求不一致'), { retryable: false })
     }
     return (payload as MicrosoftItem[]).map((item, index) => {
       const text = item?.translations?.[0]?.text
       if (typeof text !== 'string') {
-        throw new MtError(`微软翻译第 ${index + 1} 句缺少译文`, { retryable: false })
+        throw new MtError(t('微软翻译第 {n} 句缺少译文', { n: index + 1 }), { retryable: false })
       }
       return decodeEntities(text).trim()
     })

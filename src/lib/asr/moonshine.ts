@@ -1,4 +1,5 @@
 import type { AsrLoadProgress, AsrResult, Lang, ModuleId } from '../types'
+import { t } from '../i18n/index.ts'
 import { moduleSpec } from './models'
 import {
   gpuBlockReason,
@@ -72,14 +73,14 @@ function statusText(info: LoadProgress): string {
   switch (info.status) {
     case 'initiate':
     case 'download':
-      return info.file ? `下载 ${shortName(info.file)}` : '下载识别模块'
+      return info.file ? t('下载 {file}', { file: shortName(info.file) }) : t('下载识别模块')
     case 'progress':
     case 'progress_total':
-      return info.file ? `下载 ${shortName(info.file)}` : '下载识别模块'
+      return info.file ? t('下载 {file}', { file: shortName(info.file) }) : t('下载识别模块')
     case 'ready':
-      return '准备识别模块'
+      return t('准备识别模块')
     case 'done':
-      return '装配识别模块'
+      return t('装配识别模块')
     default:
       return String(info.status)
   }
@@ -181,15 +182,15 @@ export function planDevice(preference: 'auto' | 'webgpu' | 'wasm', precision: 'h
   })
   const plan = (primary: DeviceChoice): DevicePlan => ({
     primary,
-    fallback: primary.device === 'webgpu' ? cpu('显卡不可用，回退到 CPU') : null,
+    fallback: primary.device === 'webgpu' ? cpu(t('显卡不可用，回退到 CPU')) : null,
   })
-  if (preference === 'wasm') return plan(cpu('用户指定用 CPU'))
+  if (preference === 'wasm') return plan(cpu(t('用户指定用 CPU')))
   if (preference === 'webgpu') {
     // An explicit choice is an instruction, not a hint: it is tried even if this
     // device failed before (a driver update is exactly how that gets fixed).
-    return plan(webgpuAvailable() ? gpu('用户指定用显卡') : cpu('本机没有 WebGPU，改用 CPU'))
+    return plan(webgpuAvailable() ? gpu(t('用户指定用显卡')) : cpu(t('本机没有 WebGPU，改用 CPU')))
   }
-  if (!webgpuAvailable()) return plan(cpu('本机没有 WebGPU，改用 CPU'))
+  if (!webgpuAvailable()) return plan(cpu(t('本机没有 WebGPU，改用 CPU')))
   const blocked = gpuBlockReason()
   if (blocked) {
     // Two different reasons arrive here, and both end the same way. Either this
@@ -197,9 +198,9 @@ export function planDevice(preference: 'auto' | 'webgpu' | 'wasm', precision: 'h
     // see `device.ts`), or the GPU attempt did not *throw* last time — it hung or
     // took the page down — which is exactly why the verdict has to be remembered:
     // nothing was catchable at the time.
-    return plan(cpu(`${blocked}，改用 CPU`))
+    return plan(cpu(t('{reason}，改用 CPU', { reason: blocked })))
   }
-  return plan(gpu('使用显卡加速'))
+  return plan(gpu(t('使用显卡加速')))
 }
 
 /**
@@ -278,7 +279,7 @@ export class MoonshineEngine {
   async load(onProgress?: ProgressCallback): Promise<DeviceChoice> {
     if (this.pipe && this.actual) return this.actual
     const spec = moduleSpec(this.module)
-    if (!spec.hfModelId) throw new Error(`没有为 ${this.module} 配置 Moonshine 模型`)
+    if (!spec.hfModelId) throw new Error(t('没有为 {module} 配置 Moonshine 模型', { module: this.module }))
 
     const { env, pipeline } = await import('@huggingface/transformers')
     // Load from the Hugging Face CDN and keep the result in the browser cache;
@@ -316,7 +317,9 @@ export class MoonshineEngine {
           ? await withAttemptTimeout(
               work,
               WEBGPU_ATTEMPT_TIMEOUT_MS,
-              `显卡加速没能在 ${Math.round(WEBGPU_ATTEMPT_TIMEOUT_MS / 1000)} 秒内启动，改用 CPU`,
+              t('显卡加速没能在 {sec} 秒内启动，改用 CPU', {
+                sec: Math.round(WEBGPU_ATTEMPT_TIMEOUT_MS / 1000),
+              }),
             )
           : await work
         this.pipe = settled
@@ -337,11 +340,11 @@ export class MoonshineEngine {
         }
       }
     }
-    throw lastError instanceof Error ? lastError : new Error('Moonshine 模型加载失败')
+    throw lastError instanceof Error ? lastError : new Error(t('Moonshine 模型加载失败'))
   }
 
   async recognize(samples: Float32Array): Promise<AsrResult> {
-    if (!this.pipe) throw new Error('识别模块还没准备好')
+    if (!this.pipe) throw new Error(t('识别模块还没准备好'))
     const started = performance.now()
     // `max_new_tokens` is ours, not the library's default: see `TOKENS_PER_SECOND`.
     const output = await this.pipe(samples, {

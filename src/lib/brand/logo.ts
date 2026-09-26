@@ -18,8 +18,28 @@
  * `btoa` can turn an SVG into a data URL.
  */
 
+import { t } from '../i18n/index.ts'
+
+// A proper noun, and the one string in the app that is never translated: 乔巴 is
+// the character this project is named after.
 export const APP_NAME = '乔巴'
+/** The tagline's Chinese source text; `appDesc()` is what surfaces read. */
 export const APP_DESC = '实时语音翻译：本地识别 + 多来源翻译 + 浏览器朗读'
+
+/** The tagline in the interface language, for the manifest and the document title. */
+export function appDesc(): string {
+  return t(APP_DESC)
+}
+
+/**
+ * What the window and the installed app are called.
+ *
+ * The name is a proper noun and stays 乔巴; the tagline after it follows the
+ * interface language, so an English install does not read as half Chinese.
+ */
+export function appTitle(): string {
+  return `${APP_NAME} · ${t('实时翻译')}`
+}
 
 const mirror = (x: number) => 64 - x
 
@@ -34,6 +54,7 @@ const ANTLER_PATHS = [
 const BAND = 'M15 33.5 C15 21 22 15.5 32 15.5 C42 15.5 49 21 49 33.5'
 
 export const MARK = {
+
   box: 64,
 
   antler: {

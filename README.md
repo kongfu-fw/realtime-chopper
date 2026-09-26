@@ -15,6 +15,7 @@ It is a zero-backend, privacy-first, and serverless real-time speech translation
 - **Real-Time Dual-Column Subtitles**: Displays original and translated text side-by-side with synchronized scrolling (automatically adapts to a top-and-bottom stacked layout on mobile).
 - **Adaptive Speech Synthesis (TTS)**: Reads translations aloud in real time using the browser's native Speech Synthesis API, with smart speed acceleration (up to 1.8x) to keep up with fast speech without dropping sentences. An optional **Edge TTS proxy** engine can be selected in Settings for cross-platform neural voices (see `DOCS.md`).
 - **Audio History & Segment Re-decode**: Stores in-session audio in local memory so you can replay or re-transcribe any specific segment if recognition was inaccurate.
+- **Trilingual Interface (中文 / English / 한국어)**: The whole interface — including log lines and the diagnostic report — follows the browser language automatically, with a manual override in Settings (or `?lang=en`).
 - **PWA & Privacy-First**: 100% client-side architecture with zero account requirement. Can be installed as a PWA on mobile and desktop. Only text is sent to translation providers.
 
 ## Quick Start

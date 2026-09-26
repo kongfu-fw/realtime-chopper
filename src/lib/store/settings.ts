@@ -4,6 +4,7 @@ import { ASR_MODULES, moduleIdFor } from '../asr/models'
 import { APP_ICONS, DEFAULT_APP_ICON, type AppIconId } from '../brand/logo'
 import { EDGE_TTS_DEFAULT_PROXY } from '../tts/edge'
 import type { TtsEngineId } from '../tts/engine'
+import { SUPPORTED_LANGS, currentLang, translate, type UiLangSetting } from '../i18n/index.ts'
 
 /**
  * User-facing settings (requirement 10).
@@ -22,6 +23,15 @@ export type LogLevelSetting = 'debug' | 'info' | 'warn' | 'error'
 export interface Settings {
   /** Appearance */
   appIcon: AppIconId
+  /**
+   * Which language the interface speaks, in every language we have.
+   *
+   * Separate from `sourceLang`/`targetLang` on purpose: those are what goes *in*
+   * and *out* of the pipeline, this is the language the app talks to its user in
+   * — the three are independent, and a Chinese speaker translating English into
+   * Korean wants their buttons in Chinese.
+   */
+  uiLang: UiLangSetting
 
   /** Recognition */
   sourceLang: SourceLang
@@ -80,6 +90,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   appIcon: DEFAULT_APP_ICON,
+  uiLang: 'auto',
 
   sourceLang: 'en',
   silenceMs: 500,
@@ -147,6 +158,17 @@ function readStored(): Partial<Settings> {
     const engine = (parsed as Partial<Settings>).ttsEngine
     if (engine !== undefined && engine !== 'system' && engine !== 'edge') {
       delete (parsed as Record<string, unknown>).ttsEngine
+    }
+    // And the interface language, for a sharper reason than a blank picker: an
+    // unknown language is used as an index into the dictionaries, so a
+    // hand-edited `'jp'` would throw on the first string the app renders.
+    const uiLang = (parsed as Partial<Settings>).uiLang
+    if (
+      uiLang !== undefined &&
+      uiLang !== 'auto' &&
+      !SUPPORTED_LANGS.includes(uiLang)
+    ) {
+      delete (parsed as Record<string, unknown>).uiLang
     }
     return parsed as Partial<Settings>
   } catch {
@@ -244,13 +266,26 @@ export function forgetModel(key: string): void {
 }
 
 /** Human-readable size for the install dialog and settings list. */
-export function formatBytes(bytes: number | undefined): string {
-  if (!bytes || bytes <= 0) return '未知大小'
+export function formatBytes(bytes: number | undefined, uiLang: Lang = currentLang()): string {
+  if (!bytes || bytes <= 0) return translate(uiLang, '未知大小')
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
   return `${(bytes / 1024 / 1024).toFixed(0)} MB`
 }
 
-export const LANG_LABEL: Record<Lang, string> = {
+/**
+ * How a language is named *inside a sentence* (“识别语言切换为英文”).
+ *
+ * A function, not a table: the name of a language changes with the language the
+ * UI is in, so a frozen record would go stale the moment the picker moves. (The
+ * picker itself shows `LANG_NAMES`, where every language names itself.) Markup
+ * passes `$uiLang` in as the second argument — see the note on `t` in `lib/i18n`
+ * for why the call site has to hand the reactive value over.
+ */
+export function langLabel(lang: Lang, uiLang: Lang = currentLang()): string {
+  return translate(uiLang, LANG_LABEL[lang])
+}
+
+const LANG_LABEL: Record<Lang, string> = {
   en: '英文',
   zh: '中文',
   ko: '韩语',

@@ -19,18 +19,23 @@
     COPY_TAIL,
   } from '../lib/log/store'
   import { buildBlocks, isBatch, isOpen, toggled, type Block } from '../lib/log/blocks'
+  import { translator, uiLang } from '../lib/i18n/index.ts'
   import type { LogEntry, LogLevel } from '../lib/types'
+
+  // Every string in this drawer follows the interface language; the filter table
+  // is derived rather than constant so its labels redraw with it.
+  const tr = $derived(translator($uiLang))
 
   let filter = $state<LogLevel | 'all'>('all')
   let expanded = $state<Set<number>>(new Set())
 
-  const labels: Record<LogLevel | 'all', string> = {
-    all: '全部',
-    error: '错误',
-    warn: '警告',
-    info: '信息',
-    debug: '调试',
-  }
+  const labels = $derived<Record<LogLevel | 'all', string>>({
+    all: tr('全部'),
+    error: tr('错误'),
+    warn: tr('警告'),
+    info: tr('信息'),
+    debug: tr('调试'),
+  })
 
   const visible = $derived(
     filter === 'all' ? $entries : $entries.filter((entry) => entry.level === filter),
@@ -138,13 +143,13 @@
 {#if $logOpen}
   <div class="scrim" role="presentation" onclick={close}></div>
   <!-- Requirement 18: slides in from the left, one copy button per entry. -->
-  <aside class="drawer" aria-label="日志与自检">
+  <aside class="drawer" aria-label={tr('日志与自检')}>
     <header>
-      <strong>日志</strong>
-      {#if counts.error > 0}<span class="pill danger">{counts.error} 错误</span>{/if}
-      {#if counts.warn > 0}<span class="pill warn">{counts.warn} 警告</span>{/if}
+      <strong>{tr('日志')}</strong>
+      {#if counts.error > 0}<span class="pill danger">{counts.error} {tr('错误')}</span>{/if}
+      {#if counts.warn > 0}<span class="pill warn">{counts.warn} {tr('警告')}</span>{/if}
       <span class="spacer"></span>
-      <button class="rc-btn ghost small" onclick={close} aria-label="关闭日志">✕</button>
+      <button class="rc-btn ghost small" onclick={close} aria-label={tr('关闭日志')}>✕</button>
     </header>
 
     <div class="actions">
@@ -154,14 +159,14 @@
         {/each}
       </select>
       <button class="rc-btn small" disabled={$selfCheckRunning} onclick={() => void runDiagnostics(false)}>
-        {$selfCheckRunning ? '自检中…' : '运行自检'}
+        {$selfCheckRunning ? tr('自检中…') : tr('运行自检')}
       </button>
-      <button class="rc-btn ghost small" disabled={$selfCheckRunning} title="连发 5 次，看会不会被限流" onclick={() => void runDiagnostics(true)}>
-        连发探测
+      <button class="rc-btn ghost small" disabled={$selfCheckRunning} title={tr('连发 5 次，看会不会被限流')} onclick={() => void runDiagnostics(true)}>
+        {tr('连发探测')}
       </button>
       <span class="spacer"></span>
-      <button class="rc-btn ghost small" onclick={download}>导出</button>
-      <button class="rc-btn ghost small" onclick={() => clearLogs()}>清空</button>
+      <button class="rc-btn ghost small" onclick={download}>{tr('导出')}</button>
+      <button class="rc-btn ghost small" onclick={() => clearLogs()}>{tr('清空')}</button>
     </div>
 
     <!-- The one copy button that matters on a phone: no selecting, no scrolling,
@@ -170,11 +175,11 @@
       <button
         class="rc-btn small accent"
         disabled={tailCount === 0}
-        onclick={() => copy(latestLogsText(), `已复制最新 ${tailCount} 条日志`)}
+        onclick={() => copy(latestLogsText(), tr('已复制最新 {n} 条日志', { n: tailCount }))}
       >
-        复制最新 {tailCount} 条
+        {tr('复制最新 {n} 条', { n: tailCount })}
       </button>
-      <span class="copyhint">日期时间 · 级别 · 环节 · 内容，可直接粘进消息里</span>
+      <span class="copyhint">{tr('日期时间 · 级别 · 环节 · 内容，可直接粘进消息里')}</span>
     </div>
 
     {#if $logNotice}
@@ -185,7 +190,7 @@
         <div class="notice-head">
           <strong>{$logNotice.title}</strong>
           <span class="spacer"></span>
-          <button class="rc-btn ghost small" aria-label="关闭这条说明" onclick={() => logNotice.set(null)}>✕</button>
+          <button class="rc-btn ghost small" aria-label={tr('关闭这条说明')} onclick={() => logNotice.set(null)}>✕</button>
         </div>
         <p>{$logNotice.body}</p>
         {#if $logNotice.retry}
@@ -197,7 +202,7 @@
               void session.start().catch(() => undefined)
             }}
           >
-            现在再试一次
+            {tr('现在再试一次')}
           </button>
         {/if}
       </section>
@@ -206,8 +211,17 @@
     {#if $selfCheckReport}
       <section class="report">
         <div class="report-head">
-          <strong>自检结果</strong>
-          <button class="rc-btn ghost small" onclick={() => copyText($selfCheckReport!.results.map((r) => `${r.label}：${r.detail}`).join('\n'), '自检结果已复制')}>复制全部</button>
+          <strong>{tr('自检结果')}</strong>
+          <button
+            class="rc-btn ghost small"
+            onclick={() =>
+              copyText(
+                $selfCheckReport!.results.map((r) => `${r.label}${tr('：')}${r.detail}`).join('\n'),
+                tr('自检结果已复制'),
+              )}
+          >
+            {tr('复制全部')}
+          </button>
         </div>
         {#each $selfCheckReport.results as result, index (index)}
           <div class="report-row">
@@ -223,7 +237,7 @@
 
     <div class="list" bind:this={listEl} onscroll={onListScroll}>
       {#if visible.length === 0}
-        <p class="empty">还没有日志。</p>
+        <p class="empty">{tr('还没有日志。')}</p>
       {:else}
         {#each blocks as block (block.key)}
           {#if !isBatch(block)}
@@ -246,7 +260,7 @@
             >
               <span class="chev">{isOpen(block, overrides) ? '▾' : '▸'}</span>
               <span class="time">{formatStamp(block.ts)}</span>
-              <span class="count">{block.size} 条</span>
+              <span class="count">{tr('{n} 条', { n: block.size })}</span>
               <span class="chips">
                 {#each block.groups as group (group.entries[0].id)}
                   <span class="chip" class:ok={block.level === 'info'} class:warn={block.level === 'warn'} class:bad={block.level === 'error'}>{group.stage}×{group.entries.length}</span>
@@ -260,7 +274,7 @@
               <div class="batch-body">
                 {#each block.groups as group (group.entries[0].id)}
                   {#if multi}
-                    <div class="group-head"><span class="stage">{group.stage}</span> · {group.entries.length} 条</div>
+                    <div class="group-head"><span class="stage">{group.stage}</span> · {tr('{n} 条', { n: group.entries.length })}</div>
                   {/if}
                   {#each group.entries as entry (entry.id)}
                     {@render entryRow(entry, false, !multi)}
@@ -285,16 +299,16 @@
             {#if showStage}<span class="stage">{entry.stage}</span>{/if}
             {#if entry.detail}
               <button class="rc-btn ghost small" onclick={() => toggleDetail(entry.id)}>
-                {expanded.has(entry.id) ? '收起' : '详情'}
+                {expanded.has(entry.id) ? tr('收起') : tr('详情')}
               </button>
             {/if}
             <span class="spacer"></span>
             <button
               class="rc-btn ghost small"
-              title="复制这一条"
-              onclick={() => copy(formatEntry(entry), '已复制这一条')}
+              title={tr('复制这一条')}
+              onclick={() => copy(formatEntry(entry), tr('已复制这一条'))}
             >
-              复制
+              {tr('复制')}
             </button>
           </div>
           <div class="entry-msg">{entry.message}</div>

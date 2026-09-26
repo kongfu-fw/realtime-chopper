@@ -19,6 +19,8 @@
  * how an app ends up telling two different stories about the same phone.
  */
 
+import { t } from '../i18n/index.ts'
+
 const KEY = 'rc.gpu.verdict.v1'
 
 /** A failed verdict is trusted for this long, then the GPU gets another chance. */
@@ -56,7 +58,7 @@ export function rememberGpuFailure(reason: string): void {
 }
 
 export function rememberGpuSuccess(): void {
-  write({ ok: true, reason: '显卡加速可用', at: Date.now() })
+  write({ ok: true, reason: t('显卡加速可用'), at: Date.now() })
 }
 
 export function webgpuAvailable(): boolean {
@@ -93,7 +95,7 @@ export function isAppleMobile(): boolean {
  */
 function webgpuRiskyReason(): string | null {
   if (!isAppleMobile()) return null
-  return 'iPhone / iPad 上开显卡加速会把整个页面带崩（实测：一启用就整页闪一下重开）'
+  return t('iPhone / iPad 上开显卡加速会把整个页面带崩（实测：一启用就整页闪一下重开）')
 }
 
 /**
@@ -108,7 +110,7 @@ export function gpuBlockReason(): string | null {
   const verdict = readGpuVerdict()
   if (!verdict || verdict.ok) return null
   if (Date.now() - verdict.at > FAILURE_TTL_MS) return null
-  return `这台设备上次显卡加速失败过：${verdict.reason || '原因未记录'}`
+  return t('这台设备上次显卡加速失败过：{reason}', { reason: verdict.reason || t('原因未记录') })
 }
 
 /**

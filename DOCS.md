@@ -105,6 +105,7 @@
 |---|---|
 | 开始 / 停止 | 状态栏中间的圆钮（启动期间再点一次是「取消启动」） |
 | 换语言 | 标题栏中间「说 英文 → 译 中文」。切到中文/韩语不会重新下载模块（两者共用一份） |
+| 换界面语言 | 默认跟随浏览器（中文 / 英文 / 韩语）：设置页最上面「界面语言」可以钉死一个；网址后加 `?lang=en` 打开这一页时压过设置里的选择，进设置页一改就以设置里的为准（这个参数不写进设置，所以同一个链接下次打开还是它说了算） |
 | 换声音、调语速 | 译文栏标题栏的音色下拉；语速在设置里 |
 | 想立刻跟上 | 滞后超过 8s 时状态栏出现「跳到最新」（这是唯一会丢句子的入口，点了才发生） |
 | 某句没识别对 | 打开**调试模式**，那一行会出现 `▶ 原声` 和 `重新识别`（从整场录音里重新切一遍这段） |
@@ -135,6 +136,7 @@
 
 | 设置 | 默认 | 什么时候动它 |
 |---|---|---|
+| 界面语言 | 跟随浏览器 | 浏览器语言不是你要读的那种时（英文系统、韩文手机）就手动选；日志和诊断报告也跟着一起换 |
 | 说话停顿多久算一句 | 500ms | 说话快、老被切成两半 → 调长；想要更实时 → 调短 |
 | 一句话最长不超过 | 8s | 连说不换气时，这里会强制收尾（短句切分点在能量最低处，不切在词中间） |
 | 翻译用哪家 | 谷歌 | 公司网络连不上谷歌就选微软 |
@@ -162,6 +164,20 @@ npm run icons      # 从 logo.ts 的几何重新渲染图标（见下）
 
 测试只覆盖「错了也看不出来」的那部分规则，都在 `src/lib/log/`：日志文本的格式与表头（固定时钟 + `process.env.TZ`，所以断言的是确切字符串而不是正则），以及抽屉里同一秒分组的规则。用的是 Node 24 自带的类型擦除与 `node:test`，因此测试文件里的 import 必须写成 `./blocks.ts` 这种带扩展名的形式（`tsconfig` 里为此开了 `allowImportingTsExtensions`）。组件本身不测：规则一旦从 `.svelte` 里搬出来（比如 `blocks.ts`），就没什么可测的了。
 
+**界面语言（中/英/韩）**
+
+三语文案都在 `src/lib/i18n/`，而且**中文原文就是 key**：`t('原文')`，不是 `t('panel.original')`。这样代码里读得懂，漏翻的字符串也会退回中文原文 —— 代价是漏翻不出声，所以 `src/lib/i18n/messages.test.ts` 会扫全树，任何一个 `t('…')` 没有英文或韩文条目就直接失败（这条测试是唯一能让翻译不掉队的东西）。
+
+几条写文案时要守的规矩：
+
+- 用**单引号字面量**加 `{占位符}`（`t('已清理 {n} 个模块', { n })`），不要模板字符串 —— 扫描器就是从源码文本里读 key 的；
+- 译文里可以写 `单数|复数` 让英文按 `n` 自动选（韩文不要带 `|`）；
+- `.svelte` 里用 `tr`（跟着语言重渲染），日志/引擎代码用 `t`（调用时读当前语言）；
+- Worker 是独立线程、各自有一份词典，所以语言跟着消息走：`load` / `configure` 里带上 `uiLang`；`static/sherpa-asr.worker.js` 是 classic 脚本、import 不了，自己带一张表（`setLang(msg.uiLang)`）；
+- 语言的默认值是 `auto`：`detectLang()` 依次看 `navigator.languages`，`zh*` → 中文（含 `zh-TW`）、`ko*` → 韩语、`en*` → 英文，其余落到中文；`?lang=` 只在加载时读一次，但会压过存下来的选择，直到用户在设置里主动改一次才作废（`dropUrlOverride()`）；
+- `rc.settings.v1` 里存进来的未知语言会在 `readStored()` 里丢掉，否则它会当词典下标用、当场抛错；
+- **markup 里必须把手上的 `$uiLang` 交给这些取值函数**（`langLabel(lang, $uiLang)`、`moduleShort(id, $uiLang)`、`providerLabel(id, $uiLang)`…）：Svelte 只跟着它看得见的依赖重渲染，而 `t()` 读的是模块变量 —— 不带 `$uiLang` 的裸调用在切语言之后会停在旧语言，直到别的东西把它重渲染（日志、报错这类「发生在一瞬间」的代码反而应该这样，所以参数是可选的）。
+
 ```
 src/
   App.svelte  main.ts
@@ -173,6 +189,7 @@ src/
   lib/pipeline/        session(状态机) / queues / rate / latency
   lib/app/             state.ts（会话状态）/ version.ts（版本号，唯一来源）
   lib/brand/           logo.ts（标记几何 + 图标清单，唯一来源）/ apply.ts（favicon、manifest、iOS）
+  lib/i18n/            界面语言：index.ts（检测 + 切换）/ en.ts / ko.ts（词典，中文原文即 key）
   workers/             vad.worker.ts / asr.worker.ts / mt.worker.ts
 static/                manifest / sw.js / 图标 / 可选图标的原图 / sherpa-asr.worker.js（手写的 classic worker）
 static/icons/          非默认图标的各尺寸 PNG（由 npm run icons 生成）

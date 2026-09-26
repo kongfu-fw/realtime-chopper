@@ -1,5 +1,6 @@
 import type { Lang } from '../types'
 import type { Settings } from '../store/settings'
+import { currentLang, translate } from '../i18n/index.ts'
 import { SystemSpeechEngine } from './speech'
 import { EdgeTtsEngine } from './edge'
 
@@ -22,8 +23,21 @@ import { EdgeTtsEngine } from './edge'
  */
 export type TtsEngineId = 'system' | 'edge'
 
-/** Names used in the log, the report and the settings list. */
-export const TTS_ENGINE_LABEL: Record<TtsEngineId, string> = {
+/**
+ * How a read-aloud engine is named in the log, the report and the settings list.
+ *
+ * A function rather than a table, because the name is interface text and follows
+ * the interface language (`lib/i18n`). The engines expose it through a getter for
+ * the same reason: one built while the interface was Chinese must not keep
+ * calling itself 系统朗读 after the picker has moved. (A getter is still read at
+ * a moment in time, so markup calls this and hands `$uiLang` in.)
+ */
+export function ttsEngineLabel(id: TtsEngineId, uiLang: Lang = currentLang()): string {
+  return translate(uiLang, TTS_ENGINE_SOURCE[id])
+}
+
+/** The Chinese source strings, so the two names live in one place. */
+const TTS_ENGINE_SOURCE: Record<TtsEngineId, string> = {
   system: '系统朗读',
   edge: 'Edge TTS 代理',
 }

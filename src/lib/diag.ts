@@ -1,9 +1,10 @@
 import { exportLogs, formatStamp } from './log/store'
 import { gpuBlockReason, isAppleMobile, readGpuVerdict, webgpuAvailable } from './asr/device'
 import { speechSnapshot, speechSupported } from './tts/speech'
-import { TTS_ENGINE_LABEL } from './tts/engine'
+import { ttsEngineLabel } from './tts/engine'
 import { getSettings } from './store/settings'
 import { APP_VERSION } from './app/version'
+import { t } from './i18n/index.ts'
 
 /**
  * A failure report a user can *get off the phone*.
@@ -23,22 +24,41 @@ export function platformLines(): string[] {
   // First, because every other line describes a build of the app the reporter
   // may no longer be running: a shell cached by the Service Worker keeps an old
   // version alive, and a report that does not say which one is hard to trust.
-  lines.push(`版本：${APP_VERSION}`)
-  lines.push(`平台：${isAppleMobile() ? 'iOS/iPadOS' : '非 iOS'} · ${navigator.platform ?? '?'}`)
-  lines.push(`UA：${navigator.userAgent}`)
+  lines.push(t('版本：{version}', { version: APP_VERSION }))
   lines.push(
-    `安全上下文：${window.isSecureContext ? '是' : '否（麦克风与缓存都会被禁用）'}` +
-      ` · SharedArrayBuffer：${typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated ? '可用' : '不可用'}`,
+    t('平台：{platform} · {ua}', {
+      // Not translated on purpose: it is the platform's name, and it is spelled
+      // the same in all three languages.
+      platform: `${isAppleMobile() ? 'iOS/iPadOS' : t('非 iOS')} · ${navigator.platform ?? '?'}`,
+      ua: navigator.userAgent,
+    }),
   )
   lines.push(
-    `CPU 核心：${navigator.hardwareConcurrency || '未知'}` +
-      ` · 设备内存（Chrome 才报）：${(navigator as { deviceMemory?: number }).deviceMemory ?? '未知'}`,
+    t('安全上下文：{secure}', {
+      secure: window.isSecureContext ? t('是') : t('否（麦克风与缓存都会被禁用）'),
+    }) +
+      t(' · SharedArrayBuffer：{state}', {
+        state:
+          typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated
+            ? t('可用')
+            : t('不可用'),
+      }),
+  )
+  lines.push(
+    t('CPU 核心：{cores}', { cores: navigator.hardwareConcurrency || t('未知') }) +
+      t(' · 设备内存（Chrome 才报）：{gb}', {
+        gb: (navigator as { deviceMemory?: number }).deviceMemory ?? t('未知'),
+      }),
   )
   const verdict = readGpuVerdict()
   lines.push(
-    `WebGPU：${webgpuAvailable() ? '浏览器提供' : '没有'}` +
-      ` · 上次判定：${verdict ? `${verdict.ok ? '可用' : '失败'}（${verdict.reason}）` : '还没试过'}` +
-      `${gpuBlockReason() ? ' · 本次将直接用 CPU' : ''}`,
+    t('WebGPU：{available}', { available: webgpuAvailable() ? t('浏览器提供') : t('没有') }) +
+      t(' · 上次判定：{verdict}', {
+        verdict: verdict
+          ? `${verdict.ok ? t('可用') : t('失败')}${t('（{reason}）', { reason: verdict.reason })}`
+          : t('还没试过'),
+      }) +
+      (gpuBlockReason() ? t(' · 本次将直接用 CPU') : ''),
   )
   // Speech output, because "朗读听不到" is the one failure with no error and no
   // console line to find: `paused` here means the platform stopped calling back
@@ -49,15 +69,22 @@ export function platformLines(): string[] {
   // network question, not a platform one.
   const settings = getSettings()
   lines.push(
-    `朗读引擎：${TTS_ENGINE_LABEL[settings.ttsEngine]}` +
-      `（${settings.ttsEngine === 'edge' ? settings.ttsProxyUrl : speechSupported() ? '可用' : '浏览器不支持'}）`,
+    t('朗读引擎：{engine}', { engine: ttsEngineLabel(settings.ttsEngine) }) +
+      t('（{detail}）', {
+        detail:
+          settings.ttsEngine === 'edge'
+            ? settings.ttsProxyUrl
+            : speechSupported()
+              ? t('可用')
+              : t('浏览器不支持'),
+      }),
   )
   if (settings.ttsEngine === 'system') {
     const speech = speechSnapshot()
     lines.push(
-      `系统朗读：音色 ${speech.voices} 个` +
-        ` · 暂停态：${speech.paused ? '是（会没声音）' : '否'}` +
-        ` · 语音会话：${speech.session}`,
+      t('系统朗读：音色 {n} 个', { n: speech.voices }) +
+        t(' · 暂停态：{paused}', { paused: speech.paused ? t('是（会没声音）') : t('否') }) +
+        t(' · 语音会话：{session}', { session: speech.session }),
     )
   }
   return lines
@@ -70,22 +97,24 @@ export async function storageLines(): Promise<string[]> {
     const estimate = await navigator.storage?.estimate?.()
     if (estimate) {
       lines.push(
-        `存储：配额约 ${((estimate.quota ?? 0) / 1048576).toFixed(0)} MB，` +
-          `已用 ${((estimate.usage ?? 0) / 1048576).toFixed(1)} MB`,
+        t('存储：配额约 {quota} MB，已用 {used} MB', {
+          quota: ((estimate.quota ?? 0) / 1048576).toFixed(0),
+          used: ((estimate.usage ?? 0) / 1048576).toFixed(1),
+        }),
       )
     } else {
-      lines.push('存储：浏览器不提供配额信息')
+      lines.push(t('存储：浏览器不提供配额信息'))
     }
   } catch {
-    lines.push('存储：读取配额失败')
+    lines.push(t('存储：读取配额失败'))
   }
   try {
     if (typeof caches !== 'undefined') {
       const keys = await caches.keys()
-      lines.push(`缓存桶：${keys.length ? keys.join('、') : '（空）'}`)
+      lines.push(t('缓存桶：{keys}', { keys: keys.length ? keys.join(t('、')) : t('（空）') }))
     }
   } catch {
-    lines.push('缓存桶：读取失败')
+    lines.push(t('缓存桶：读取失败'))
   }
   return lines
 }
@@ -96,9 +125,9 @@ export async function storageLines(): Promise<string[]> {
  */
 export async function diagnosticReport(headline: string): Promise<string> {
   const parts = [
-    '# 乔巴 · 诊断信息',
+    t('# 乔巴 · 诊断信息'),
     `# ${formatStamp(Date.now())}`,
-    headline ? `情况：${headline}` : '',
+    headline ? t('情况：{headline}', { headline }) : '',
     ...platformLines(),
     ...(await storageLines()),
     '',

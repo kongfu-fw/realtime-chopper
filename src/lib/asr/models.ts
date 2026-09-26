@@ -1,4 +1,5 @@
 import type { Lang, ModuleId } from '../types'
+import { currentLang, t, translate } from '../i18n/index.ts'
 
 /**
  * Speech-recognition module registry.
@@ -31,7 +32,15 @@ export type ModuleLang = 'en' | 'zh'
 /** Every module, in the order the install dialog shows them (smallest first). */
 export const MODULE_IDS: readonly ModuleId[] = ['en', 'zh']
 
-/** Title of each module in the install dialog. */
+/**
+ * Title of each module in the install dialog.
+ *
+ * The tables below hold the Chinese *source* text; the accessors around them are
+ * what the interface actually prints, so the names follow the interface language
+ * (`lib/i18n`) without every caller having to remember to translate. Markup hands
+ * `$uiLang` in as the accessors' last argument, so a name on screen follows a
+ * language switch; see the note on `t` in `lib/i18n`.
+ */
 export const MODULE_NAME: Record<ModuleId, string> = {
   en: '英文识别模块',
   zh: '中文和韩语识别模块',
@@ -41,6 +50,19 @@ export const MODULE_NAME: Record<ModuleId, string> = {
 export const MODULE_SHORT: Record<ModuleId, string> = {
   en: '英文 · Moonshine',
   zh: '中文 / 韩语',
+}
+
+export function moduleTitle(id: ModuleId, uiLang: Lang = currentLang()): string {
+  return translate(uiLang, MODULE_NAME[id])
+}
+
+export function moduleShort(id: ModuleId, uiLang: Lang = currentLang()): string {
+  return translate(uiLang, MODULE_SHORT[id])
+}
+
+/** One module's own name, in the language the interface is speaking. */
+export function moduleLabel(spec: AsrModuleSpec, uiLang: Lang = currentLang()): string {
+  return translate(uiLang, spec.label)
 }
 
 /**
@@ -61,9 +83,9 @@ const RETIRED_MODULE_NAME: Record<string, string> = {
  * Never throws on an unknown id: the caller is already reporting a failure, and
  * "那个模块" is a worse answer than the raw id.
  */
-export function moduleName(id: string): string {
+export function moduleName(id: string, uiLang: Lang = currentLang()): string {
   const table = MODULE_NAME as Record<string, string | undefined>
-  return table[id] ?? RETIRED_MODULE_NAME[id] ?? id
+  return translate(uiLang, table[id] ?? RETIRED_MODULE_NAME[id] ?? id)
 }
 
 export interface AsrModuleSpec {
@@ -159,20 +181,20 @@ export function moduleFor(lang: Lang): AsrModuleSpec {
  */
 export function describeModuleError(message: string): string {
   const text = message.toLowerCase()
-  if (isMemoryFailure(message)) return '这个设备内存不够装这个模块：关掉其他应用，或先装英文模块'
-  if (/fetch|network|load failed|offline|connection/.test(text)) return '下载中断了，检查网络后重试'
-  if (/401|403|unauthor|forbidden|denied/.test(text)) return '下载被拒绝，换个网络重试'
-  if (/404|not found/.test(text)) return '找不到模块文件，可能需要更新版本'
-  if (/timeout|timed out/.test(text)) return '下载太久没动静，重试一次'
-  if (/quota|space|storage/.test(text)) return '手机存储空间不够，清理后重试'
-  if (/caches|indexeddb|cache storage/.test(text)) return '浏览器不让存文件，用 https 打开再试'
+  if (isMemoryFailure(message)) return t('这个设备内存不够装这个模块：关掉其他应用，或先装英文模块')
+  if (/fetch|network|load failed|offline|connection/.test(text)) return t('下载中断了，检查网络后重试')
+  if (/401|403|unauthor|forbidden|denied/.test(text)) return t('下载被拒绝，换个网络重试')
+  if (/404|not found/.test(text)) return t('找不到模块文件，可能需要更新版本')
+  if (/timeout|timed out/.test(text)) return t('下载太久没动静，重试一次')
+  if (/quota|space|storage/.test(text)) return t('手机存储空间不够，清理后重试')
+  if (/caches|indexeddb|cache storage/.test(text)) return t('浏览器不让存文件，用 https 打开再试')
   // WebAssembly failures read like nothing else in this file, and they are the
   // ones a phone actually hits: Emscripten reports an out-of-memory as a bare
   // `abort()`, which is the same text as a dozen other faults.
   if (/instantiate|webassembly|wasm|linkerror|compileerror/.test(text))
-    return '识别引擎没能在浏览器里启动，换个浏览器再试'
-  if (/not allowed|securityerror|permission|blocked/.test(text)) return '浏览器拦住了加载，用 https 或换个浏览器打开'
-  return '模块没能装好，再试一次'
+    return t('识别引擎没能在浏览器里启动，换个浏览器再试')
+  if (/not allowed|securityerror|permission|blocked/.test(text)) return t('浏览器拦住了加载，用 https 或换个浏览器打开')
+  return t('模块没能装好，再试一次')
 }
 
 /**

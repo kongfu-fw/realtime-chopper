@@ -1,8 +1,10 @@
 import type { Lang } from '../types'
+import { t } from '../i18n/index.ts'
 import {
   chunkForSpeech,
   clampRate,
   langPrefixes,
+  ttsEngineLabel,
   type SpeakOptions,
   type SpeakOutcome,
   type TtsEngine,
@@ -90,7 +92,10 @@ const ASSUMED_CHUNK_SECONDS = 30
 
 export class EdgeTtsEngine implements TtsEngine {
   readonly id = 'edge'
-  readonly label = 'Edge TTS 代理'
+  /** A getter, so the name follows the interface language; see `ttsEngineLabel`. */
+  get label(): string {
+    return ttsEngineLabel('edge')
+  }
   private readonly proxyUrl: string
   private audio: HTMLAudioElement | null = null
   private primed = false
@@ -346,11 +351,11 @@ async function failureText(response: Response): Promise<string> {
   let detail = ''
   try {
     const body = (await response.json()) as { error?: { message?: string } }
-    if (body.error?.message) detail = `：${body.error.message}`
+    if (body.error?.message) detail = t('：{message}', { message: body.error.message })
   } catch {
     /* not JSON, or already consumed — the status alone still helps */
   }
-  return `TTS 代理返回 HTTP ${response.status}${detail}`
+  return t('TTS 代理返回 HTTP {status}{detail}', { status: response.status, detail })
 }
 
 /**

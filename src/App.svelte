@@ -19,6 +19,7 @@
   } from './lib/app/state'
   import { getSettings, forgetModel, settings } from './lib/store/settings'
   import { applyAppIcon } from './lib/brand/apply'
+  import { appTitle } from './lib/brand/logo'
   import {
     configureLogging,
     error as logError,
@@ -29,10 +30,17 @@
     warn,
   } from './lib/log/store'
   import { createTtsEngine, ttsConfigFrom } from './lib/tts/engine'
-  import { moduleFor, moduleName, purgeRetiredModuleCaches } from './lib/asr/models'
+  import { moduleFor, moduleLabel, moduleName, purgeRetiredModuleCaches } from './lib/asr/models'
   import { rememberGpuFailure } from './lib/asr/device'
   import { takeAsrCrashReport } from './lib/boot-guard'
   import { APP_VERSION } from './lib/app/version'
+  import { effectiveLang, setUiLang, t, translator, uiLang } from './lib/i18n/index.ts'
+
+  // Strings shown in the markup go through this one, so that picking a different
+  // language in settings re-renders the screen; the bare `t` imported above reads
+  // the language as it is right now, which is what the log lines want (they are
+  // written once, and never re-rendered).
+  const tr = $derived(translator($uiLang))
 
   const { lines: linesStore, state: sessionState } = session
   const lines = $derived($linesStore)
@@ -46,16 +54,19 @@
     if ($sessionState === 'recording' && $logNotice) logNotice.set(null)
   })
 
+  // The interface language follows the setting, and `auto` follows the browser.
+  //
+  // The window title and the manifest are re-applied here too, and not only when
+  // the icon changes: both carry text, and text follows the language.
+  $effect(() => {
+    setUiLang(effectiveLang($settings.uiLang))
+    document.title = appTitle()
+    applyAppIcon($settings.appIcon)
+  })
+
   // Logging configuration follows the settings live.
   $effect(() => {
     configureLogging($settings.logRing, $settings.logLevel)
-  })
-
-  // The icon follows the setting too: the favicon changes immediately, and the
-  // manifest — which is what an *install* reads — is regenerated for any choice
-  // other than the one shipped in static/icon.svg.
-  $effect(() => {
-    applyAppIcon($settings.appIcon)
   })
 
   // VAD thresholds, provider config and rate limits are re-read on every change,
@@ -73,7 +84,7 @@
     if (getSettings().installedModels.ko) forgetModel('ko')
     if (getSettings().installedModels['en-nemo']) forgetModel('en-nemo')
     void purgeRetiredModuleCaches().then((gone) => {
-      if (gone.length) info('storage', `已清理不再使用的识别模块：${gone.join('、')}`)
+      if (gone.length) info('storage', t('已清理不再使用的识别模块：{list}', { list: gone.join(t('、')) }))
     })
 
     // Named at startup because "which module is running" is the first thing a bug
@@ -83,26 +94,26 @@
     // Named here too, for the same reason as the module: a bug report that says
     // which read-aloud engine was in use answers the first question about it.
     const tts = createTtsEngine(ttsConfigFrom($settings))
-    info('session', '应用已启动', {
-      版本: APP_VERSION,
-      默认语向: `${$settings.sourceLang} → ${$settings.targetLang}`,
-      识别模块: spec.label,
-      朗读: `${tts.label}${tts.available ? '' : '（不可用）'}`,
+    info('session', t('应用已启动'), {
+      [t('版本')]: APP_VERSION,
+      [t('默认语向')]: `${$settings.sourceLang} → ${$settings.targetLang}`,
+      [t('识别模块')]: moduleLabel(spec),
+      [t('朗读')]: `${tts.label}${tts.available ? '' : t('（不可用）')}`,
     })
     if (!window.isSecureContext) {
       // On a phone this single fact explains almost everything that looks broken:
       // opened over a plain http:// LAN address, the browser withholds the
       // microphone, Cache Storage and WebGPU at the same time. Say it where a
       // phone can actually read it (the status bar), not just in the log.
-      warn('session', '当前不是安全上下文（https/localhost）：麦克风、模型缓存和显卡加速都会被浏览器禁用')
-      session.notice.set('这个地址不能用麦克风：请用 https 或电脑上的 localhost 打开')
+      warn('session', t('当前不是安全上下文（https/localhost）：麦克风、模型缓存和显卡加速都会被浏览器禁用'))
+      session.notice.set(t('这个地址不能用麦克风：请用 https 或电脑上的 localhost 打开'))
     }
     if (!tts.available) {
       warn(
         'tts',
         $settings.ttsEngine === 'edge'
-          ? '没有填 Edge TTS 代理地址，译文不会自动读出来'
-          : '这个浏览器不支持语音朗读，译文不会自动读出来',
+          ? t('没有填 Edge TTS 代理地址，译文不会自动读出来')
+          : t('这个浏览器不支持语音朗读，译文不会自动读出来'),
       )
     }
     // Did the previous load of this page die while starting the engine? Nothing
@@ -123,22 +134,22 @@
         // fine. So this crash bans the *accelerator*, never the module: the note
         // that recorded it is what lets the next attempt succeed instead of
         // repeating the flash.
-        rememberGpuFailure('上次启用显卡加速时整个页面被系统关掉了')
-        logError('asr', `上次启动${name}时页面被系统直接关掉了 —— 当时用的是显卡加速（WebGPU），已记住，下次改用 CPU`, {
-          依据: 'iPhone / Safari 上启用 WebGPU 会把渲染进程带崩，一闪重开、无异常可捕',
+        rememberGpuFailure(t('上次启用显卡加速时整个页面被系统关掉了'))
+        logError('asr', t('上次启动{name}时页面被系统直接关掉了 —— 当时用的是显卡加速（WebGPU），已记住，下次改用 CPU', { name }), {
+          [t('依据')]: t('iPhone / Safari 上启用 WebGPU 会把渲染进程带崩，一闪重开、无异常可捕'),
         })
         logNotice.set({
-          title: '显卡加速把页面带崩了，已自动改用 CPU',
-          body: `iPhone / Safari 上的 WebGPU 一启用就会把整个页面关掉，这个模块本身没问题。现在再试一次即可（设置里也可以自己确认「显卡加速」选的是 CPU）。${
-            restoredCount > 0 ? '下面标红的那一条记着当时用的是哪个加速器。' : ''
+          title: t('显卡加速把页面带崩了，已自动改用 CPU'),
+          body: `${t('iPhone / Safari 上的 WebGPU 一启用就会把整个页面关掉，这个模块本身没问题。现在再试一次即可（设置里也可以自己确认「显卡加速」选的是 CPU）。')}${
+            restoredCount > 0 ? t('下面标红的那一条记着当时用的是哪个加速器。') : ''
           }`,
           // The fix is already in place, so this is the one failure the drawer can
           // offer to undo with a button rather than describe.
           retry: true,
         })
       } else {
-        logError('asr', `上次启动${name}时页面被系统直接关掉了（第 ${crash.count} 次，多半是内存不够）`, {
-          提示: '弹窗闪一下就没了、控制台没有任何报错，通常就是这一种',
+        logError('asr', t('上次启动{name}时页面被系统直接关掉了（第 {n} 次，多半是内存不够）', { name, n: crash.count }), {
+          [t('提示')]: t('弹窗闪一下就没了、控制台没有任何报错，通常就是这一种'),
         })
         // Where the evidence is decides what can be promised. A tail can still be
         // missing — the page was killed before its first write reached storage,
@@ -152,14 +163,14 @@
         // itself is unambiguous; its position is not.
         const tail =
           restoredCount > 0
-            ? '下面标红的那一条就是它倒下的地方，它前面几行是崩溃前的最后状态。'
-            : '这次没能找回崩溃前的日志尾巴，只能确认它是在这一步倒下的。'
+            ? t('下面标红的那一条就是它倒下的地方，它前面几行是崩溃前的最后状态。')
+            : t('这次没能找回崩溃前的日志尾巴，只能确认它是在这一步倒下的。')
         logNotice.set({
-          title: `上次启动${name}时，页面被系统直接关掉了`,
+          title: t('上次启动{name}时，页面被系统直接关掉了', { name }),
           body:
             crash.count >= 2
-              ? `这台设备装不下这个模块（240MB 的模型加上识别引擎）。再点还是会一样，先别试了。${tail}`
-              : `多半是内存不够：这种失败不会弹任何错误，页面只是闪一下就重开了。${tail}`,
+              ? `${t('这台设备装不下这个模块（240MB 的模型加上识别引擎）。再点还是会一样，先别试了。')}${tail}`
+              : `${t('多半是内存不够：这种失败不会弹任何错误，页面只是闪一下就重开了。')}${tail}`,
         })
       }
       // The evidence only exists in the log, so for this one failure the log comes
@@ -173,11 +184,11 @@
       info(
         'session',
         document.visibilityState === 'hidden'
-          ? '页面切到后台（手机上系统可能就在这里回收掉页面）'
-          : '页面回到前台',
+          ? t('页面切到后台（手机上系统可能就在这里回收掉页面）')
+          : t('页面回到前台'),
       )
     const onPageHide = () => {
-      info('session', '页面正在关闭或重新加载')
+      info('session', t('页面正在关闭或重新加载'))
       flushLogs()
       // Flush first: the claim is what tells the next load whether this tab is
       // still in use, so giving it up has to happen after this page's last write.
@@ -207,7 +218,7 @@
       // Installed PWAs are exempt from iOS's 7-day storage sweep; asking for
       // persistence is the cheapest available protection for a 230 MB model.
       void navigator.storage.persist().then((granted) => {
-        info('storage', granted ? '存储已设为持久，模型不会被自动清理' : '存储未获持久授权，长时间不用可能被清理')
+        info('storage', granted ? t('存储已设为持久，模型不会被自动清理') : t('存储未获持久授权，长时间不用可能被清理'))
       })
     }
 
@@ -259,23 +270,23 @@
   <!-- Headphone check (requirement 13): a soft confirmation, deliberately not a
        hard gate — the browser cannot reliably tell whether headphones are on. -->
   <Modal
-    title="先戴上耳机"
+    title={tr('先戴上耳机')}
     onclose={() => headphonePrompt.set(false)}
   >
-    <p>不戴耳机，麦克风会听到手机读译文的声音，就会自己翻译自己。</p>
+    <p>{tr('不戴耳机，麦克风会听到手机读译文的声音，就会自己翻译自己。')}</p>
     {#snippet footer()}
-      <button class="rc-btn ghost" onclick={() => headphonePrompt.set(false)}>不用了</button>
+      <button class="rc-btn ghost" onclick={() => headphonePrompt.set(false)}>{tr('不用了')}</button>
       <button
         class="rc-btn accent"
         onclick={() => {
           acknowledgeHeadphones()
           headphonePrompt.set(false)
           void session.start().catch((err: unknown) =>
-            warn('session', `启动失败：${err instanceof Error ? err.message : String(err)}`),
+            warn('session', t('启动失败：{error}', { error: err instanceof Error ? err.message : String(err) })),
           )
         }}
       >
-        戴好了，开始
+        {tr('戴好了，开始')}
       </button>
     {/snippet}
   </Modal>

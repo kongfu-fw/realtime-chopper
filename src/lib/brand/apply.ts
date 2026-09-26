@@ -1,4 +1,5 @@
-import { APP_DESC, APP_NAME, DEFAULT_APP_ICON, iconAsset, iconFor, iconPreviewUrl } from './logo'
+import { APP_NAME, DEFAULT_APP_ICON, appDesc, appTitle, iconAsset, iconFor, iconPreviewUrl } from './logo'
+import { currentLang } from '../i18n/index.ts'
 
 /**
  * Put the chosen icon where the browser actually looks.
@@ -59,7 +60,10 @@ export function applyAppIcon(id: string): void {
   const manifest = document.getElementById(MANIFEST_ID) as HTMLLinkElement | null
   if (!manifest) return
 
-  if (icon.id === DEFAULT_APP_ICON) {
+  // The static manifest is the Chinese default. Any other language gets a
+  // generated one even for the default icon, because the name and the tagline an
+  // install carries are part of the interface.
+  if (icon.id === DEFAULT_APP_ICON && currentLang() === 'zh') {
     manifest.href = './manifest.webmanifest'
     if (liveManifestUrl) {
       URL.revokeObjectURL(liveManifestUrl)
@@ -75,16 +79,20 @@ export function applyAppIcon(id: string): void {
     new Blob(
       [
         JSON.stringify({
-          name: APP_NAME,
+          name: appTitle(),
+          // The name on its own: a home screen has room for one word, and the
+          // mascot's name is not translated.
           short_name: APP_NAME,
-          description: APP_DESC,
+          description: appDesc(),
           start_url: base,
           scope: base,
           display: 'standalone',
           orientation: 'any',
           background_color: '#FDFBF4',
           theme_color: '#FDFBF4',
-          lang: 'zh-CN',
+          // The tagline follows the interface language, and so does the manifest's
+          // own `lang`: an install made by an English user should say so.
+          lang: currentLang() === 'zh' ? 'zh-CN' : currentLang(),
           // The same set the static manifest declares, for this icon: two plain
           // sizes and one that bleeds and survives a launcher's circular mask.
           icons: [

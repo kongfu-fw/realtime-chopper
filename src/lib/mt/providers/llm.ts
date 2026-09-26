@@ -1,6 +1,7 @@
 import type { LlmFormat, MtContext, MtProvider } from '../types'
 import { MtError } from '../types'
 import { languageName } from '../lang'
+import { t } from '../../i18n/index.ts'
 
 /**
  * User-supplied LLM as an extra translation option.
@@ -60,19 +61,19 @@ export function createLlmProvider(): MtProvider {
 
     async translate(texts: string[], ctx: MtContext): Promise<string[]> {
       const llm = ctx.llm
-      if (!llm) throw new MtError('还没有配置 AI 模型', { retryable: false })
+      if (!llm) throw new MtError(t('还没有配置 AI 模型'), { retryable: false })
       if (!llm.baseUrl.trim() || !llm.model.trim()) {
-        throw new MtError('AI 模型的地址和名称不能为空', { retryable: false })
+        throw new MtError(t('AI 模型的地址和名称不能为空'), { retryable: false })
       }
       if (llm.format !== 'gemini' && !llm.apiKey.trim()) {
-        throw new MtError('AI 模型需要填写密钥', { retryable: false })
+        throw new MtError(t('AI 模型需要填写密钥'), { retryable: false })
       }
       const system = SYSTEM_PROMPT(languageName(ctx.sl), languageName(ctx.tl), texts.length)
       const user = buildUserPrompt(texts)
       const raw = await callLlm(llm, system, user, ctx.signal)
       const parsed = parseNumberedLines(raw, texts.length)
       if (!parsed) {
-        throw new MtError('AI 模型返回的格式不符合要求（编号行数不匹配）', { retryable: false })
+        throw new MtError(t('AI 模型返回的格式不符合要求（编号行数不匹配）'), { retryable: false })
       }
       return parsed
     },
@@ -115,7 +116,8 @@ async function callOpenAiCompatible(
   )
   const content = (payload as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message
     ?.content
-  if (typeof content !== 'string') throw new MtError('AI 模型没有返回文本内容', { retryable: false })
+  if (typeof content !== 'string')
+    throw new MtError(t('AI 模型没有返回文本内容'), { retryable: false })
   return content
 }
 
@@ -148,7 +150,7 @@ async function callAnthropic(
   const text = Array.isArray(blocks)
     ? blocks.map((b) => (typeof b?.text === 'string' ? b.text : '')).join('\n')
     : ''
-  if (!text.trim()) throw new MtError('AI 模型没有返回文本内容', { retryable: false })
+  if (!text.trim()) throw new MtError(t('AI 模型没有返回文本内容'), { retryable: false })
   return text
 }
 
@@ -173,7 +175,7 @@ async function callGemini(
   const parts = (payload as { candidates?: { content?: { parts?: { text?: unknown }[] } }[] })?.candidates?.[0]
     ?.content?.parts
   const text = Array.isArray(parts) ? parts.map((p) => (typeof p?.text === 'string' ? p.text : '')).join('') : ''
-  if (!text.trim()) throw new MtError('AI 模型没有返回文本内容', { retryable: false })
+  if (!text.trim()) throw new MtError(t('AI 模型没有返回文本内容'), { retryable: false })
   return text
 }
 
@@ -187,14 +189,18 @@ async function postJson(
   try {
     response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
   } catch (err) {
-    throw new MtError(`AI 模型网络错误：${err instanceof Error ? err.message : String(err)}`, {
+    throw new MtError(
+      t('AI 模型网络错误：{error}', { error: err instanceof Error ? err.message : String(err) }),
+      {
       retryable: true,
       cause: err,
     })
   }
   const text = await response.text()
   if (!response.ok) {
-    throw new MtError(`AI 模型返回 HTTP ${response.status}：${text.slice(0, 200)}`, {
+    throw new MtError(
+      t('AI 模型返回 HTTP {status}：{text}', { status: response.status, text: text.slice(0, 200) }),
+      {
       retryable: response.status === 429 || response.status >= 500,
       status: response.status,
     })
@@ -202,6 +208,6 @@ async function postJson(
   try {
     return JSON.parse(text)
   } catch {
-    throw new MtError('AI 模型的响应不是 JSON', { retryable: false })
+    throw new MtError(t('AI 模型的响应不是 JSON'), { retryable: false })
   }
 }

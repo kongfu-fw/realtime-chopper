@@ -1,5 +1,8 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
+  import { translator, uiLang } from '../lib/i18n/index.ts'
+
+  const tr = $derived(translator($uiLang))
 
   interface Props {
     label: string
@@ -27,7 +30,7 @@
       <button
         class="help"
         type="button"
-        aria-label={`${label}的说明`}
+        aria-label={tr('{label}的说明', { label })}
         aria-expanded={open}
         onclick={() => (open = !open)}
       >
@@ -36,7 +39,7 @@
       {#if open}
         <div class="bubble" role="tooltip">
           {help}
-          <button class="close" type="button" onclick={() => (open = false)} aria-label="关闭说明">✕</button>
+          <button class="close" type="button" onclick={() => (open = false)} aria-label={tr('关闭说明')}>✕</button>
         </div>
       {/if}
     {/if}

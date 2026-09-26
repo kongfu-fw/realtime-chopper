@@ -1,4 +1,5 @@
 import type { Lang } from '../types'
+import { t } from '../i18n/index.ts'
 
 export type LlmFormat = 'openai' | 'anthropic' | 'gemini'
 
@@ -50,7 +51,7 @@ export class MtError extends Error {
 }
 
 export function classifyStatus(status: number): MtError {
-  return new MtError(`翻译接口返回 HTTP ${status}`, {
+  return new MtError(t('翻译接口返回 HTTP {status}', { status }), {
     retryable: status === 408 || status === 425 || status === 429 || status >= 500,
     status,
   })

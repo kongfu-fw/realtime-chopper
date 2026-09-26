@@ -105,6 +105,103 @@ const RUNTIME = {
 const SAMPLE_RATE = 16000
 
 /**
+ * The languages this worker can speak, for the lines it writes itself.
+ *
+ * A worker is a separate thread with its own copy of everything — but this file is
+ * not even a module: it is a *classic* script served as-is (see the header), so it
+ * cannot import `src/lib/i18n`. The table below is the whole of it, keyed by the
+ * Chinese source text exactly as in the app, so one message reads the same in the
+ * log drawer whichever side produced it.
+ *
+ * The interface language arrives with the load message (`uiLang`) and is applied
+ * in `setLang`; anything the worker says before that is Chinese, which is the
+ * language the app itself falls back to.
+ */
+const MESSAGES = {
+  en: {
+    '这个版本不认识识别模块 {module}': 'This build does not know the recognition module {module}',
+    '模型已在内存中': 'The model is already in memory',
+    'sherpa-onnx WASM + SenseVoice Small int8（CPU）': 'sherpa-onnx WASM + SenseVoice Small int8 (CPU)',
+    '下载词表': 'Downloading the vocabulary',
+    '下载中文模型': 'Downloading the Chinese model',
+    '下载运行环境': 'Downloading the runtime',
+    '初始化识别模块': 'Initialising the recognition module',
+    '初始化运行环境': 'Initialising the runtime',
+    '识别器创建失败': 'creating the recogniser failed',
+    '运行时的资源清单格式变了，需要重新核对 static/sherpa-asr.worker.js':
+      'The runtime’s asset manifest changed shape; static/sherpa-asr.worker.js needs another look',
+    '运行环境已就绪（{mb}MB）': 'Runtime ready ({mb}MB)',
+    'blob 脚本没能加载（{why}），改试 data: URL': 'The blob script would not load ({why}); trying a data: URL',
+    '运行环境的脚本没能加载：{why}': 'The runtime scripts would not load: {why}',
+    '运行时初始化完成（{ms}ms）': 'Runtime initialised ({ms}ms)',
+    '运行环境没有导出 OfflineRecognizer，无法识别语音': 'The runtime exposed no OfflineRecognizer, so it cannot recognise speech',
+    '运行环境没有加载完整，无法读取模型文件': 'The runtime did not finish loading, so the model files cannot be read',
+    '运行环境没有提供文件系统，无法写入模型文件': 'The runtime has no filesystem, so the model files cannot be written',
+    '模型没有写进运行时的文件系统': 'The model was not written into the runtime’s filesystem',
+    '模型文件已就绪（约 {mb}MB）': 'Model files ready (about {mb}MB)',
+    '识别模块还没准备好': 'The recognition module is not ready yet',
+    '模型自检解码失败，保留文件副本（{why}）':
+      'The model failed its own decode check; keeping a copy of the files ({why})',
+    '运行环境没有提供 unlink，模型文件留在内存里': 'The runtime has no unlink, so the model files stay in memory',
+    '已释放模型字节（约 {mb}MB）': 'Released the model bytes (about {mb}MB)',
+    '运行环境下载失败：HTTP {status}': 'Downloading the runtime failed: HTTP {status}',
+    '{what}失败：HTTP {status}': '{what} failed: HTTP {status}',
+    '{what}比声明的大小更大，末尾另存后再拼一次':
+      '{what} is larger than declared; saving the tail separately and stitching it on',
+    '已从 {cache} 清理 {n} 个过期缓存条目': 'Cleared {n} stale cache entries from {cache}',
+  },
+  ko: {
+    '这个版本不认识识别模块 {module}': '이 버전은 인식 모듈 {module}을(를) 모릅니다',
+    '模型已在内存中': '모델이 이미 메모리에 있습니다',
+    'sherpa-onnx WASM + SenseVoice Small int8（CPU）': 'sherpa-onnx WASM + SenseVoice Small int8(CPU)',
+    '下载词表': '어휘 목록 내려받는 중',
+    '下载中文模型': '중국어 모델 내려받는 중',
+    '下载运行环境': '런타임 내려받는 중',
+    '初始化识别模块': '인식 모듈 초기화 중',
+    '初始化运行环境': '런타임 초기화 중',
+    '识别器创建失败': '인식기 생성에 실패했습니다',
+    '运行时的资源清单格式变了，需要重新核对 static/sherpa-asr.worker.js':
+      '런타임 자원 목록 형식이 바뀌었습니다. static/sherpa-asr.worker.js를 다시 확인해야 합니다',
+    '运行环境已就绪（{mb}MB）': '런타임 준비 완료({mb}MB)',
+    'blob 脚本没能加载（{why}），改试 data: URL': 'blob 스크립트를 불러오지 못했습니다({why}). data: URL로 시도합니다',
+    '运行环境的脚本没能加载：{why}': '런타임 스크립트를 불러오지 못했습니다: {why}',
+    '运行时初始化完成（{ms}ms）': '런타임 초기화 완료({ms}ms)',
+    '运行环境没有导出 OfflineRecognizer，无法识别语音':
+      '런타임이 OfflineRecognizer를 내보내지 않아 음성을 인식할 수 없습니다',
+    '运行环境没有加载完整，无法读取模型文件': '런타임이 완전히 올라오지 않아 모델 파일을 읽을 수 없습니다',
+    '运行环境没有提供文件系统，无法写入模型文件': '런타임에 파일 시스템이 없어 모델 파일을 쓸 수 없습니다',
+    '模型没有写进运行时的文件系统': '모델이 런타임 파일 시스템에 기록되지 않았습니다',
+    '模型文件已就绪（约 {mb}MB）': '모델 파일 준비 완료(약 {mb}MB)',
+    '识别模块还没准备好': '인식 모듈이 아직 준비되지 않았습니다',
+    '模型自检解码失败，保留文件副本（{why}）': '모델 자체 검사 디코딩이 실패해 파일 사본을 남깁니다({why})',
+    '运行环境没有提供 unlink，模型文件留在内存里': '런타임에 unlink가 없어 모델 파일이 메모리에 남습니다',
+    '已释放模型字节（约 {mb}MB）': '모델 바이트를 해제했습니다(약 {mb}MB)',
+    '运行环境下载失败：HTTP {status}': '런타임 내려받기 실패: HTTP {status}',
+    '{what}失败：HTTP {status}': '{what} 실패: HTTP {status}',
+    '{what}比声明的大小更大，末尾另存后再拼一次':
+      '{what}이(가) 선언된 크기보다 큽니다. 끝부분을 따로 저장해 이어 붙입니다',
+    '已从 {cache} 清理 {n} 个过期缓存条目': '{cache}에서 오래된 캐시 항목 {n}개를 정리했습니다',
+  },
+}
+
+let uiLang = 'zh'
+
+/** The interface language, as the main thread sends it with every load request. */
+function setLang(lang) {
+  uiLang = lang === 'en' || lang === 'ko' ? lang : 'zh'
+}
+
+/** One string, in the language the interface is in. See `MESSAGES` above. */
+function t(source, params) {
+  const table = uiLang === 'zh' ? null : MESSAGES[uiLang]
+  const text = (table && table[source]) || source
+  if (!params) return text
+  return text.replace(/\{(\w+)\}/g, (whole, key) =>
+    params[key] === undefined ? whole : String(params[key]),
+  )
+}
+
+/**
  * One entry per module this worker can serve.
  *
  * `files` is keyed by role (`model`, `tokens`) because the recognizer config below
@@ -118,6 +215,7 @@ const PACKS = {
     repo:
       'https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/',
     engine: 'sherpa-sensevoice-int8',
+    // Chinese source text; `t()` at the moment it is reported, not here.
     reason: 'sherpa-onnx WASM + SenseVoice Small int8（CPU）',
     files: {
       tokens: { name: 'tokens.txt', bytes: 315894, label: '下载词表' },
@@ -184,7 +282,10 @@ self.onmessage = (event) => {
     case 'load':
       // `module` is the current spelling; `lang` is what an older cached copy of
       // this script reads (a worker stays in the HTTP cache across a reload). Both
-      // resolve to the same thing for `zh`, which is the module such a copy knows.
+      // resolve to the same thing for `zh`, which is the module such a copy knows
+      // — which is why the interface language travels as `uiLang` and not as
+      // `lang`, a name this file has already spent.
+      setLang(msg.uiLang)
       chain = chain.then(() => handleLoad(msg.module || msg.lang))
       break
     case 'recognize':
@@ -204,16 +305,21 @@ async function handleLoad(module) {
     // A build/cache mismatch is the only way here (the main thread's registry and
     // this table are edited together), and saying so beats building a Chinese
     // recognizer because the id happened to be truthy.
-    post({ type: 'error', where: 'load', module, message: `这个版本不认识识别模块 ${module}` })
+    post({
+      type: 'error',
+      where: 'load',
+      module,
+      message: t('这个版本不认识识别模块 {module}', { module }),
+    })
     return
   }
   if (recognizer && loadedModule === module) {
-    post({ type: 'loaded', module, device: 'wasm', reason: '模型已在内存中' })
+    post({ type: 'loaded', module, device: 'wasm', reason: t('模型已在内存中') })
     return
   }
   try {
     await boot(module, pack)
-    post({ type: 'loaded', module, device: 'wasm', reason: pack.reason })
+    post({ type: 'loaded', module, device: 'wasm', reason: t(pack.reason) })
   } catch (err) {
     // The install dialog leans on this: a failed install must never look installed.
     post({ type: 'error', where: 'load', module, message: describe(err) })
@@ -239,13 +345,13 @@ async function boot(module, pack) {
   const downloaded = await downloadPack(pack)
   const paths = mountPack(Module, module, downloaded)
 
-  post({ type: 'load-progress', status: '初始化识别模块' })
+  post({ type: 'load-progress', status: t('初始化识别模块') })
 
   freeRecognizer()
   recognizer = new self.OfflineRecognizer(pack.config(paths), Module)
   if (!recognizer || typeof recognizer.createStream !== 'function') {
     recognizer = null
-    throw new Error('识别器创建失败')
+    throw new Error(t('识别器创建失败'))
   }
   loadedModule = module
   // The model has been read into the recognizer's own session by now; both the
@@ -280,15 +386,15 @@ async function initRuntime() {
   const wasmBytes = await fetchIntoCache(
     RUNTIME_CACHE,
     RUNTIME.wasm.url,
-    '下载运行环境',
+    t('下载运行环境'),
     RUNTIME.wasm.bytes,
   )
   const glueText = await fetchText(RUNTIME_CACHE, RUNTIME.glue.url)
   const mainText = await fetchText(RUNTIME_CACHE, RUNTIME.main.url)
   note(
-    `运行环境已就绪（${Math.round(
-      (wasmBytes.byteLength + RUNTIME.glue.bytes + RUNTIME.main.bytes) / 1048576,
-    )}MB）`,
+    t('运行环境已就绪（{mb}MB）', {
+      mb: Math.round((wasmBytes.byteLength + RUNTIME.glue.bytes + RUNTIME.main.bytes) / 1048576),
+    }),
   )
 
   // Empty preload list: everything the runtime needs is written into its file
@@ -299,10 +405,10 @@ async function initRuntime() {
     'loadPackage({"files":[],"remote_package_size":0})',
   )
   if (patched === mainText) {
-    throw new Error('运行时的资源清单格式变了，需要重新核对 static/sherpa-asr.worker.js')
+    throw new Error(t('运行时的资源清单格式变了，需要重新核对 static/sherpa-asr.worker.js'))
   }
 
-  post({ type: 'load-progress', status: '初始化运行环境' })
+  post({ type: 'load-progress', status: t('初始化运行环境') })
 
   const ready = new Promise((resolve) => {
     self.Module = {
@@ -342,25 +448,25 @@ async function initRuntime() {
     // moment. `data:` is the fallback spelling of the same trick, and the
     // breadcrumb says which one was used, so a report from a phone can tell us if
     // it ever fires.
-    caution(`blob 脚本没能加载（${describe(first)}），改试 data: URL`)
+    caution(t('blob 脚本没能加载（{why}），改试 data: URL', { why: describe(first) }))
     try {
       self.importScripts(dataScriptUrl(glueWithExport), dataScriptUrl(patched))
     } catch (second) {
-      throw new Error(`运行环境的脚本没能加载：${describe(second)}`)
+      throw new Error(t('运行环境的脚本没能加载：{why}', { why: describe(second) }))
     }
   }
   await ready
-  note(`运行时初始化完成（${Math.round(performance.now() - startedAt)}ms）`)
+  note(t('运行时初始化完成（{ms}ms）', { ms: Math.round(performance.now() - startedAt) }))
 
   const Module = self.Module
   if (typeof self.OfflineRecognizer !== 'function') {
-    throw new Error('运行环境没有导出 OfflineRecognizer，无法识别语音')
+    throw new Error(t('运行环境没有导出 OfflineRecognizer，无法识别语音'))
   }
   if (!Module || typeof Module._SherpaOnnxFileExists !== 'function') {
-    throw new Error('运行环境没有加载完整，无法读取模型文件')
+    throw new Error(t('运行环境没有加载完整，无法读取模型文件'))
   }
   if (typeof Module.FS_createDataFile !== 'function') {
-    throw new Error('运行环境没有提供文件系统，无法写入模型文件')
+    throw new Error(t('运行环境没有提供文件系统，无法写入模型文件'))
   }
   return Module
 }
@@ -389,7 +495,7 @@ function mountPack(Module, module, downloaded) {
   Module.FS_createDataFile('/', paths.model.slice(2), downloaded.model, true, true, true)
   mountedModule = module
   if (!fileExists(Module, paths.model.slice(2))) {
-    throw new Error('模型没有写进运行时的文件系统')
+    throw new Error(t('模型没有写进运行时的文件系统'))
   }
   return paths
 }
@@ -421,7 +527,7 @@ async function downloadPack(pack) {
       cache: RUNTIME_CACHE,
       url: RUNTIME.wasm.url,
       bytes: RUNTIME.wasm.bytes,
-      label: '下载运行环境',
+      label: t('下载运行环境'),
     },
   ]
   const total = items.reduce((sum, item) => sum + item.bytes, 0)
@@ -439,14 +545,18 @@ async function downloadPack(pack) {
     })
     done += assets[item.key].byteLength
   }
-  note(`模型文件已就绪（约 ${Math.round(assets.model.byteLength / 1048576)}MB）`)
+  note(
+    t('模型文件已就绪（约 {mb}MB）', {
+      mb: Math.round(assets.model.byteLength / 1048576),
+    }),
+  )
   void pruneCache(pack)
   return assets
 }
 
 async function handleRecognize(id, samples, startMs, endMs) {
   if (!recognizer) {
-    post({ type: 'error', where: 'recognize', id, message: '识别模块还没准备好' })
+    post({ type: 'error', where: 'recognize', id, message: t('识别模块还没准备好') })
     return
   }
   let stream = null
@@ -615,7 +725,7 @@ function releaseModelFile(Module, recognizer, pack, modelPath) {
     recognizer.decode(stream)
     recognizer.getResult(stream)
   } catch (err) {
-    caution(`模型自检解码失败，保留文件副本（${describe(err)}）`)
+    caution(t('模型自检解码失败，保留文件副本（{why}）', { why: describe(err) }))
     return
   } finally {
     try {
@@ -626,10 +736,10 @@ function releaseModelFile(Module, recognizer, pack, modelPath) {
   }
 
   if (!unlink(Module, [modelPath])) {
-    caution('运行环境没有提供 unlink，模型文件留在内存里')
+    caution(t('运行环境没有提供 unlink，模型文件留在内存里'))
     return
   }
-  note(`已释放模型字节（约 ${Math.round(pack.files.model.bytes / 1048576)}MB）`)
+  note(t('已释放模型字节（约 {mb}MB）', { mb: Math.round(pack.files.model.bytes / 1048576) }))
 }
 
 function fileExists(Module, name) {
@@ -650,7 +760,7 @@ async function fetchText(cacheName, url) {
     if (hit) return hit.text()
   }
   const response = await fetch(url)
-  if (!response.ok) throw new Error(`运行环境下载失败：HTTP ${response.status}`)
+  if (!response.ok) throw new Error(t('运行环境下载失败：HTTP {status}', { status: response.status }))
   const text = await response.text()
   if (cache) {
     cache
@@ -687,7 +797,8 @@ async function fetchIntoCache(cacheName, url, label, fallbackBytes, scale) {
   }
 
   const response = await fetch(url)
-  if (!response.ok) throw new Error(`${label}失败：HTTP ${response.status}`)
+  if (!response.ok)
+    throw new Error(t('{what}失败：HTTP {status}', { what: label, status: response.status }))
   // The CDN does not always send content-length through its redirect, so the
   // measured size is the better denominator when it is missing. It is also what
   // lets us allocate the destination array once instead of growing it.
@@ -737,7 +848,7 @@ async function readIntoProgress(stream, scale, label, expected, offset) {
     } else {
       if (!overflow) {
         overflow = []
-        caution(`${label}比声明的大小更大，末尾另存后再拼一次`)
+        caution(t('{what}比声明的大小更大，末尾另存后再拼一次', { what: label }))
       }
       overflow.push(chunk)
     }
@@ -797,7 +908,8 @@ async function pruneBucket(cacheName, keepUrls) {
       await cache.delete(request)
       dropped += 1
     }
-    if (dropped > 0) debug(`已从 ${cacheName} 清理 ${dropped} 个过期缓存条目`)
+    if (dropped > 0)
+      debug(t('已从 {cache} 清理 {n} 个过期缓存条目', { cache: cacheName, n: dropped }))
   } catch {
     /* quota handling is best-effort; never let cleanup break a working engine */
   }

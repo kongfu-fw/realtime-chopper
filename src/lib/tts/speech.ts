@@ -1,8 +1,10 @@
 import type { Lang } from '../types'
+import { t } from '../i18n/index.ts'
 import {
   chunkForSpeech,
   clampRate,
   langPrefixes,
+  ttsEngineLabel,
   type SpeakOptions,
   type SpeakOutcome,
   type TtsEngine,
@@ -134,9 +136,9 @@ export function speechSnapshot(): SpeechSnapshot {
 
 /** `navigator.audioSession.type` where the platform has the Audio Session API. */
 function audioSessionType(): string {
-  if (typeof navigator === 'undefined') return '未提供'
+  if (typeof navigator === 'undefined') return t('未提供')
   const session = (navigator as { audioSession?: { type?: string } }).audioSession
-  return session?.type ?? '未提供'
+  return session?.type ?? t('未提供')
 }
 
 /**
@@ -162,7 +164,13 @@ function speechBudgetMs(text: string, rate: number): number {
 
 export class SystemSpeechEngine implements TtsEngine {
   readonly id = 'system'
-  readonly label = '系统朗读'
+  /**
+   * A getter, not a captured string: an engine built while the interface was
+   * Chinese must not keep naming itself that way after the picker moves.
+   */
+  get label(): string {
+    return ttsEngineLabel('system')
+  }
   private cancelRequested = false
   /** Set while we deliberately stopped so 'cancelled' is not logged as a bug. */
   private speakingFlag = false

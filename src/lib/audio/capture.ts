@@ -1,4 +1,5 @@
 import { info, warn } from '../log/store'
+import { t } from '../i18n/index.ts'
 
 /**
  * Microphone capture (requirement 13).
@@ -69,25 +70,25 @@ export function describeCaptureError(err: unknown): string {
   switch (name) {
     case 'NotAllowedError':
     case 'SecurityError':
-      return '麦克风权限被拒绝了：点地址栏的锁图标，允许麦克风后再试一次'
+      return t('麦克风权限被拒绝了：点地址栏的锁图标，允许麦克风后再试一次')
     case 'NotFoundError':
     case 'DevicesNotFoundError':
-      return '没找到麦克风，看看麦克风或耳机插好了没'
+      return t('没找到麦克风，看看麦克风或耳机插好了没')
     case 'NotReadableError':
     case 'TrackStartError':
-      return '麦克风被别的软件占用了，关掉会议或录音软件再试'
+      return t('麦克风被别的软件占用了，关掉会议或录音软件再试')
     case 'OverconstrainedError':
-      return '这个麦克风不符合音质要求，换一个再用'
+      return t('这个麦克风不符合音质要求，换一个再用')
     case 'AbortError':
-      return '启动被中断了，再点一次'
+      return t('启动被中断了，再点一次')
     default:
-      return `麦克风打不开：${err instanceof Error ? err.message : String(err)}`
+      return t('麦克风打不开：{error}', { error: err instanceof Error ? err.message : String(err) })
   }
 }
 
 export async function startCapture(options: CaptureOptions): Promise<CaptureHandle> {
   if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error('这个浏览器不能录音，换个浏览器试试')
+    throw new Error(t('这个浏览器不能录音，换个浏览器试试'))
   }
 
   const constraints: MediaStreamConstraints = {
@@ -118,7 +119,7 @@ export async function startCapture(options: CaptureOptions): Promise<CaptureHand
     settings.noiseSuppression !== true &&
     settings.autoGainControl !== true
   if (!constraintsHonoured) {
-    warn('capture', '浏览器没有完全遵守高保真拾音设置，识别质量可能受影响', {
+    warn('capture', t('浏览器没有完全遵守高保真拾音设置，识别质量可能受影响'), {
       echoCancellation: settings.echoCancellation,
       noiseSuppression: settings.noiseSuppression,
       autoGainControl: settings.autoGainControl,
@@ -141,7 +142,9 @@ export async function startCapture(options: CaptureOptions): Promise<CaptureHand
     track?.stop()
     stream.getTracks().forEach((t) => t.stop())
     throw new Error(
-      `音频启动失败，换个浏览器或设备再试：${err instanceof Error ? err.message : String(err)}`,
+      t('音频启动失败，换个浏览器或设备再试：{error}', {
+        error: err instanceof Error ? err.message : String(err),
+      }),
       { cause: err },
     )
   }
@@ -182,7 +185,9 @@ export async function startCapture(options: CaptureOptions): Promise<CaptureHand
     stream.getTracks().forEach((t) => t.stop())
     await context.close().catch(() => undefined)
     throw new Error(
-      `音频启动失败，换个浏览器或设备再试：${err instanceof Error ? err.message : String(err)}`,
+      t('音频启动失败，换个浏览器或设备再试：{error}', {
+        error: err instanceof Error ? err.message : String(err),
+      }),
       { cause: err },
     )
   }
@@ -193,7 +198,7 @@ export async function startCapture(options: CaptureOptions): Promise<CaptureHand
     options.onLevel?.(levelOf(chunk))
   }
 
-  info('capture', '麦克风已开启', {
+  info('capture', t('麦克风已开启'), {
     sampleRate: context.sampleRate,
     channelCount: settings.channelCount,
     constraintsHonoured,
@@ -215,7 +220,7 @@ export async function startCapture(options: CaptureOptions): Promise<CaptureHand
       track?.stop()
       stream.getTracks().forEach((t) => t.stop())
       await context.close().catch(() => undefined)
-      info('capture', '麦克风已关闭')
+      info('capture', t('麦克风已关闭'))
     },
   }
 }
@@ -233,7 +238,7 @@ function getUserMediaAbortable(
 ): Promise<MediaStream> {
   if (!signal) return navigator.mediaDevices.getUserMedia(constraints)
   return new Promise<MediaStream>((resolve, reject) => {
-    const onAbort = () => reject(new DOMException('启动被取消', 'AbortError'))
+    const onAbort = () => reject(new DOMException(t('启动被取消'), 'AbortError'))
     if (signal.aborted) {
       onAbort()
       return

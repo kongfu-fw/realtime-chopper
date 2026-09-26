@@ -1,6 +1,8 @@
 /// <reference lib="webworker" />
 import { MtClient, type MtConfig, type MtItem } from '../lib/mt/client'
 import { cacheSize, clearCache } from '../lib/mt/cache'
+import { setUiLang } from '../lib/i18n/index.ts'
+import type { Lang } from '../lib/types'
 
 /**
  * Translation worker.
@@ -14,6 +16,8 @@ import { cacheSize, clearCache } from '../lib/mt/cache'
 interface ConfigureMessage {
   type: 'configure'
   config: MtConfig
+  /** The interface language; see the note in `asr.worker.ts` for why it travels. */
+  uiLang?: Lang
 }
 
 type Inbound =
@@ -44,6 +48,10 @@ self.onmessage = (event: MessageEvent) => {
   const msg = event.data as Inbound
   switch (msg.type) {
     case 'configure':
+      // The worker owns its own copy of the i18n module (a worker is a separate
+      // thread), so the interface language arrives with the configuration; see
+      // `MtWorkerClient.configure`.
+      if (msg.uiLang) setUiLang(msg.uiLang)
       config = { ...config, ...msg.config }
       break
     case 'translate':

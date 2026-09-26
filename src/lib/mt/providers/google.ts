@@ -2,6 +2,7 @@ import type { MtContext, MtProvider } from '../types'
 import { MtError } from '../types'
 import { decodeEntities, escapeText } from '../text'
 import { googleCode } from '../lang'
+import { t } from '../../i18n/index.ts'
 
 /**
  * Google Translate, via the endpoint Google's own website-translator widget
@@ -49,13 +50,15 @@ export const googleProvider: MtProvider = {
         signal: ctx.signal,
       })
     } catch (err) {
-      throw new MtError(`谷歌翻译网络错误：${err instanceof Error ? err.message : String(err)}`, {
+      throw new MtError(
+        t('谷歌翻译网络错误：{error}', { error: err instanceof Error ? err.message : String(err) }),
+        {
         retryable: true,
         cause: err,
       })
     }
     if (!response.ok) {
-      throw new MtError(`谷歌翻译返回 HTTP ${response.status}`, {
+      throw new MtError(t('谷歌翻译返回 HTTP {status}', { status: response.status }), {
         retryable: response.status === 429 || response.status >= 500,
         status: response.status,
       })
@@ -63,7 +66,7 @@ export const googleProvider: MtProvider = {
     const payload: unknown = await response.json().catch(() => undefined)
     const first = Array.isArray(payload) ? (payload[0] as unknown) : undefined
     if (!Array.isArray(first) || first.length !== texts.length) {
-      throw new MtError('谷歌翻译返回的句子数量与请求不一致', { retryable: false })
+      throw new MtError(t('谷歌翻译返回的句子数量与请求不一致'), { retryable: false })
     }
     return first.map((item) => decodeEntities(String(item)).trim())
   },

@@ -5,6 +5,7 @@ import { runSelfCheck, type SelfCheckReport } from '../selfcheck'
 import { getSettings } from '../store/settings'
 import { ttsConfigFrom } from '../tts/engine'
 import { info } from '../log/store'
+import { t } from '../i18n/index.ts'
 
 /**
  * One session per page. Everything that outlives a component lives here rather
@@ -69,14 +70,14 @@ export function showToast(message: string): void {
   toastTimer = setTimeout(() => toast.set(null), 2200)
 }
 
-export async function copyText(text: string, label = '已复制'): Promise<void> {
+export async function copyText(text: string, label = t('已复制')): Promise<void> {
   try {
     await navigator.clipboard.writeText(text)
     showToast(label)
   } catch {
     // Clipboard access needs a secure context and permission; fall back to a
     // selectable prompt rather than failing silently.
-    window.prompt('复制下面这段内容：', text)
+    window.prompt(t('复制下面这段内容：'), text)
   }
 }
 
@@ -99,14 +100,14 @@ export async function runDiagnostics(burst: boolean): Promise<void> {
       burst,
     })
     selfCheckReport.set(report)
-    info('selfcheck', '自检完成', { checks: report.results.length })
+    info('selfcheck', t('自检完成'), { [t('项数')]: report.results.length })
     for (const result of report.results) {
-      const text = `${result.label}：${result.detail}`
+      const text = `${result.label}${t('：')}${result.detail}`
       if (result.ok === true) info('selfcheck', text)
-      else if (result.ok === 'warn') info('selfcheck', `注意 · ${text}`)
+      else if (result.ok === 'warn') info('selfcheck', t('注意 · {text}', { text }))
       else
         // Failures are also logged so they survive the drawer being closed.
-        info('selfcheck', `失败 · ${text}`)
+        info('selfcheck', t('失败 · {text}', { text }))
     }
   } finally {
     selfCheckRunning.set(false)

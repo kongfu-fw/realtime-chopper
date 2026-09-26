@@ -3,6 +3,7 @@ import { gpuBlockReason, isAppleMobile, readGpuVerdict, webgpuAvailable } from '
 import { speechSnapshot, speechSupported } from './tts/speech'
 import { TTS_ENGINE_LABEL } from './tts/engine'
 import { getSettings } from './store/settings'
+import { APP_VERSION } from './app/version'
 
 /**
  * A failure report a user can *get off the phone*.
@@ -19,6 +20,10 @@ import { getSettings } from './store/settings'
 export function platformLines(): string[] {
   const lines: string[] = []
   if (typeof navigator === 'undefined') return lines
+  // First, because every other line describes a build of the app the reporter
+  // may no longer be running: a shell cached by the Service Worker keeps an old
+  // version alive, and a report that does not say which one is hard to trust.
+  lines.push(`版本：${APP_VERSION}`)
   lines.push(`平台：${isAppleMobile() ? 'iOS/iPadOS' : '非 iOS'} · ${navigator.platform ?? '?'}`)
   lines.push(`UA：${navigator.userAgent}`)
   lines.push(

@@ -1,6 +1,7 @@
 <script lang="ts">
   import Modal from './Modal.svelte'
   import { APP_NAME, iconPreviewUrl } from '../lib/brand/logo'
+  import { APP_VERSION } from '../lib/app/version'
   import { settings } from '../lib/store/settings'
 
   interface Props {
@@ -38,6 +39,9 @@
   <p class="hint">想再见到我，点标题栏的小鹿就行。</p>
 
   {#snippet footer()}
+    <!-- The version, in the one dialog a person opens on purpose: it is what a
+         bug report should lead with, and "关于" is where anyone looks for it. -->
+    <span class="ver">版本 {APP_VERSION}</span>
     <button class="rc-btn accent" onclick={onclose}>好，翻译去</button>
   {/snippet}
 </Modal>
@@ -74,6 +78,16 @@
     margin: 14px 0 0;
     font-size: 12px;
     color: var(--rc-ink-soft);
+  }
+
+  /* Pushed to the far end of the footer by its own margin, so the button stays
+     where the other dialogs put theirs. */
+  .ver {
+    margin-right: auto;
+    align-self: center;
+    font-size: 12px;
+    color: var(--rc-ink-soft);
+    font-variant-numeric: tabular-nums;
   }
 
   @keyframes bob {

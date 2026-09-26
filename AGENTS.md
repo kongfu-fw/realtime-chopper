@@ -1,3 +1,4 @@
 - NEVER write unit tests after you write code. 
 - Highly prefer E2E tests as the sole testing mechanism. Use them to verify complex features work. At the end of E2E tests, produce a verifiable and repeatable artifact. 
 - If you must test a system in isolation, FIRST write all the ways it could fail, THEN write the code.
+- Every iteration bumps `APP_VERSION` in `src/lib/app/version.ts`: a date (`20260926`), or the same date with a suffix (`20260926.2`) for a second change that day. It is the only place the number is written down; the settings screen, the About dialog, the startup log line, the diagnostic report and the `<meta name="app-version">` in the built HTML all read it from there.

@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin, type ViteDevServer } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
+import { APP_VERSION } from './src/lib/app/version'
 
 /**
  * Cross-origin isolation, needed for `SharedArrayBuffer` and therefore for
@@ -95,8 +96,31 @@ function crossOriginIsolation(): Plugin {
  */
 const TAILNET_HOSTS = ['.ts.net']
 
+/**
+ * Stamps the version number into the served `index.html`, as
+ * `<meta name="app-version" content="20260926">`.
+ *
+ * A page that is open can read the constant from `src/lib/app/version.ts`, but a
+ * *deployment* has to be identifiable from outside the browser — and it is the
+ * one question that keeps coming back here, because a Service Worker can keep an
+ * older shell alive at a URL that was deploy-verified. So:
+ *
+ *     curl -s http://host:8080/ | grep app-version
+ *
+ * tells a stale shell apart from a deploy that never happened. Injected in dev
+ * too, so the check can be tried before there is anything deployed to check.
+ */
+function appVersionMeta(): Plugin {
+  return {
+    name: 'rc-app-version',
+    transformIndexHtml: () => [
+      { tag: 'meta', attrs: { name: 'app-version', content: APP_VERSION }, injectTo: 'head' as const },
+    ],
+  }
+}
+
 export default defineConfig({
-  plugins: [svelte(), crossOriginIsolation()],
+  plugins: [svelte(), crossOriginIsolation(), appVersionMeta()],
   // PWA is served from a sub-path-friendly relative base.
   base: './',
   publicDir: 'static',

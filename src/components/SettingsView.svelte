@@ -13,6 +13,7 @@
   } from '../lib/store/settings'
   import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS, MODULE_SHORT } from '../lib/asr/models'
   import { TTS_ENGINE_LABEL, type TtsEngineId } from '../lib/tts/engine'
+  import { APP_VERSION } from '../lib/app/version'
   import { APP_ICONS, iconFor, iconPreviewUrl, type AppIconId } from '../lib/brand/logo'
   import { info } from '../lib/log/store'
   import type {
@@ -404,6 +405,21 @@
 
   <section>
     <h2>诊断</h2>
+
+    <!--
+      The version sits at the top of the diagnostic section rather than in a
+      section of its own: it is here to be read out to someone else, and this is
+      where a person who is about to report a problem is already looking. The
+      help text carries the convention, because the number is a date and a date
+      nobody can decode is just a number.
+    -->
+    <SettingRow
+      label="版本"
+      help="按日期编号，每改一次手动加一位：20260926 就是 2026-09-26 这一版；同一天发第二次写成 20260926.2。反馈问题时把这个号一起说，就知道是哪一版了。"
+    >
+      <span class="value version">{APP_VERSION}</span>
+    </SettingRow>
+
     <SettingRow label="调试模式" help="显示识别细节，用来排查问题。">
       <input
         type="checkbox"
@@ -489,6 +505,13 @@
     color: var(--rc-ink-soft);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+
+  /* A number to be read aloud or typed into a report: tabular digits, and wide
+     enough tracking that a digit is not mistaken for its neighbour. */
+  .version {
+    font-size: 13px;
+    letter-spacing: 0.06em;
   }
 
   /* Icon picker: each swatch is the icon's own artwork on the background it is

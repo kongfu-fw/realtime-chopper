@@ -142,6 +142,7 @@
 | 朗读音色 / 基础语速 / 忙时加速 | 跟随系统 / 1.0x / 开 | 音色表跟着引擎走：系统音色和代理的 `ShortName` 是两套命名空间 |
 | 保存整场录音 | 开 | 关掉省空间，但**「重新识别」和「▶ 原声」就没了** |
 | 调试模式 | 关 | 打开后每行显示时间轴、引擎、推理耗时、模型原始输出、音频播放器；标题栏出现 `⋮` |
+| 版本 | 日期编号（如 `20260926`） | 不用改，也不能改：反馈问题时把它一起说出来，就知道是哪一版 |
 
 ---
 
@@ -170,6 +171,7 @@ src/
   lib/mt/              client / cache / probe / providers{google,microsoft,llm}
   lib/tts/             engine.ts(接口+选择) / speech.ts(系统) / edge.ts(代理)
   lib/pipeline/        session(状态机) / queues / rate / latency
+  lib/app/             state.ts（会话状态）/ version.ts（版本号，唯一来源）
   lib/brand/           logo.ts（标记几何 + 图标清单，唯一来源）/ apply.ts（favicon、manifest、iOS）
   workers/             vad.worker.ts / asr.worker.ts / mt.worker.ts
 static/                manifest / sw.js / 图标 / 可选图标的原图 / sherpa-asr.worker.js（手写的 classic worker）
@@ -177,6 +179,18 @@ static/icons/          非默认图标的各尺寸 PNG（由 npm run icons 生�
 scripts/make-icons.mjs 图标渲染 + 裁切安全自检
 design/                设计稿原图（几 MB 那种）：不进构建、不进镜像、也不发到线上
 ```
+
+**版本号要手动升**
+
+`src/lib/app/version.ts` 里的 `APP_VERSION` 是日期编号：`20260926` 就是 2026-09-26 那一版，
+同一天发第二次写成 `20260926.2`。**每改一版手动加它**，四处显示的号都从这一个常量来，
+不会各自跑偏：
+
+- 构建出的 `index.html` 里的 `<meta name="app-version">` —— `curl -s http://<主机>:8080/ | grep app-version`
+  就能确认线上跑的是哪一版，这也是区分「Service Worker 还缓存着旧外壳」和「根本没部署上」最快的办法；
+- 设置页「诊断」里的**版本**一行；
+- 小鹿彩蛋（关于）弹窗页脚；
+- 日志抽屉里启动那一行，以及每份复制出去的日志和诊断报告的第一行。
 
 **两个不要手改的地方**
 
@@ -213,12 +227,14 @@ Moonshine 一样带标点和大小写）。精度上它确实更好（官方数�
 ## 部署
 
 ```bash
-docker compose up -d --build      # 默认只监听 127.0.0.1:8080
+docker compose up -d --build      # 默认监听 0.0.0.0:8080（RC_BIND / RC_PORT 可改）
 ```
 
 两阶段镜像：`node:24-alpine` 里 `npm ci` + `vite build`，产物交给 `nginx:alpine`。**没有 node、没有后端进程、没有数据卷、不需要环境变量** —— 因为整个应用就是静态文件加浏览器。
 
-为什么默认只绑本机、手机上怎么用（Tailscale / 域名 + HTTPS）、缓存头和排错，都在 **[DOCKER.md](DOCKER.md)**。
+默认所有网卡都监听，所以本机、局域网、Tailscale 都能打开；但**能打开不等于能用麦克风**（非 https、非 localhost 不是安全上下文）。手机上怎么用（Tailscale / 域名 + HTTPS）、监听地址怎么调、缓存头和排错，都在 **[DOCKER.md](DOCKER.md)**。
+
+部署完之后 `curl -s http://<主机>:8080/ | grep app-version` 就能看到线上是哪个版本号（见下面的「版本号」）。
 
 ---
 

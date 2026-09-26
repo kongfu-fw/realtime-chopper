@@ -32,6 +32,7 @@
   import { moduleFor, moduleName, purgeRetiredModuleCaches } from './lib/asr/models'
   import { rememberGpuFailure } from './lib/asr/device'
   import { takeAsrCrashReport } from './lib/boot-guard'
+  import { APP_VERSION } from './lib/app/version'
 
   const { lines: linesStore, state: sessionState } = session
   const lines = $derived($linesStore)
@@ -83,6 +84,7 @@
     // which read-aloud engine was in use answers the first question about it.
     const tts = createTtsEngine(ttsConfigFrom($settings))
     info('session', '应用已启动', {
+      版本: APP_VERSION,
       默认语向: `${$settings.sourceLang} → ${$settings.targetLang}`,
       识别模块: spec.label,
       朗读: `${tts.label}${tts.available ? '' : '（不可用）'}`,

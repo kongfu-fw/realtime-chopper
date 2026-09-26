@@ -13,7 +13,8 @@
 docker compose up -d --build
 ```
 
-然后打开 <http://127.0.0.1:8080/>。
+然后打开 <http://127.0.0.1:8080/>（本机）；同一局域网 / 同一个 Tailscale 网段的其它机器，
+用这台机器的 IP 加 8080 端口也能打开，比如 <http://192.168.50.145:8080/>。
 
 第一次打开会让你装一个识别模块（英文、韩语各约 62 MB，中文约 240 MB）。
 模块从网上直接下到**浏览器**里，只下一次，跟容器无关。
@@ -22,9 +23,12 @@ docker compose up -d --build
 
 ---
 
-## 为什么默认只监听 127.0.0.1
+## 监听地址与安全上下文
 
-浏览器只在**安全上下文**里给麦克风，而安全上下文只有两种：
+默认监听 `0.0.0.0:8080`，也就是**所有网卡**：本机（`127.0.0.1`）、局域网 IP、Tailscale IP
+都能连上。想改只让本机访问，写 `RC_BIND=127.0.0.1`（等于回到以前的行为）。
+
+但**能打开页面不等于能用麦克风**。浏览器只在**安全上下文**里给麦克风，而安全上下文只有两种：
 
 - `https://` 开头的地址；
 - `http://localhost` / `http://127.0.0.1`（浏览器把这几个当成本机，特批）。
@@ -32,10 +36,11 @@ docker compose up -d --build
 | 打开方式 | 地址 | 能不能录音 |
 | --- | --- | --- |
 | 本机浏览器 | `http://127.0.0.1:8080` | ✅ 可以 |
-| 局域网 IP | `http://192.168.1.5:8080` | ❌ 界面正常，点录音会提示"这个浏览器不能录音" |
+| 局域网 IP / Tailscale IP | `http://192.168.50.145:8080` | ❌ 界面正常，点录音会提示"这个浏览器不能录音" |
 | 域名 + HTTPS | `https://speak.example.com` | ✅ 可以 |
 
-所以默认只绑本机，不会把服务暴露到局域网里；想在手机上用，走下面两条路之一。
+所以：把监听放开是为了**在别的机器上能访问、能看界面、能验证服务活着**；
+真正要在别的机器（尤其手机）上录音，还是得走下面两条 HTTPS 路子之一。
 
 ---
 
@@ -50,6 +55,9 @@ tailscale serve --bg 8080
 它会给你一个 `https://<机器名>.<你的 tailnet>.ts.net` 地址，证书是自动签的。
 手机装上 Tailscale 登同一个账号，用 Safari 打开这个地址 → **分享 → 添加到主屏幕**，
 就是一个独立图标的应用（项目里有 PWA manifest）。麦克风在 HTTPS 下正常可用。
+
+（不要去用 `http://100.x.y.z:8080` 那个 Tailscale IP：监听虽然通了，但它是 http，
+手机拿到页面也用不了麦克风。域名 + HTTPS 才是关键。）
 
 `tailscale serve status` 看现状，`tailscale serve --https=443 off` 关掉。
 
@@ -82,6 +90,7 @@ docker compose build --no-cache     # 依赖变了、缓存可疑时重建
 | 我想要 | 怎么做 |
 | --- | --- |
 | 换端口 | `RC_PORT=9000 docker compose up -d`，或把 `RC_PORT=9000` 写进 `.env` |
+| 只让本机访问 | `RC_BIND=127.0.0.1 docker compose up -d`（默认是 `0.0.0.0`） |
 | 改界面文案 / 功能 | 改源码 → `docker compose up -d --build` |
 | 改缓存、MIME 等规则 | 改 `deploy/nginx.conf` → 重新构建（配置是打进镜像的，不是挂载的） |
 | 不开容器，直接开发 | `npm install && npm run dev`（开发服务器在 5273，不做构建） |
@@ -92,7 +101,7 @@ docker compose build --no-cache     # 依赖变了、缓存可疑时重建
 | --- | --- |
 | `Dockerfile` | 两阶段：node 里 `npm ci` + `npm run build`，再把它交给 nginx |
 | `.dockerignore` | 别把 `node_modules`、`dist`、`.env` 塞进构建上下文 |
-| `docker-compose.yml` | 默认部署：只监听 `127.0.0.1:8080` |
+| `docker-compose.yml` | 默认部署：监听 `0.0.0.0:8080`，可用 `RC_BIND` / `RC_PORT` 改 |
 | `docker-compose.tls.yml` | 可选覆盖：加一层 Caddy 做 HTTPS |
 | `deploy/nginx.conf` | 缓存策略、`.wasm` 类型、健康检查 |
 | `deploy/Caddyfile` | Caddy 只要 4 行：拿证书 + 转发 |
@@ -153,7 +162,8 @@ docker compose build --no-cache     # 依赖变了、缓存可疑时重建
 | 界面还是旧版本 | `docker compose up -d --build` 之后强刷一次（Ctrl+Shift+R）。`index.html` 和 `sw.js` 已经设成 `no-cache`，但 Service Worker 会缓存外壳；实在不行清一下站点数据 |
 | 安装模块一直失败 | 看浏览器控制台和日志抽屉；多半是 `huggingface.co` 被拦或被代理挡住 |
 | `npm ci` 构建失败 | 构建阶段要访问 npm registry；公司代理环境需要给 Docker 配 HTTP 代理 |
-| 想让局域网直接访问 | 把 `ports` 改成 `"0.0.0.0:8080:80"`。但记得同时上 HTTPS，否则手机拿到页面也用不了麦克风 |
+| 只想让本机访问 | `RC_BIND=127.0.0.1 docker compose up -d`（默认是 `0.0.0.0`，局域网/Tailscale 都能连） |
+| 局域网能打开、但点了录音提示不能录 | 正常现象：非 https、非 localhost 不是安全上下文，见上面那一节 |
 | 白屏 / 404 | 如果部署在子路径下，地址要带结尾斜杠（`/app/` 而不是 `/app`）——应用用的是相对路径。默认部署在根路径，不会有这个问题 |
 
 ---

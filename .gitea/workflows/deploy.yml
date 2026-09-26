@@ -29,4 +29,5 @@ jobs:
           echo "🧹 清理旧镜像..."
           docker image prune -f
 
-          echo "✅ 部署完成！服务运行在 http://127.0.0.1:8080"
+          echo "✅ 部署完成！本机 http://127.0.0.1:8080 ，局域网/Tailscale 用 http://<本机IP>:8080"
+          echo "   注意：非 https 的 IP 地址不是安全上下文，界面能开但麦克风不可用；手机上用请走 tailscale serve（见 DOCKER.md）"

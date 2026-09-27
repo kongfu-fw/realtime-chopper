@@ -206,7 +206,7 @@ wasm 才能起来。
 最后一行就是那条代价：**以后再加第三方图片、字体、CDN `<script>` 这类隐式 `no-cors` 资源会
 直接加载不出来**，而症状是"本地好好的、上线就白"。加之前先看有没有 `Cross-Origin-Resource-Policy`。
 
-### 两个踩过的坑
+### 三个踩过的坑
 
 1. **304 会把头弄丢，而丢掉的那个头修不好。** 这是整件事里最贵的一个坑，值得写清楚。
 
@@ -241,6 +241,17 @@ wasm 才能起来。
 2. **`static/sw.js` 的 `activate` 原来会删掉"所有"非当前外壳缓存** —— 包括识别引擎自己的
    `rc-model-*` 桶和 transformers.js 的 `transformers-cache`。外壳版本一升，已装的 240MB 中文和
    英文模块就全被清掉重下。现在只清理 `rc-shell-*` 前缀，外壳版本推到 `rc-shell-v2`。
+3. **同一份 worker 在两次部署之间换了内容，但 URL 没换。** 第 1 条里救下 Moonshine 的正是
+   "URL 带查询串"这件事（它的 worker 是构建产物），而 `sherpa-asr.worker.js` 是 `static/` 里的
+   固定文件名 —— 于是它成了唯一能被旧缓存顶掉、却不会报错的脚本。实测到的样子：页面已经是新版
+   （日志里 `Version: 20260926.4`，`index.html` 与 assets 都是新的），但 worker 还是第一个版本的
+   —— 英文界面里那句中文报错就是证据（第一个版本的 worker 根本没有 `setLang`，`PACKS` 里只有
+   `zh`），于是「安装韩语模块」当场失败：`这个版本不认识识别模块 ko`。
+   该路径上的 `Cache-Control: no-cache` **一直就在**（上面那张 location 表里的第一版就有），
+   说明这件事不能靠缓存头解决。现在这个 URL 上也带了内容戳（`?v=<内容哈希>`，见
+   `vite.config.ts` 的 `SHERPA_WORKER_REV`）：内容变了 URL 就变，上一次的缓存条目再也撞不上；
+   内容没变 URL 就不变，缓存照旧命中。`location = /sherpa-asr.worker.js { expires -1; }` 留着，
+   它管的是"旧页面请求旧 URL"这种正常情况。
 
 ### 只对 Moonshine 有效
 

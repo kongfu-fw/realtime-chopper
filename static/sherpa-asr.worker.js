@@ -131,12 +131,17 @@ const MESSAGES = {
     '模型已在内存中': 'The model is already in memory',
     'sherpa-onnx WASM + SenseVoice Small int8（CPU）': 'sherpa-onnx WASM + SenseVoice Small int8 (CPU)',
     'sherpa-onnx WASM + Zipformer 韩语 int8（CPU）': 'sherpa-onnx WASM + Korean Zipformer int8 (CPU)',
-    '下载词表': 'Downloading the vocabulary',
-    '下载中文模型': 'Downloading the Chinese model',
-    '下载韩语模型': 'Downloading the Korean model',
-    '下载韩语模型解码器': 'Downloading the Korean model’s decoder',
-    '下载韩语模型连接器': 'Downloading the Korean model’s joiner',
-    '下载运行环境': 'Downloading the runtime',
+    // Noun phrases, because one label lands in two different sentences: the
+    // progress line (see `report`, which adds "Downloading") and the breadcrumb
+    // `已下载 {what}`. With the verb inside the label those two stacked up into
+    // "Downloaded Downloading the Korean model".
+    '词表': 'the vocabulary',
+    '中文模型': 'the Chinese model',
+    '韩语模型': 'the Korean model',
+    '韩语模型解码器': 'the Korean model’s decoder',
+    '韩语模型连接器': 'the Korean model’s joiner',
+    '运行环境': 'the runtime',
+    '正在下载 {what}': 'Downloading {what}',
     '初始化识别模块': 'Initialising the recognition module',
     '初始化运行环境': 'Initialising the runtime',
     '识别器创建失败': 'creating the recogniser failed',
@@ -173,12 +178,13 @@ const MESSAGES = {
     '模型已在内存中': '모델이 이미 메모리에 있습니다',
     'sherpa-onnx WASM + SenseVoice Small int8（CPU）': 'sherpa-onnx WASM + SenseVoice Small int8(CPU)',
     'sherpa-onnx WASM + Zipformer 韩语 int8（CPU）': 'sherpa-onnx WASM + 한국어 Zipformer int8(CPU)',
-    '下载词表': '어휘 목록 내려받는 중',
-    '下载中文模型': '중국어 모델 내려받는 중',
-    '下载韩语模型': '한국어 모델 내려받는 중',
-    '下载韩语模型解码器': '한국어 모델 디코더 내려받는 중',
-    '下载韩语模型连接器': '한국어 모델 조이너 내려받는 중',
-    '下载运行环境': '런타임 내려받는 중',
+    '词表': '어휘 목록',
+    '中文模型': '중국어 모델',
+    '韩语模型': '한국어 모델',
+    '韩语模型解码器': '한국어 모델 디코더',
+    '韩语模型连接器': '한국어 모델 조이너',
+    '运行环境': '런타임',
+    '正在下载 {what}': '{what} 내려받는 중',
     '初始化识别模块': '인식 모듈 초기화 중',
     '初始化运行环境': '런타임 초기화 중',
     '识别器创建失败': '인식기 생성에 실패했습니다',
@@ -250,8 +256,8 @@ const PACKS = {
     // big file of a transducer is its encoder, not a single `model`.
     weights: 'model',
     files: {
-      tokens: { name: 'tokens.txt', bytes: 315894, label: '下载词表' },
-      model: { name: 'model.int8.onnx', bytes: 239233841, label: '下载中文模型' },
+      tokens: { name: 'tokens.txt', bytes: 315894, label: '词表' },
+      model: { name: 'model.int8.onnx', bytes: 239233841, label: '中文模型' },
     },
     config: (paths) => ({
       modelConfig: {
@@ -290,10 +296,10 @@ const PACKS = {
     // upgrade would cost.
     weights: 'encoder',
     files: {
-      tokens: { name: 'tokens.txt', bytes: 60246, label: '下载词表' },
-      encoder: { name: 'encoder-epoch-99-avg-1.int8.onnx', bytes: 70784728, label: '下载韩语模型' },
-      decoder: { name: 'decoder-epoch-99-avg-1.int8.onnx', bytes: 2844692, label: '下载韩语模型解码器' },
-      joiner: { name: 'joiner-epoch-99-avg-1.int8.onnx', bytes: 2581421, label: '下载韩语模型连接器' },
+      tokens: { name: 'tokens.txt', bytes: 60246, label: '词表' },
+      encoder: { name: 'encoder-epoch-99-avg-1.int8.onnx', bytes: 70784728, label: '韩语模型' },
+      decoder: { name: 'decoder-epoch-99-avg-1.int8.onnx', bytes: 2844692, label: '韩语模型解码器' },
+      joiner: { name: 'joiner-epoch-99-avg-1.int8.onnx', bytes: 2581421, label: '韩语模型连接器' },
     },
     config: (paths) => ({
       modelConfig: {
@@ -474,7 +480,7 @@ async function initRuntime() {
   const wasmBytes = await fetchIntoCache(
     RUNTIME_CACHE,
     RUNTIME.wasm.url,
-    t('下载运行环境'),
+    t('运行环境'),
     RUNTIME.wasm.bytes,
   )
   const glueText = await fetchText(RUNTIME_CACHE, RUNTIME.glue.url)
@@ -628,7 +634,7 @@ async function downloadPack(pack) {
       bytes: RUNTIME.wasm.bytes,
       // The Chinese source text, like the pack labels: `report` translates it, and
       // the error paths below translate it again for the same reason.
-      label: '下载运行环境',
+      label: '运行环境',
     },
   ]
   const total = items.reduce((sum, item) => sum + item.bytes, 0)
@@ -1041,9 +1047,13 @@ function report(label, loaded, scale) {
   // the user reads, which is how a Korean interface ended up saying
   // "下载中文模型". Calling `t` twice is harmless — an already-translated label is
   // simply not found in the table.
+  //
+  // The verb lives here and not in the label, because the label is also what ends
+  // the breadcrumb `已下载 {what}`: a label that already says "Downloading …"
+  // produced "Downloaded Downloading the Korean model (67.5MB)".
   post({
     type: 'load-progress',
-    status: t(label),
+    status: t('正在下载 {what}', { what: t(label) }),
     file: t(label),
     loaded,
     total: denominator,

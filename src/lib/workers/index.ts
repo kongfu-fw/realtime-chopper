@@ -49,7 +49,12 @@ function guard(worker: Worker, name: string): Worker {
  */
 function createAsrWorker(module: ModuleId): Worker {
   if (moduleSpec(module).engine !== 'moonshine') {
-    return new Worker(`${import.meta.env.BASE_URL}sherpa-asr.worker.js`)
+    // The query string is the point, not decoration: this file keeps its name
+    // between builds, so without a changing URL a browser can run a *previous*
+    // build's worker against this build's client and answer a legitimate request
+    // with "这个版本不认识识别模块 ko". See `SHERPA_WORKER_REV` in
+    // `vite.config.ts`.
+    return new Worker(`${import.meta.env.BASE_URL}sherpa-asr.worker.js?v=${__SHERPA_WORKER_REV__}`)
   }
   return new Worker(new URL('../../workers/asr.worker.ts', import.meta.url), {
     type: 'module',

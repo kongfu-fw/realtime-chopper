@@ -249,6 +249,13 @@ design/                设计稿原图（几 MB 那种）：不进构建、不�
   的分支，留着不影响中文）。换 commit 前请重新确认 `OfflineRecognizer`、
   `Module._SherpaOnnxFileExists` 与 `config.transducer`（胶水里的
   `initSherpaOnnxOfflineTransducerModelConfig`）这几处接口还在。
+- **它的 URL 带一个内容戳**（`?v=<文件内容的哈希>`，构建时在 `vite.config.ts` 里算出，
+  `src/lib/workers/index.ts` 拼进 URL）：这是构建产物“文件名带哈希”在这份文件上的等价物。
+  少了它，浏览器可以拿着**上一个版本**的 worker 去配**这一版**的客户端 —— 实测症状是英文界面里
+  跳出一句中文的「这个版本不认识识别模块 ko」（只有第一个版本的 worker 才没有 `setLang`、
+  `PACKS` 里也只有 `zh`），而页面本身已经是新版了。这个 URL 已经这样坑过两次（另一次见
+  DOCKER.md 里 304 那一节），所以它不再依赖缓存头。用内容哈希而不是 `APP_VERSION`：缓存键要
+  的不变式是「同 URL 同字节」，而版本号只靠人记得改。
 
 **韩语换成专门的模型（Zipformer Korean）**
 

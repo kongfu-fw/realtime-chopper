@@ -1,5 +1,7 @@
 import { defineConfig, type Plugin, type ViteDevServer } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { APP_VERSION } from './src/lib/app/version'
 
 /**
@@ -97,6 +99,50 @@ function crossOriginIsolation(): Plugin {
 const TAILNET_HOSTS = ['.ts.net']
 
 /**
+ * A content stamp for the one script this app fetches from a URL that does not
+ * change between builds.
+ *
+ * Everything the bundler emits carries a hash in its *name* (`index-BfnjsS3i.js`),
+ * so no cache can hand one build's chunk to another build's page. That is not a
+ * nicety, it is the property that makes long caching safe — and exactly two files
+ * lack it: `sw.js`, which the browser revalidates on every navigation and compares
+ * byte for byte (its own update protocol), and this worker, which nothing protects.
+ *
+ * What a stale worker costs is a page made of two different builds, which is much
+ * harder to read than a missing file. Measured on a Windows Chrome that had loaded
+ * the first release, then reloaded twice across two deploys:
+ *
+ *     Version: 20260926.4                     ← the page and every chunk were new
+ *     [error] [asr] Loading the recognition module failed: 这个版本不认识识别模块 ko
+ *
+ * — the report's surrounding lines were English, and that Chinese sentence is the
+ * diagnosis: it comes from a worker built before `setLang` existed, whose `PACKS`
+ * knew only `zh`. So a new client asked a two-deploy-old worker for a module it had
+ * every right to ask for, and the install failed instantly. `Cache-Control: no-cache`
+ * on that path (see `deploy/nginx.conf`) was already there and was not enough. This
+ * is also the *second* time this URL has hidden an old build from a new page (see
+ * the 304 story in `vite.config.ts`'s isolation plugin) — which is reason enough to
+ * stop relying on cache directives for it.
+ *
+ * Hashed at build time rather than stamped with `APP_VERSION`, because the invariant
+ * a cache key needs is "same URL, same bytes": a version number is only as good as
+ * the person remembering to bump it, while a hash of the content cannot be
+ * forgotten. The converse property is just as important — a worker whose bytes did
+ * *not* change keeps its URL, so it is still served from the cache, which is the
+ * whole reason for caching it.
+ *
+ * Dev-only wrinkle: this is read once, when the config loads, so editing the worker
+ * while `npm run dev` is running does not move the URL until the server restarts
+ * (Vite restarts on config edits, not on edits to a file the config happened to
+ * read). Harmless — the dev server serves that file fresh either way — but it is
+ * why a dev session can show an older stamp than `shasum` says.
+ */
+const SHERPA_WORKER_REV = createHash('sha256')
+  .update(readFileSync(new URL('./static/sherpa-asr.worker.js', import.meta.url)))
+  .digest('hex')
+  .slice(0, 12)
+
+/**
  * Stamps the version number into the served `index.html`, as
  * `<meta name="app-version" content="20260926">`.
  *
@@ -121,6 +167,9 @@ function appVersionMeta(): Plugin {
 
 export default defineConfig({
   plugins: [svelte(), crossOriginIsolation(), appVersionMeta()],
+  // Read by `src/lib/workers/index.ts`, which appends it to the sherpa worker's
+  // URL; the why is on `SHERPA_WORKER_REV` above.
+  define: { __SHERPA_WORKER_REV__: JSON.stringify(SHERPA_WORKER_REV) },
   // PWA is served from a sub-path-friendly relative base.
   base: './',
   publicDir: 'static',

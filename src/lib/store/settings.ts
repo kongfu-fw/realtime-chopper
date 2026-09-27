@@ -247,10 +247,12 @@ export function ttsVoiceFor(settings: Settings): string {
 /**
  * Whether the module that serves `lang` is installed.
  *
- * The install records are keyed by *module*, not by language (Chinese and Korean
- * are one download), so callers must not index the map themselves — asking "is
- * Korean installed?" by looking up `installedModels.ko` is how a shared module
- * ends up looking missing.
+ * The install records are keyed by *module*, not by language, so callers must not
+ * index the map themselves: the two happened to differ for a while (Korean was
+ * answered by the Chinese download), and a caller that assumed one id per
+ * language would have read that as "not installed" and offered a 240 MB download
+ * the user already had. The lookup goes through `moduleIdFor` for the same reason
+ * today, when the ids do line up.
  */
 export function isLangInstalled(lang: Lang, installed: Settings['installedModels']): boolean {
   const module = moduleIdFor(lang)

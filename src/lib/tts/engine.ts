@@ -76,6 +76,17 @@ export interface TtsEngine {
    */
   unlock(lang?: Lang): void
   speak(text: string, options: SpeakOptions): Promise<SpeakOutcome>
+  /**
+   * Starts fetching the audio for text that is about to be read, if this engine
+   * has anything worth fetching ahead of time.
+   *
+   * Optional, and advisory: the platform's own speech has no network step to get
+   * ahead of, and nothing in the pipeline may wait on a prefetch — it is a head
+   * start for the engine that can use one, not a promise that audio exists. The
+   * engine is told the same options `speak` will be called with, so it can put
+   * the bytes where the real playback will find them.
+   */
+  prefetch?(text: string, options: SpeakOptions): void
   stop(): void
   /** Voices that can speak `lang`, best candidates first. May hit the network. */
   voicesFor(lang: Lang, timeoutMs?: number): Promise<VoiceOption[]>

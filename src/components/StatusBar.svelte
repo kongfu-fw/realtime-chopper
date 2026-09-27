@@ -26,11 +26,33 @@
   /**
    * The live input level, as the fraction the ring on the button consumes.
    *
-   * The raw level is a small number: the horizontal meter this replaced turned it
-   * into a percentage with `* 320` (`* 3.2` over 0..100), so the same factor is
-   * applied here and the meter answers to exactly the loudness it always did.
+   * What arrives is the segmenter's `rms` of one 10 ms frame (see the vad worker
+   * for why that producer and only that one), and rms is the wrong thing to map
+   * linearly: a quiet room sits around 0.003 and a person talking at a normal
+   * distance around 0.02-0.1, which is a factor of thirty squeezed into the bottom
+   * tenth of the range. The linear version this replaced multiplied by 3.2 — the
+   * factor the old horizontal bar used, where the number was a peak — and so spent
+   * its life between 0.01 and 0.3: a halo under a pixel wide that never appeared to
+   * move.
+   *
+   * So the scale is in decibels, anchored on the segmenter's own two numbers: its
+   * absolute floor of 0.0035 rms (-49 dBFS) and the "real speech at RMS 0.08"
+   * (-22 dBFS) its tuning is written against. Floor at -60 dBFS and ceiling at
+   * -12 puts room tone at about a fifth of the ring and leaves the top half for
+   * someone talking.
    */
-  const meterLevel = $derived(Math.min(1, Math.max(0, ($level || 0) * 3.2)).toFixed(3))
+  const METER_FLOOR_DB = -60
+  const METER_CEIL_DB = -12
+
+  function meterFraction(level: number): string {
+    // Also the branch for `undefined` and NaN: the store is 0 before a session.
+    if (!(level > 0)) return '0.000'
+    const db = 20 * Math.log10(level)
+    const fraction = (db - METER_FLOOR_DB) / (METER_CEIL_DB - METER_FLOOR_DB)
+    return Math.min(1, Math.max(0, fraction)).toFixed(3)
+  }
+
+  const meterLevel = $derived(meterFraction($level))
 
   async function toggle() {
     // While we are waiting on the microphone permission prompt the button turns

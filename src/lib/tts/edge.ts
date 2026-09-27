@@ -34,9 +34,13 @@ import {
  *
  * What it costs, all of it deliberate:
  *
- *  - A network round trip per sentence. The next chunk is synthesised while the
- *    current one plays, which hides most of it, but this engine can never be as
- *    instant as the local one.
+ *  - A network round trip per sentence, paid as early as the pipeline can manage.
+ *    Audio is requested the moment a translation exists (`prefetch`), kept in a
+ *    small cache until its turn comes, up to three requests run at once, and the
+ *    next chunk is still synthesised while the current one plays. What is left is
+ *    the first sentence of a session — everything after it has already been
+ *    fetched while the one before was being read. The engine can never be as
+ *    instant as the local one, but the wait is once, not per sentence.
  *  - The service is a third party. The proxy is the user's own, and the app never
  *    falls back to it silently — switching engines is a setting a person makes.
  *  - Rate is applied locally rather than asked for in the request, because the
@@ -90,6 +94,27 @@ const SYNTH_TIMEOUT_MS = 20_000
 /** Used when the element reports no usable duration for a chunk. */
 const ASSUMED_CHUNK_SECONDS = 30
 
+/**
+ * How many synthesis requests may be in flight at once.
+ *
+ * Three: one for the chunk being spoken (or about to be) and two of head start.
+ * More would only queue inside the proxy — the service behind it is a third party
+ * and not ours to load-test — and fewer would leave the reading pump waiting on a
+ * request that the prefetch has not even started.
+ */
+const MAX_CONCURRENT_SYNTH = 3
+
+/**
+ * Ceiling on audio kept for lines that have not been read yet.
+ *
+ * A chunk is tens of KB, so this is single-digit megabytes — but it is also the
+ * window the prefetch runs in: once the reader falls further behind than this,
+ * later sentences stop being fetched ahead, and the backlog is the rate
+ * controller's business instead. A phone that is short of memory must not pay to
+ * hold audio nobody has asked to hear yet.
+ */
+const MAX_CACHED_CHUNKS = 8
+
 export class EdgeTtsEngine implements TtsEngine {
   readonly id = 'edge'
   /** A getter, so the name follows the interface language; see `ttsEngineLabel`. */
@@ -99,8 +124,22 @@ export class EdgeTtsEngine implements TtsEngine {
   private readonly proxyUrl: string
   private audio: HTMLAudioElement | null = null
   private primed = false
-  /** Every request still in flight — two can be, because of the prefetch below. */
+  /** Every request still in flight — up to `MAX_CONCURRENT_SYNTH` can be. */
   private readonly inFlight = new Set<AbortController>()
+  /**
+   * Audio already fetched (or being fetched) for a line not yet read, keyed by
+   * voice and chunk text.
+   *
+   * No rate in the key, and that is load-bearing: rate is applied to the *element*
+   * (`playbackRate`, pitch-preserving) rather than asked of the service, so one
+   * set of bytes serves any speed. A prefetched chunk therefore cannot be
+   * invalidated by the backlog moving the rate — which is the only reason fetching
+   * audio before it is needed is possible at all in this engine.
+   */
+  private readonly chunks = new Map<string, Promise<Blob>>()
+  /** Syntheses running right now, and the callers waiting for a slot. */
+  private runningSynth = 0
+  private readonly synthQueue: Array<() => void> = []
   /** Set while a chunk is being played, so `stop()` can settle it as cancelled. */
   private finishCurrent: ((outcome: SpeakOutcome) => void) | null = null
   private cancelRequested = false
@@ -148,6 +187,35 @@ export class EdgeTtsEngine implements TtsEngine {
       })
   }
 
+  /**
+   * Fetches what `speak` would fetch, and plays none of it.
+   *
+   * Called by the pipeline the moment a translation exists — the earliest point at
+   * which the text to be read is known. The effect is that the pause between two
+   * sentences stops containing a round trip: the audio for the sentence after this
+   * one is already in hand by the time the reader gets to it.
+   *
+   * Never throws and never blocks, deliberately. A prefetch that fails is dropped
+   * from the cache (so the real playback asks again, and reports the failure the
+   * way it always did) and otherwise goes unnoticed: nothing the user asked for
+   * has gone wrong yet. The cap is a window, not a queue — past it, later
+   * sentences wait for the reader to catch up, because holding an unbounded pile
+   * of audio for a backlog is exactly the memory this app cannot spare on a phone.
+   */
+  prefetch(text: string, options: SpeakOptions): void {
+    if (!this.available) return
+    const chunks = chunkForSpeech(text)
+    if (chunks.length === 0) return
+    void this.voiceFor(options.lang, options.voiceURI)
+      .then((voice) => {
+        for (const chunk of chunks) {
+          if (this.chunks.size >= MAX_CACHED_CHUNKS) return
+          void this.chunkFor(chunk, voice).catch(() => undefined)
+        }
+      })
+      .catch(() => undefined)
+  }
+
   async speak(text: string, options: SpeakOptions): Promise<SpeakOutcome> {
     if (!this.available) return 'error'
     const chunks = chunkForSpeech(text)
@@ -156,7 +224,7 @@ export class EdgeTtsEngine implements TtsEngine {
     const voice = await this.voiceFor(options.lang, options.voiceURI)
     if (this.cancelRequested) return 'cancelled'
     let ahead: Promise<Blob> | null = null
-    // An abandoned prefetch that rejects later must not surface as an unhandled
+    // An abandoned request that rejects later must not surface as an unhandled
     // rejection: it was nobody's answer any more the moment we gave up.
     const discard = () => void ahead?.catch(() => undefined)
     for (let i = 0; i < chunks.length; i++) {
@@ -164,11 +232,13 @@ export class EdgeTtsEngine implements TtsEngine {
         discard()
         return 'cancelled'
       }
-      const current = ahead ?? this.synthesize(chunks[i], voice)
+      // Cache first: if the prefetch has been here, this is already in memory —
+      // which is where the waiting used to be.
+      const current = ahead ?? this.chunkFor(chunks[i], voice)
       // The request is the slow half and it does not depend on playback, so the
       // next chunk is synthesised while this one is being read. Without that,
       // every sentence pays the whole round trip in silence after it.
-      ahead = i + 1 < chunks.length ? this.synthesize(chunks[i + 1], voice) : null
+      ahead = i + 1 < chunks.length ? this.chunkFor(chunks[i + 1], voice) : null
       let bytes: Blob
       try {
         bytes = await current
@@ -179,6 +249,10 @@ export class EdgeTtsEngine implements TtsEngine {
         throw err instanceof Error ? err : new Error(String(err))
       }
       const outcome = await this.playChunk(bytes, options.rate)
+      // Spoken, so the bytes have done their job. Keeping them would turn the
+      // cache into a library of everything already read; re-reading a line is a
+      // deliberate act (`speakFrom`) and can afford a round trip.
+      this.chunks.delete(chunkKey(voice, chunks[i]))
       if (outcome !== 'done') {
         discard()
         return outcome
@@ -187,6 +261,15 @@ export class EdgeTtsEngine implements TtsEngine {
     return 'done'
   }
 
+  /**
+   * Stops playback and everything in flight — prefetches included, since they are
+   * requests for a session that is being torn down or a queue being re-cut.
+   *
+   * Chunks already in hand are *kept*: they are valid bytes for text that is still
+   * on screen, and the two callers of `stop()` (skip-to-latest and read-from-here)
+   * both end up reading the newest lines, which is exactly what the cache holds.
+   * The cap is what keeps that from being a leak.
+   */
   stop(): void {
     this.cancelRequested = true
     for (const controller of this.inFlight) {
@@ -233,6 +316,48 @@ export class EdgeTtsEngine implements TtsEngine {
       // the request that follows will report the real problem.
     }
     return preferred
+  }
+
+  /**
+   * The bytes for one chunk: from the cache if a prefetch got there first, from
+   * the proxy otherwise.
+   *
+   * The cache holds *promises* rather than blobs, which is what makes the two
+   * callers safe to have: a prefetch and the playback that follows it ask for the
+   * same key and share one request instead of racing each other for the same
+   * sentence. A failure deletes the entry — otherwise the reader would await a
+   * promise that is already dead and report a failure it did not cause.
+   */
+  private chunkFor(text: string, voice: string): Promise<Blob> {
+    const key = chunkKey(voice, text)
+    const pending = this.chunks.get(key)
+    if (pending) return pending
+    const started = this.withSynthSlot(() => this.synthesize(text, voice)).catch((err) => {
+      this.chunks.delete(key)
+      throw err
+    })
+    this.chunks.set(key, started)
+    return started
+  }
+
+  /**
+   * At most `MAX_CONCURRENT_SYNTH` syntheses at a time, first come first served.
+   *
+   * The order matters more than the number: requests are made in the order the
+   * sentences were spoken, so the chunk being read is never queued behind one that
+   * has only been guessed at.
+   */
+  private async withSynthSlot<T>(run: () => Promise<T>): Promise<T> {
+    if (this.runningSynth >= MAX_CONCURRENT_SYNTH) {
+      await new Promise<void>((resolve) => this.synthQueue.push(resolve))
+    }
+    this.runningSynth++
+    try {
+      return await run()
+    } finally {
+      this.runningSynth--
+      this.synthQueue.shift()?.()
+    }
   }
 
   private async synthesize(text: string, voice: string): Promise<Blob> {
@@ -314,6 +439,11 @@ export class EdgeTtsEngine implements TtsEngine {
     }
     return this.audio
   }
+}
+
+/** Cache key for one chunk: the voice, and the exact text that was synthesised. */
+function chunkKey(voice: string, text: string): string {
+  return `${voice}\u0000${text}`
 }
 
 async function voices(proxyUrl: string): Promise<VoiceOption[]> {

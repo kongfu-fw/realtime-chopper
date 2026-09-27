@@ -45,9 +45,15 @@ registerProcessor('rc-tap', RcTap)
 export interface CaptureOptions {
   /** 100 ms of 16 kHz-bounded audio arrives here. */
   onChunk: (chunk: Float32Array, sampleRate: number) => void
-  /** Current input level, for the record button pulse. */
-  onLevel?: (level: number) => void
-  /** Lets the user abandon a start while the permission prompt is still open. */
+  /**
+   * Lets the user abandon a start while the permission prompt is still open.
+   *
+   * There is deliberately no level callback here. There used to be — the peak of
+   * each block, for the record button's halo — and having two producers for one
+   * meter (this one, and the segmenter's `rms`, at different rates and different
+   * scales) is what made the halo read as broken. The level now comes from the
+   * segmenter alone; see the vad worker for why that is the honest one to draw.
+   */
   signal?: AbortSignal
 }
 
@@ -195,7 +201,6 @@ export async function startCapture(options: CaptureOptions): Promise<CaptureHand
   node.port.onmessage = (event: MessageEvent<Float32Array>) => {
     const chunk = event.data
     options.onChunk(chunk, context.sampleRate)
-    options.onLevel?.(levelOf(chunk))
   }
 
   info('capture', t('麦克风已开启'), {
@@ -261,11 +266,3 @@ function getUserMediaAbortable(
   })
 }
 
-function levelOf(chunk: Float32Array): number {
-  let peak = 0
-  for (let i = 0; i < chunk.length; i += 8) {
-    const v = Math.abs(chunk[i] ?? 0)
-    if (v > peak) peak = v
-  }
-  return peak
-}

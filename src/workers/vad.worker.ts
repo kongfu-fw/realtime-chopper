@@ -20,8 +20,35 @@ import { RecordingSink } from '../lib/audio/recorder'
 const MODEL_RATE = 16000
 
 const segmenter = new EnergySegmenter()
+
+/**
+ * How often the input level is reported, for the halo on the record button.
+ *
+ * The segmenter calls back once per *frame* — a hundred times a second at the
+ * default 10 ms frame — and the meter can use none of that: a hundred
+ * `postMessage`s a second across the thread boundary, plus a style write each, to
+ * move a shadow by a fraction of a pixel. 15 Hz is above what an eye reads as
+ * smooth for a level, and every report lands with 66 ms to settle.
+ *
+ * What is sent is the segmenter's own `rms` of the frame — the same number its
+ * speech threshold is compared against — rather than a second measurement of the
+ * same audio taken elsewhere. The halo and the recogniser then agree about what
+ * "loud" means, so the meter cannot disagree with the thing that decides whether
+ * the user is being heard.
+ *
+ * Exactly one producer writes the level, and that is the point of removing the
+ * other one: `capture.ts` used to report the *peak* of each 100 ms block into the
+ * same store, at a tenth of this rate and a few times this size. The two together
+ * made the halo flicker between two scales, and the smaller of them — the one
+ * that also arrived last, most of the time — is what the ring was mostly drawn
+ * from, which is why it looked like a level meter that never moved.
+ */
+const LEVEL_INTERVAL_MS = 1000 / 15
+let lastLevelAt = 0
 segmenter.onLevel = (level) => {
-  // ~10 messages/second is plenty for a level meter and keeps postMessage cheap.
+  const now = Date.now()
+  if (now - lastLevelAt < LEVEL_INTERVAL_MS) return
+  lastLevelAt = now
   postMessage({ type: 'level', level })
 }
 

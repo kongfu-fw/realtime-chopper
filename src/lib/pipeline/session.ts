@@ -21,7 +21,7 @@ import { OrderedQueue, pump } from './queues'
 import { RateController } from './rate'
 import { estimateLagSeconds, estimateSpeechSeconds } from './latency'
 import { AsrWorkerClient, MtWorkerClient, VadWorkerClient } from '../workers'
-import { describeModuleError, moduleIdFor, moduleSpec, moduleName } from '../asr/models'
+import { describeModuleError, moduleIdFor, moduleSpec, moduleName, moduleTooBigForDevice } from '../asr/models'
 import { planDevice } from '../asr/moonshine'
 import { createTtsEngine, ttsConfigFrom, type SpeakOutcome, type TtsEngine } from '../tts/engine'
 import { speechSnapshot } from '../tts/speech'
@@ -255,18 +255,31 @@ export class Session {
           : t('sherpa WebAssembly（CPU）'),
       }),
     )
-    // A device that this module has already killed twice *the same way* does not
-    // need a third demonstration. A killed page cannot report anything, so all a
-    // retry can produce is another silent crash — refuse in words, and say why.
+    // A device that this module has already killed *as often as is conclusive* does
+    // not need another demonstration. A killed page cannot report anything, so all
+    // a retry can produce is another silent crash — refuse in words, and say why.
     // Keyed by accelerator: two GPU crashes say the GPU is unusable, not that the
     // module is.
-    if (asrCrashCount(module, accelerator) >= 2) {
+    //
+    // Two kills settle it on a device that might have been unlucky; on Apple mobile
+    // one does, because there the module is bigger than the page budget rather than
+    // merely near it (see `moduleTooBigForDevice`) — and every extra demonstration
+    // costs the user their whole page, including whatever they were reading. The GPU
+    // keeps its own count-2 rule: a WebGPU crash says nothing about whether the CPU
+    // could run the same module, and it is not the memory path this is about.
+    const crashes = asrCrashCount(module, accelerator)
+    const conclusive = accelerator !== 'webgpu' && moduleTooBigForDevice(moduleSpec(module)) ? 1 : 2
+    if (crashes >= conclusive) {
       throw new Error(
         accelerator === 'webgpu'
           ? t('这台设备已经在显卡加速（WebGPU）下被关掉页面两次了：请在设置里把「显卡加速」改成 CPU 再试')
-          : t('{module}在这台设备上装不下：已经两次在启动时把整个页面关掉了（内存不够），先别试了', {
-              module: moduleName(module),
-            }),
+          : conclusive === 1
+            ? t('{module}在这台设备上装不下：上次启动它时，系统直接把整个页面关掉了（内存不够）。手机上改用英文模块，中文留给电脑。', {
+                module: moduleName(module),
+              })
+            : t('{module}在这台设备上装不下：已经两次在启动时把整个页面关掉了（内存不够），先别试了', {
+                module: moduleName(module),
+              }),
       )
     }
     // A new install starts the bar over; without this the dialog would open
@@ -408,7 +421,6 @@ export class Session {
       this.stage.set(t('正在准备麦克风'))
       this.capture = await startCapture({
         onChunk: (chunk, rate) => this.vad?.push(chunk, rate),
-        onLevel: (level) => this.level.set(level),
         signal: abort.signal,
       })
       if (!this.capture.constraintsHonoured) {
@@ -799,8 +811,35 @@ export class Session {
         }),
       )
     }
+    if (result.text) this.prefetchSpeech(result.text)
     this.advanceReadPointer()
     this.updateQueues()
+  }
+
+  /**
+   * Starts fetching the read-out for a sentence the moment it has one.
+   *
+   * A translation is the last thing standing between speech and the reader, so this
+   * is the earliest moment audio *can* be requested — and with the Edge engine the
+   * request is a round trip that would otherwise be paid in silence between two
+   * sentences. The engine decides whether it has anything to fetch (the platform's
+   * own speech does not), and nothing here waits on the answer: a prefetch is a
+   * head start, not a stage of the pipeline.
+   *
+   * The same guards as the reader itself, because a prefetch is work done on the
+   * user's behalf: nothing is fetched for a line that will not be read, and nothing
+   * at all while auto-read is off.
+   */
+  private prefetchSpeech(text: string): void {
+    const prefetch = this.speech.prefetch
+    if (!prefetch) return
+    if (!get(this.autoRead) || !this.speech.available) return
+    const settings = getSettings()
+    prefetch.call(this.speech, text, {
+      voiceURI: ttsVoiceFor(settings),
+      rate: this.rateController.rate,
+      lang: settings.targetLang,
+    })
   }
 
   /**

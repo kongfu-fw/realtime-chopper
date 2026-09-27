@@ -253,7 +253,7 @@
           {/if}
         </div>
       {/each}
-      <p class="dim note">{tr('中文和韩语共用同一个模块；英文用 Moonshine。')}</p>
+      <p class="dim note">{tr('每种语言一个模块：中文 SenseVoice、韩语 Zipformer、英文 Moonshine；同时只驻留一个。')}</p>
     </div>
   </section>
 

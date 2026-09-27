@@ -10,9 +10,11 @@ export type Lang = SourceLang
 /**
  * A downloadable recognition module.
  *
- * Not the same thing as a language, and the difference is still load-bearing in
- * one direction: one module serves two languages (`zh` transcribes Chinese *and*
- * Korean), so anything keyed by language alone gets that wrong.
+ * Not the same thing as a language: a module is a set of bytes and a language is
+ * what the user says, so the two are mapped rather than equated (see `moduleIdFor`
+ * in `asr/models.ts`). Today one module answers one language, but Korean used to
+ * ride on the Chinese module, and the indirection is what made that swap a table
+ * entry instead of a rewrite.
  *
  * `en-nemo` (NVIDIA Parakeet on the sherpa runtime) used to be a second English
  * module and is gone — measured on the same audio it was not faster on the CPU,
@@ -21,7 +23,7 @@ export type Lang = SourceLang
  * an install record, a cache bucket and a crash note written by an older build
  * all still mention it. It is simply never resolved to a module.
  */
-export type ModuleId = 'en' | 'zh'
+export type ModuleId = 'en' | 'ko' | 'zh'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 

@@ -1,11 +1,12 @@
 /*
  * sherpa-onnx recognition worker.
  *
- * Runs the one module whose runtime is sherpa-onnx's browser WASM build:
+ * Runs the modules whose runtime is sherpa-onnx's browser WASM build:
  *
- *   zh  — SenseVoice-Small (int8, ~228 MB), Chinese/Korean
+ *   zh  — SenseVoice-Small (int8, ~228 MB), Chinese
+ *   ko  — Zipformer Korean (int8, ~73 MB), Korean
  *
- * It is the right model for Chinese and always was: non-autoregressive (one
+ * SenseVoice is the right model for Chinese and always was: non-autoregressive (one
  * forward pass per utterance, roughly an order of magnitude faster than Whisper's
  * token-by-token decode), and it recognises Chinese, English, Japanese, Korean and
  * Cantonese in one model with inverse text normalisation — so Chinese speech with
@@ -13,9 +14,16 @@
  *
  * This worker used to serve a second module as well (`en-nemo`, NVIDIA Parakeet on
  * the same runtime). It is gone and the pack table below says why; what matters
- * here is that the *runtime* stays, because `zh` is built out of it. See
- * `src/lib/asr/models.ts` for the registry these ids mirror, and
- * `src/workers/asr.worker.ts` for the module-worker counterpart.
+ * here is that the *runtime* stays, because both modules above are built out of
+ * it — one download of wasm serves every language that does not go through a
+ * transformers.js model. See `src/lib/asr/models.ts` for the registry these ids
+ * mirror, and `src/workers/asr.worker.ts` for the module-worker counterpart.
+ *
+ * The two packs differ in shape, not just in bytes: SenseVoice is one graph with a
+ * language it picks itself, and Korean is a *transducer* — encoder, decoder and
+ * joiner as three files, decoded greedily without an LM. That difference is
+ * confined to the `config` builder of each pack; everything around it (download,
+ * mount, self-check, release) is written against the pack's file table.
  *
  * What was actually missing was never the model, it was the runtime:
  *   - the npm `sherpa-onnx` package is Node-only (`require('./…-nodejs.js')`,
@@ -122,8 +130,12 @@ const MESSAGES = {
     '这个版本不认识识别模块 {module}': 'This build does not know the recognition module {module}',
     '模型已在内存中': 'The model is already in memory',
     'sherpa-onnx WASM + SenseVoice Small int8（CPU）': 'sherpa-onnx WASM + SenseVoice Small int8 (CPU)',
+    'sherpa-onnx WASM + Zipformer 韩语 int8（CPU）': 'sherpa-onnx WASM + Korean Zipformer int8 (CPU)',
     '下载词表': 'Downloading the vocabulary',
     '下载中文模型': 'Downloading the Chinese model',
+    '下载韩语模型': 'Downloading the Korean model',
+    '下载韩语模型解码器': 'Downloading the Korean model’s decoder',
+    '下载韩语模型连接器': 'Downloading the Korean model’s joiner',
     '下载运行环境': 'Downloading the runtime',
     '初始化识别模块': 'Initialising the recognition module',
     '初始化运行环境': 'Initialising the runtime',
@@ -134,6 +146,12 @@ const MESSAGES = {
     'blob 脚本没能加载（{why}），改试 data: URL': 'The blob script would not load ({why}); trying a data: URL',
     '运行环境的脚本没能加载：{why}': 'The runtime scripts would not load: {why}',
     '运行时初始化完成（{ms}ms）': 'Runtime initialised ({ms}ms)',
+    'wasm 堆 {mb}MB（{step}）': 'WebAssembly heap {mb}MB ({step})',
+    '运行环境起来后': 'after the runtime came up',
+    '模型挂进文件系统后': 'after the model files were mounted',
+    '识别器建好后': 'after the recogniser was built',
+    '模型字节交出去之后': 'after the model bytes were handed over',
+    '已下载 {what}（{mb}MB）': 'Downloaded {what} ({mb}MB)',
     '运行环境没有导出 OfflineRecognizer，无法识别语音': 'The runtime exposed no OfflineRecognizer, so it cannot recognise speech',
     '运行环境没有加载完整，无法读取模型文件': 'The runtime did not finish loading, so the model files cannot be read',
     '运行环境没有提供文件系统，无法写入模型文件': 'The runtime has no filesystem, so the model files cannot be written',
@@ -154,8 +172,12 @@ const MESSAGES = {
     '这个版本不认识识别模块 {module}': '이 버전은 인식 모듈 {module}을(를) 모릅니다',
     '模型已在内存中': '모델이 이미 메모리에 있습니다',
     'sherpa-onnx WASM + SenseVoice Small int8（CPU）': 'sherpa-onnx WASM + SenseVoice Small int8(CPU)',
+    'sherpa-onnx WASM + Zipformer 韩语 int8（CPU）': 'sherpa-onnx WASM + 한국어 Zipformer int8(CPU)',
     '下载词表': '어휘 목록 내려받는 중',
     '下载中文模型': '중국어 모델 내려받는 중',
+    '下载韩语模型': '한국어 모델 내려받는 중',
+    '下载韩语模型解码器': '한국어 모델 디코더 내려받는 중',
+    '下载韩语模型连接器': '한국어 모델 조이너 내려받는 중',
     '下载运行环境': '런타임 내려받는 중',
     '初始化识别模块': '인식 모듈 초기화 중',
     '初始化运行环境': '런타임 초기화 중',
@@ -166,6 +188,12 @@ const MESSAGES = {
     'blob 脚本没能加载（{why}），改试 data: URL': 'blob 스크립트를 불러오지 못했습니다({why}). data: URL로 시도합니다',
     '运行环境的脚本没能加载：{why}': '런타임 스크립트를 불러오지 못했습니다: {why}',
     '运行时初始化完成（{ms}ms）': '런타임 초기화 완료({ms}ms)',
+    'wasm 堆 {mb}MB（{step}）': 'wasm 힙 {mb}MB({step})',
+    '运行环境起来后': '런타임이 올라온 뒤',
+    '模型挂进文件系统后': '모델 파일을 올린 뒤',
+    '识别器建好后': '인식기를 만든 뒤',
+    '模型字节交出去之后': '모델 바이트를 넘긴 뒤',
+    '已下载 {what}（{mb}MB）': '{what} 내려받기 완료({mb}MB)',
     '运行环境没有导出 OfflineRecognizer，无法识别语音':
       '런타임이 OfflineRecognizer를 내보내지 않아 음성을 인식할 수 없습니다',
     '运行环境没有加载完整，无法读取模型文件': '런타임이 완전히 올라오지 않아 모델 파일을 읽을 수 없습니다',
@@ -217,6 +245,10 @@ const PACKS = {
     engine: 'sherpa-sensevoice-int8',
     // Chinese source text; `t()` at the moment it is reported, not here.
     reason: 'sherpa-onnx WASM + SenseVoice Small int8（CPU）',
+    // Which file holds the weights: what the "ready" note counts, and what gets
+    // handed back after the recogniser has read it. Named per pack because the
+    // big file of a transducer is its encoder, not a single `model`.
+    weights: 'model',
     files: {
       tokens: { name: 'tokens.txt', bytes: 315894, label: '下载词表' },
       model: { name: 'model.int8.onnx', bytes: 239233841, label: '下载中文模型' },
@@ -236,12 +268,51 @@ const PACKS = {
       },
     }),
   },
+  ko: {
+    cache: 'rc-model-ko-sherpa-zipformer',
+    // k2-fsa's Korean zipformer, pinned to the revision these sizes and this
+    // decode path were verified against.
+    repo:
+      'https://huggingface.co/k2-fsa/sherpa-onnx-zipformer-korean-2024-06-24/resolve/0fb4b2b5c8d3e5766121481ba911961e3649c664/',
+    engine: 'sherpa-zipformer-ko-int8',
+    reason: 'sherpa-onnx WASM + Zipformer 韩语 int8（CPU）',
+    // A transducer: three graphs and no `featConfig`, for the same reason the
+    // removed `en-nemo` pack needed none — the encoder export carries its own
+    // frontend metadata (sample rate, feature dim, subsampling).
+    //
+    // No `modelingUnit`/`bpeVocab` either: the pinned runtime keeps the spaces
+    // between Hangul syllables as they are (measured on this exact build: ` 그는
+    // 괜찮은 척하려고 …`), and passing `bpe` + `bpe.model` changed the text by
+    // nothing at all. What *does* remove them is `RemoveSpaceBetweenCjk`, which
+    // later sherpa-onnx versions run on every transducer result and whose CJK
+    // ranges include Hangul — so this pack's output depends on the runtime pin
+    // above. See `src/lib/asr/models.ts` for the measurement and for what an
+    // upgrade would cost.
+    weights: 'encoder',
+    files: {
+      tokens: { name: 'tokens.txt', bytes: 60246, label: '下载词表' },
+      encoder: { name: 'encoder-epoch-99-avg-1.int8.onnx', bytes: 70784728, label: '下载韩语模型' },
+      decoder: { name: 'decoder-epoch-99-avg-1.int8.onnx', bytes: 2844692, label: '下载韩语模型解码器' },
+      joiner: { name: 'joiner-epoch-99-avg-1.int8.onnx', bytes: 2581421, label: '下载韩语模型连接器' },
+    },
+    config: (paths) => ({
+      modelConfig: {
+        debug: 0,
+        tokens: paths.tokens,
+        transducer: {
+          encoder: paths.encoder,
+          decoder: paths.decoder,
+          joiner: paths.joiner,
+        },
+      },
+    }),
+  },
   // `en-nemo` sat here: NVIDIA Parakeet TDT-CTC 110M int8, English, punctuated,
   // served through the `nemoCtc` branch of this same runtime. Measured against
   // Moonshine on the same audio it lost — after Moonshine's four threads it was
   // 1.8× slower (521→291 ms against Parakeet's 448 ms), twice the download, and
   // its punctuation turned out not to be an advantage (Moonshine punctuates too),
-  // so English goes back to being one module and this table has one entry.
+  // so English goes back to being one module — through Moonshine, not this table.
   //
   // Kept as a note rather than deleted, because the shape is reusable if an
   // English model ever lands on this runtime again: `modelConfig: { tokens,
@@ -260,6 +331,15 @@ const PACKS = {
  */
 const FS_PATHS = {
   zh: { model: './model.zh.int8.onnx', tokens: './tokens.zh.txt' },
+  // One entry per file the pack declares, and no two packs may share a path: a
+  // worker that has mounted two modules in its lifetime keeps the tokens of the
+  // one its recogniser is still pointing at.
+  ko: {
+    tokens: './tokens.ko.txt',
+    encoder: './encoder.ko.int8.onnx',
+    decoder: './decoder.ko.int8.onnx',
+    joiner: './joiner.ko.int8.onnx',
+  },
 }
 
 /** The built recognizer, its module, and the runtime they belong to. */
@@ -357,7 +437,15 @@ async function boot(module, pack) {
   // The model has been read into the recognizer's own session by now; both the
   // copy in the virtual file system and the array we handed to it are dead weight,
   // and on a phone that dead weight is most of what decides whether the page fits.
-  releaseModelFile(Module, recognizer, pack, paths.model)
+  // The heap is read first because the session weights are what it grew for.
+  heapNote(Module, '识别器建好后')
+  releaseModelFile(Module, recognizer, pack, paths)
+  // The other half of the memory story: what the runtime still sits on once the
+  // file system and the ONNX sessions have both let go of the weights. An
+  // emscripten heap never shrinks, so this is a floor rather than a reading of
+  // what a phone could have afforded — but the gap between this line and the one
+  // above is the part that was only ever ours to free.
+  heapNote(Module, '模型字节交出去之后')
 }
 
 /**
@@ -468,6 +556,8 @@ async function initRuntime() {
   if (typeof Module.FS_createDataFile !== 'function') {
     throw new Error(t('运行环境没有提供文件系统，无法写入模型文件'))
   }
+  // The floor of this boot's footprint, before a single weight is read.
+  heapNote(Module, '运行环境起来后')
   return Module
 }
 
@@ -485,18 +575,27 @@ async function initRuntime() {
  * this worker's life.
  */
 function mountPack(Module, module, downloaded) {
+  const pack = PACKS[module]
   const paths = FS_PATHS[module]
   if (mountedModule && mountedModule !== module) {
     const previous = FS_PATHS[mountedModule]
-    unlink(Module, [previous.tokens, previous.model])
+    unlink(Module, Object.values(previous))
     mountedModule = null
   }
-  Module.FS_createDataFile('/', paths.tokens.slice(2), downloaded.tokens, true, true, true)
-  Module.FS_createDataFile('/', paths.model.slice(2), downloaded.model, true, true, true)
+  // Every file the pack declares, by role — the two-file case and the four-file
+  // transducer case are the same loop. The tokens stay mounted for the lifetime
+  // of the recognizer; the weights do not, and a phone's budget is the reason.
+  for (const role of Object.keys(pack.files)) {
+    Module.FS_createDataFile('/', paths[role].slice(2), downloaded[role], true, true, true)
+  }
   mountedModule = module
-  if (!fileExists(Module, paths.model.slice(2))) {
+  if (!fileExists(Module, paths[pack.weights].slice(2))) {
     throw new Error(t('模型没有写进运行时的文件系统'))
   }
+  // `canOwn` above means this should equal the runtime's own heap: our bytes are in
+  // the file system as *the same* buffer, not a second copy of it. A number that
+  // jumps here would say otherwise.
+  heapNote(Module, '模型挂进文件系统后')
   return paths
 }
 
@@ -527,7 +626,9 @@ async function downloadPack(pack) {
       cache: RUNTIME_CACHE,
       url: RUNTIME.wasm.url,
       bytes: RUNTIME.wasm.bytes,
-      label: t('下载运行环境'),
+      // The Chinese source text, like the pack labels: `report` translates it, and
+      // the error paths below translate it again for the same reason.
+      label: '下载运行环境',
     },
   ]
   const total = items.reduce((sum, item) => sum + item.bytes, 0)
@@ -544,10 +645,22 @@ async function downloadPack(pack) {
       total,
     })
     done += assets[item.key].byteLength
+    // One breadcrumb per finished file, and on a phone this is the line that
+    // matters: the log tail lives in `localStorage`, where a renderer that is
+    // killed by the *next* allocation cannot take it away. The bytes are still in
+    // the JavaScript heap at this point — the file system only takes them over on
+    // mount — which is the phase an iPhone actually dies in, and the one the wasm
+    // heap number below cannot see at all.
+    note(
+      t('已下载 {what}（{mb}MB）', {
+        what: t(item.label),
+        mb: (assets[item.key].byteLength / 1048576).toFixed(1),
+      }),
+    )
   }
   note(
     t('模型文件已就绪（约 {mb}MB）', {
-      mb: Math.round(assets.model.byteLength / 1048576),
+      mb: Math.round(assets[pack.weights].byteLength / 1048576),
     }),
   )
   void pruneCache(pack)
@@ -566,7 +679,12 @@ async function handleRecognize(id, samples, startMs, endMs) {
     stream.acceptWaveform(SAMPLE_RATE, samples)
     recognizer.decode(stream)
     const result = recognizer.getResult(stream)
-    const text = (result && result.text) || ''
+    // Trimmed because a transducer's first token carries its word boundary: the
+    // Korean pack answers ` 그는 괜찮은 …`, with a leading space that is part of the
+    // model's output rather than of the sentence. Invisible in the paragraph that
+    // renders it, but it travels — into the log lines, the copied transcript and
+    // the translation request — so it is dropped here, once.
+    const text = ((result && result.text) || '').trim()
     post({
       type: 'result',
       id,
@@ -667,6 +785,38 @@ function describe(err) {
   return message.length > 200 ? message.slice(0, 200) + '…' : message
 }
 
+/**
+ * How much memory the runtime itself is sitting on, in whole MB.
+ *
+ * This is the number that decides whether a phone can run this module at all, and
+ * there is no way to ask for it from outside: Safari exposes no memory API, and a
+ * page the system kills cannot be questioned afterwards. So each step of the load
+ * writes it down *as it goes*, and the log tail — which lives in `localStorage`,
+ * where a killed renderer cannot take it — carries the last number back to the
+ * next boot.
+ *
+ * `HEAPU8` is the runtime's own linear memory: the ONNX session allocates the
+ * weights out of it, which is why the step that builds the recogniser is the one
+ * worth watching. An Emscripten heap never shrinks, so the largest number printed
+ * is a floor on the peak, not a guess at it.
+ */
+function heapMb(Module) {
+  try {
+    if (Module && Module.HEAPU8 && Module.HEAPU8.length) {
+      return Math.round(Module.HEAPU8.length / 1048576)
+    }
+  } catch {
+    /* a build without the exported heap: the line is simply not written */
+  }
+  return null
+}
+
+/** One memory checkpoint. Silent when this runtime does not expose its heap. */
+function heapNote(Module, step) {
+  const mb = heapMb(Module)
+  if (mb !== null) note(t('wasm 堆 {mb}MB（{step}）', { mb, step: t(step) }))
+}
+
 function blobUrl(blob) {
   const url = URL.createObjectURL(blob)
   blobUrls.push(url)
@@ -709,15 +859,20 @@ function dataScriptUrl(text) {
  * sherpa-onnx reads the ONNX weights into its own session while the recognizer is
  * constructed, so from that moment both the copy in Emscripten's file system and
  * the array we handed to it are dead weight — and on a phone that dead weight is
- * most of what decides whether the page fits in memory at all (WebKit hands a page
- * roughly 1–1.5 GB, and a module peaks far above that once the model, the session
- * and the runtime are all resident).
+ * most of what decides whether the page fits in memory at all. What WebKit hands a
+ * page on iOS is measured in *hundreds* of megabytes, not gigabytes (about 100 MB
+ * on a 4 GB iPhone, 200 MB on an iPad: lapcatsoftware.com, 2026-01-22, iOS 26.2),
+ * which is below this module's own download — so on an iPhone this load cannot
+ * succeed, and `moduleTooBigForDevice` in src/lib/asr/models.ts refuses it before
+ * the page is risked. Everything here is still worth doing precisely: the runtime
+ * is told the heap it needs by the module itself (512 MB, see `heapNote` below),
+ * and the two copies above are what a desktop-sized budget makes affordable.
  *
  * It is dropped only after one throwaway decode has proven the recognizer works
  * without it: the opposite failure — a silent read of a file that is no longer
  * there, 228 MB into a session — would be far worse than the memory it saves.
  */
-function releaseModelFile(Module, recognizer, pack, modelPath) {
+function releaseModelFile(Module, recognizer, pack, paths) {
   let stream = null
   try {
     stream = recognizer.createStream()
@@ -735,11 +890,17 @@ function releaseModelFile(Module, recognizer, pack, modelPath) {
     }
   }
 
-  if (!unlink(Module, [modelPath])) {
+  // Every weight file, not just the largest: sherpa-onnx reads all of them into
+  // its own sessions while the recognizer is built, and the throwaway decode above
+  // has just proven the sessions work with the files gone. The tokens stay — they
+  // are 60 KB and the decoder reads them per result.
+  const weights = Object.keys(pack.files).filter((role) => role !== 'tokens')
+  if (!unlink(Module, weights.map((role) => paths[role]))) {
     caution(t('运行环境没有提供 unlink，模型文件留在内存里'))
     return
   }
-  note(t('已释放模型字节（约 {mb}MB）', { mb: Math.round(pack.files.model.bytes / 1048576) }))
+  const mb = weights.reduce((sum, role) => sum + pack.files[role].bytes, 0)
+  note(t('已释放模型字节（约 {mb}MB）', { mb: Math.round(mb / 1048576) }))
 }
 
 function fileExists(Module, name) {
@@ -798,7 +959,7 @@ async function fetchIntoCache(cacheName, url, label, fallbackBytes, scale) {
 
   const response = await fetch(url)
   if (!response.ok)
-    throw new Error(t('{what}失败：HTTP {status}', { what: label, status: response.status }))
+    throw new Error(t('{what}失败：HTTP {status}', { what: t(label), status: response.status }))
   // The CDN does not always send content-length through its redirect, so the
   // measured size is the better denominator when it is missing. It is also what
   // lets us allocate the destination array once instead of growing it.
@@ -848,7 +1009,7 @@ async function readIntoProgress(stream, scale, label, expected, offset) {
     } else {
       if (!overflow) {
         overflow = []
-        caution(t('{what}比声明的大小更大，末尾另存后再拼一次', { what: label }))
+        caution(t('{what}比声明的大小更大，末尾另存后再拼一次', { what: t(label) }))
       }
       overflow.push(chunk)
     }
@@ -875,10 +1036,15 @@ function report(label, loaded, scale) {
   const fraction = denominator > 0 ? Math.min(1, loaded / denominator) : undefined
   const progress = fraction === undefined ? undefined : Math.max(lastFraction, fraction)
   if (progress !== undefined) lastFraction = progress
+  // Translated here rather than at the call site: the labels arrive as the
+  // Chinese source text (`PACKS.…files.…label`) and go straight to a status line
+  // the user reads, which is how a Korean interface ended up saying
+  // "下载中文模型". Calling `t` twice is harmless — an already-translated label is
+  // simply not found in the table.
   post({
     type: 'load-progress',
-    status: label,
-    file: label,
+    status: t(label),
+    file: t(label),
     loaded,
     total: denominator,
     progress,

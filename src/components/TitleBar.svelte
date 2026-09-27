@@ -3,7 +3,6 @@
   import AboutChopper from './AboutChopper.svelte'
   import { session, logOpen, view } from '../lib/app/state'
   import { APP_NAME } from '../lib/brand/logo'
-  import { moduleIdFor } from '../lib/asr/models'
   import { settings, setSetting, SOURCE_ORDER, TARGET_ORDER, langLabel } from '../lib/store/settings'
   import { info } from '../lib/log/store'
   import { t, translator, uiLang } from '../lib/i18n/index.ts'
@@ -15,18 +14,19 @@
 
   async function changeSource(lang: SourceLang) {
     if (lang === $settings.sourceLang) return
-    // Chinese and Korean are served by the same module, so switching between them
-    // must not throw it away — that would cost a full reload of the same 240 MB
-    // the user already has in memory. Only a change of *module* has to.
-    const sameModule = moduleIdFor(lang) === moduleIdFor($settings.sourceLang)
+    // Every language has its own module now, so a language switch is always a
+    // module switch — and one model at a time is the memory budget: drop the old
+    // engine before the new language's module is requested.
+    //
+    // This used to be conditional. Korean rode on the Chinese module, so zh → ko
+    // had to leave the engine alone rather than throw away the very bytes that
+    // answer Korean. With a Korean module of its own that reasoning is gone, and
+    // leaving the deleted condition behind would have kept a model that can no
+    // longer answer the chosen language.
     setSetting('sourceLang', lang)
-    // Otherwise: one model at a time (memory budget), so drop the old engine
-    // before the new language's module is requested.
-    if (!sameModule) await session.releaseModel()
+    await session.releaseModel()
     info('ui', t('识别语言切换为{lang}', { lang: langLabel(lang) }), {
-      note: sameModule
-        ? t('和上一个语言共用识别模块，不用重新加载')
-        : t('下次开始录音时会加载对应模块'),
+      note: t('下次开始录音时会加载对应模块'),
     })
   }
 

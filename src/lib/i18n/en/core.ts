@@ -32,12 +32,16 @@ export const EN_CORE: Record<string, string> = {
   // which is the one thing the source scan of `messages.test.ts` cannot see — so
   // a missing one is added by hand, and checked by eye in all three languages.
   '英文识别模块': 'English recognition module',
-  '中文和韩语识别模块': 'Chinese & Korean recognition module',
+  '韩语识别模块': 'Korean recognition module',
+  '中文识别模块': 'Chinese recognition module',
   '英文 · Moonshine': 'English · Moonshine',
-  '中文 / 韩语': 'Chinese / Korean',
+  '韩语 · Zipformer': 'Korean · Zipformer',
+  '中文 · SenseVoice': 'Chinese · SenseVoice',
   '英文识别模块（Moonshine Base）': 'English recognition module (Moonshine Base)',
-  '中文和韩语识别模块（SenseVoice Small int8）':
-    'Chinese & Korean recognition module (SenseVoice Small int8)',
+  '韩语识别模块（Zipformer Korean int8）':
+    'Korean recognition module (Zipformer Korean int8)',
+  '中文识别模块（SenseVoice Small int8）':
+    'Chinese recognition module (SenseVoice Small int8)',
   '英文识别模块（Parakeet，已移除）': 'English recognition module (Parakeet, removed)',
   '这个设备内存不够装这个模块：关掉其他应用，或先装英文模块':
     'This device does not have memory for this module: close other apps, or install the English module first',
@@ -174,6 +178,8 @@ export const EN_CORE: Record<string, string> = {
     'This device has had its page killed twice under GPU acceleration (WebGPU): change “GPU acceleration” to the CPU in settings and try again',
   '{module}在这台设备上装不下：已经两次在启动时把整个页面关掉了（内存不够），先别试了':
     '{module} does not fit on this device: twice now the whole page was killed while starting it (out of memory). Leave it for now.',
+  '{module}在这台设备上装不下：上次启动它时，系统直接把整个页面关掉了（内存不够）。手机上改用英文模块，中文留给电脑。':
+    '{module} does not fit on this device: last time it was started, the system killed the whole page (out of memory). Use the English module on a phone, and keep Chinese for a computer.',
   '识别模块已就绪（{device}）': 'Recognition module ready ({device})',
   '原因': 'Reason',
   '下载太久没动静，检查网络后重试': 'The download stalled — check the network and try again',
@@ -240,14 +246,15 @@ export const EN_CORE: Record<string, string> = {
   '线程隔离（SharedArrayBuffer）：{state}': 'Cross-origin isolation (SharedArrayBuffer): {state}',
   '否（WASM 单线程）': 'no (WASM runs single-threaded)',
   '设备：{device}{memory}': 'Device: {device}{memory}',
-  'iOS（网页可用内存约 1～1.5 GB）': 'iOS (a web page gets about 1–1.5 GB)',
+  'iOS（网页内存很紧：实测几百 MB 就会关掉页面）':
+    'iOS (a web page is tight on memory: a few hundred MB is measured to be enough to kill it)',
   ' · 内存约 {gb} GB': ' · about {gb} GB of memory',
   '显示语言：{lang}': 'Display language: {lang}',
   '识别加速方式': 'Recognition accelerator',
   '将使用 {device}（{dtype}）—— {reason}': 'Will use {device} ({dtype}) — {reason}',
   '存储空间': 'Storage',
-  '可用配额约 {quota} GB，已用 {used} MB · 中文模块需要约 230 MB':
-    'About {quota} GB of quota available, {used} MB used · the Chinese module needs about 230 MB',
+  '可用配额约 {quota} GB，已用 {used} MB · 中文模块约 230 MB，韩语模块约 84 MB':
+    'About {quota} GB of quota available, {used} MB used · the Chinese module is about 230 MB, the Korean one about 84 MB',
   '这个浏览器不提供存储配额信息': 'This browser does not report a storage quota',
   '无法读取存储配额': 'The storage quota could not be read',
   '已缓存，可直接使用': 'Cached and ready to use',

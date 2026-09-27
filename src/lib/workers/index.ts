@@ -36,8 +36,9 @@ function guard(worker: Worker, name: string): Worker {
  * Two recognition workers exist because their runtimes are loaded in mutually
  * exclusive ways: transformers.js (the Moonshine English module) goes through
  * `import()`, so it must live in a module worker, while sherpa-onnx's published
- * runtime is a pair of classic scripts that install globals, so the Chinese
- * SenseVoice module lives in `static/sherpa-asr.worker.js`.
+ * runtime is a pair of classic scripts that install globals, so the sherpa
+ * modules — Chinese SenseVoice and Korean Zipformer — live in
+ * `static/sherpa-asr.worker.js`.
  *
  * The split follows the runtime, not the language.
  *
@@ -217,13 +218,12 @@ export class AsrWorkerClient {
   /**
    * The module this client runs.
    *
-   * Two languages can share one module (Korean runs on the Chinese one), and the
-   * worker only needs rebuilding when the *module* changes — rebuilding it for a
-   * language switch would throw away a model that answers both. Callers compare
-   * this, never the language they asked for: after a zh → ko switch the resident
-   * client is still the one the request for `zh` created, and that is correct.
+   * A language is not the same thing as a module, and the worker only needs
+   * rebuilding when the *module* changes: when Korean rode on the Chinese bytes,
+   * a zh → ko switch had to leave the client alone, because the same model answers
+   * both. Callers compare modules, never the language they asked for.
    *
-   * A worker holds exactly one recognizer and its model file, so a module change
+   * A worker holds exactly one recognizer and its model files, so a module change
    * has to tear it down.
    */
   readonly module: ModuleId

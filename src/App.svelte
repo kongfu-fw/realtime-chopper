@@ -77,11 +77,21 @@
   })
 
   onMount(() => {
-    // Korean runs on the Chinese module now, and English no longer has a second
-    // module (Parakeet) — anyone who installed either is holding 62 / 126 MB that
-    // nothing will open again. Drop the records and the caches in the same
-    // breath, once.
-    if (getSettings().installedModels.ko) forgetModel('ko')
+    // English no longer has a second module (Parakeet) — anyone who installed it
+    // is holding 126 MB that nothing will open again. Drop the record and the
+    // caches in the same breath, once.
+    //
+    // Korean used to be forgotten here as well, and that is now wrong: back then
+    // the record to drop was the one the *Chinese* module's download had left
+    // behind (that module was answering Korean), so `ko` could only be a leftover
+    // from the Moonshine era. Korean has a module of its own again, which makes
+    // `ko` the genuine key — this line would have deleted a real 84 MB install on
+    // every reload, and the app would have asked for the download again each
+    // time, which reads as storage that does not stick.
+    //
+    // A Moonshine-era record needs no help anyway: its `version` no longer
+    // matches the registry, so it already reads as not installed, and the retired
+    // cache prefix clears its bytes.
     if (getSettings().installedModels['en-nemo']) forgetModel('en-nemo')
     void purgeRetiredModuleCaches().then((gone) => {
       if (gone.length) info('storage', t('已清理不再使用的识别模块：{list}', { list: gone.join(t('、')) }))

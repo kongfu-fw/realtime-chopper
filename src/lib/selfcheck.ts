@@ -77,7 +77,7 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
       }),
       t('CPU 核心：{cores}', { cores: navigator.hardwareConcurrency || t('未知') }),
       t('设备：{device}{memory}', {
-        device: isAppleMobile() ? t('iOS（网页可用内存约 1～1.5 GB）') : t('非 iOS'),
+        device: isAppleMobile() ? t('iOS（网页内存很紧：实测几百 MB 就会关掉页面）') : t('非 iOS'),
         memory: deviceMemoryGb ? t(' · 内存约 {gb} GB', { gb: deviceMemoryGb }) : '',
       }),
       t('显示语言：{lang}', { lang: navigator.language }),
@@ -107,7 +107,7 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
       results.push({
         label: t('存储空间'),
         ok: quotaGb > 1 ? true : 'warn',
-        detail: t('可用配额约 {quota} GB，已用 {used} MB · 中文模块需要约 230 MB', {
+        detail: t('可用配额约 {quota} GB，已用 {used} MB · 中文模块约 230 MB，韩语模块约 84 MB', {
           quota: quotaGb.toFixed(2),
           used: usageMb.toFixed(1),
         }),

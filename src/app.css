@@ -199,7 +199,8 @@ input {
 /* The record button lives centred in the status bar (requirement 17).
  *
  * It also carries the input level, which is why it is positioned: `--level` is a
- * 0..1 voice level set inline by the status bar, and the halo below reads it.
+ * 0..1 fraction set inline by the status bar — the segmenter's rms put through a
+ * decibel scale (`meterFraction` there) — and the halo below reads it.
  */
 .record-btn {
   position: relative;
@@ -224,13 +225,17 @@ input {
  * to be the only sign of recording — one element, two facts, and the user looks at
  * one place instead of across the whole bar.
  *
- * The 90 ms linear transition is the same smoothing the old bar used, so the halo
- * tracks loudness instead of flickering per frame.
+ * The transition is what keeps that from reading as a flicker, and its length is
+ * tied to how often the value changes: the level arrives at 15 Hz, so 60 ms lets
+ * each update land and settle before the next one, while still smoothing the
+ * frame-to-frame jitter. (90 ms, which this was, is longer than the gap between
+ * updates — the halo then spent its whole life mid-transition, always behind the
+ * voice it was supposed to be showing.)
  */
 .record-btn.recording {
   background: var(--rc-ink);
   box-shadow: 0 0 0 calc(var(--level, 0) * 9px) rgb(47 122 85 / 30%), var(--rc-shadow-hard);
-  transition: box-shadow 90ms linear;
+  transition: box-shadow 60ms linear;
 }
 
 /* Full scale, so "loud enough" has a visible ceiling to reach. */

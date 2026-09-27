@@ -8,6 +8,7 @@
     moduleIdFor,
     moduleLabel,
     moduleTitle,
+    moduleTooBigForDevice,
   } from '../lib/asr/models'
   import { formatBytes, markModelInstalled, isModuleCurrent, settings } from '../lib/store/settings'
   import { info } from '../lib/log/store'
@@ -47,15 +48,20 @@
   /**
    * The one failure with a fix the user can apply themselves.
    *
-   * The 228 MB Chinese/Korean module is right at what an iPhone will hand a web
-   * page, so "out of memory" there is a normal outcome, not a bug — and the advice
-   * differs by platform, which is why this is not part of the sentence above.
+   * The 228 MB Chinese module is past what iOS will hand a web page, so "out of
+   * memory" there is an expected outcome rather than a bug — and the advice differs
+   * by platform, which is why this is not part of the sentence above. The sizes in
+   * it are the other two modules' own: a phone is *known* to manage the English
+   * one (the log of an iPhone 12 that lost its page to the Chinese module shows the
+   * English one loading on the same device minutes earlier) and the Korean one is
+   * smaller than either of the others' arrival cost, which is why it is named as a
+   * candidate rather than promised to fit.
    */
   const memoryHint = $derived(
     rawError && isMemoryFailure(rawError)
       ? isAppleMobile()
-        ? tr('iPhone 内存比较紧：先关掉其他 App 再试；只装英文模块（62 MB / 126 MB）基本都能装上。')
-        : tr('内存不够：关掉其他应用，或换用英文模块。')
+        ? tr('iPhone 内存比较紧：先关掉其他 App 再试；英文（62 MB）和韩语（84 MB）模块都比中文模块轻得多。')
+        : tr('内存不够：关掉其他应用，或换用更小的模块（英文 62 MB、韩语 84 MB）。')
       : '',
   )
 
@@ -97,9 +103,9 @@
   /**
    * Installs one module.
    *
-   * The argument is a module, not a language: Korean is served by the Chinese
-   * module, and passing the module to `prepare` is what makes one download count
-   * for both — the engine tells the languages apart from the audio itself.
+   * The argument is a module rather than a language because those are different
+   * things even now that they line up: this dialog offers the *bytes*, and the
+   * question of which language those bytes answer is `moduleIdFor`'s.
    */
   async function download(module: ModuleId) {
     downloading = module
@@ -152,6 +158,19 @@
         </button>
       {/if}
     </div>
+
+    <!--
+      Said *before* the tap, because the tap is what costs the page: a module past
+      what this device can hold dies by killing the whole renderer — silently, with
+      nothing to catch and no error to show afterwards. See `moduleTooBigForDevice`.
+    -->
+    {#if moduleTooBigForDevice(ASR_MODULES[key]) && !isModuleCurrent(key, $settings.installedModels[key])}
+      <p class="warn">
+        {tr('iPhone 上装不下：iOS 给一个网页的内存比电脑少一个数量级（实测：几百 MB 就会把整页关掉），这个模块的模型文件本身就有 {size}。手机上先用英文模块，中文留给电脑。', {
+          size: formatBytes(ASR_MODULES[key].approxBytes),
+        })}
+      </p>
+    {/if}
   {/each}
 
   <!-- One line for the phase that has no percentage of its own. -->
@@ -304,6 +323,17 @@
     margin: 6px 0 0;
     font-size: 13px;
     color: var(--rc-ink-soft);
+  }
+
+  /* Not a failure, so not red: this one is here before anything goes wrong, and it
+     is a statement about the device rather than about the attempt. */
+  .warn {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--rc-ink-soft);
+    border-left: 2px solid var(--rc-line-strong);
+    padding-left: 8px;
   }
 
   .raw {

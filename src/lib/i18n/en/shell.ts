@@ -136,12 +136,12 @@ export const EN_SHELL: Record<string, string> = {
   '按 Esc': 'pressed Esc',
 
   // ── ModelInstallModal.svelte ──────────────────────────────────────────────
-  'iPhone 内存比较紧：先关掉其他 App 再试；英文（62 MB）和韩语（84 MB）模块都比中文模块轻得多。':
-    'iPhones are tight on memory: close the other apps and try again. The English (62 MB) and Korean (84 MB) modules are both far lighter than the Chinese one.',
-  'iPhone 上装不下：iOS 给一个网页的内存比电脑少一个数量级（实测：几百 MB 就会把整页关掉），这个模块的模型文件本身就有 {size}。手机上先用英文模块，中文留给电脑。':
-    'Does not fit on an iPhone: iOS gives a web page an order of magnitude less memory than a computer — a few hundred MB is measured to be enough to kill the whole page — and this module’s model file alone is {size}. Use the English module on a phone, and keep Chinese for a computer.',
-  '内存不够：关掉其他应用，或换用更小的模块（英文 62 MB、韩语 84 MB）。':
-    'Not enough memory: close other apps, or switch to a smaller module (English 62 MB, Korean 84 MB).',
+  'iPhone 内存比较紧：先关掉其他 App 再试；英文（62 MB）和手机上的韩语（64 MB）模块都比中文模块轻得多。':
+    'iPhones are tight on memory: close the other apps and try again. The English (62 MB) and the phone-only Korean (64 MB) modules are both far lighter than the Chinese one.',
+  'iPhone 上装不下：iOS 给一个网页的内存比电脑少一个数量级（实测：几百 MB 就会把整页关掉），这个模块的模型文件本身就有 {size}。手机上用英文和韩语（韩语会自动换用更小的 Moonshine 模块），中文留给电脑。':
+    'Does not fit on an iPhone: iOS gives a web page an order of magnitude less memory than a computer — a few hundred MB is measured to be enough to kill the whole page — and this module’s model file alone is {size}. On a phone use English and Korean (Korean switches itself to the smaller Moonshine module); keep Chinese for a computer.',
+  '内存不够：关掉其他应用，或换用更小的模块（英文 62 MB、手机上的韩语 64 MB）。':
+    'Not enough memory: close other apps, or switch to a smaller module (English 62 MB, the phone-only Korean 64 MB).',
   '识别模块安装失败': 'Installing the recognition module failed',
   '开始安装识别模块：{module}': 'Installing the recognition module: {module}',
   '设备': 'Device',
@@ -217,8 +217,9 @@ export const EN_SHELL: Record<string, string> = {
   // '已安装' is defined with the install dialog's strings above.
   '清除': 'Clear',
   '未安装': 'Not installed',
-  '每种语言一个模块：中文 SenseVoice、韩语 Zipformer、英文 Moonshine；同时只驻留一个。':
-    'One module per language: SenseVoice for Chinese, Zipformer for Korean, Moonshine for English. Only one is resident at a time.',
+  '中文和韩语共用 SenseVoice；英文和手机上的韩语用 Moonshine（更小、约 64 MB）；同时只驻留一个。':
+    'Chinese and Korean share SenseVoice; English and Korean-on-a-phone use Moonshine (smaller, about 64 MB). Only one is resident at a time.',
+  '手机上使用': 'phones only',
   '翻译': 'Translation',
   '翻译用哪家': 'Which translator',
   '默认谷歌；谷歌用不了会自动换微软。': 'Google by default; if Google is unreachable it switches to Microsoft by itself.',

@@ -3,27 +3,38 @@
  *
  * Runs the modules whose runtime is sherpa-onnx's browser WASM build:
  *
- *   zh  — SenseVoice-Small (int8, ~228 MB), Chinese
- *   ko  — Zipformer Korean (int8, ~73 MB), Korean
+ *   zh  — SenseVoice-Small (int8, ~228 MB), Chinese *and* Korean
  *
  * SenseVoice is the right model for Chinese and always was: non-autoregressive (one
  * forward pass per utterance, roughly an order of magnitude faster than Whisper's
  * token-by-token decode), and it recognises Chinese, English, Japanese, Korean and
  * Cantonese in one model with inverse text normalisation — so Chinese speech with
- * English words inside it survives, which a Mandarin-only CTC model cannot do.
+ * English words inside it survives, which a Mandarin-only CTC model cannot do, and
+ * its `language: 'auto'` mode is what makes it the best Korean this app can run on
+ * a device that can hold it.
  *
- * This worker used to serve a second module as well (`en-nemo`, NVIDIA Parakeet on
- * the same runtime). It is gone and the pack table below says why; what matters
- * here is that the *runtime* stays, because both modules above are built out of
- * it — one download of wasm serves every language that does not go through a
- * transformers.js model. See `src/lib/asr/models.ts` for the registry these ids
- * mirror, and `src/workers/asr.worker.ts` for the module-worker counterpart.
+ * This worker used to carry two more packs, both gone:
  *
- * The two packs differ in shape, not just in bytes: SenseVoice is one graph with a
- * language it picks itself, and Korean is a *transducer* — encoder, decoder and
- * joiner as three files, decoded greedily without an LM. That difference is
- * confined to the `config` builder of each pack; everything around it (download,
- * mount, self-check, release) is written against the pack's file table.
+ *   en-nemo  NVIDIA Parakeet, English — slower than Moonshine on this hardware,
+ *            twice the download, and Moonshine punctuates too. See the note where
+ *            its shape is recorded in `PACKS`.
+ *   ko       Zipformer Korean int8, 73 MB — the model built for Korean, which read
+ *            k2-fsa's own clips at 1.3% CER and then collapsed on a real recording
+ *            from this app's microphone ("음" for a whole sentence). Its
+ *            replacement is a transformers.js model, so it does not live here.
+ *            The measurement is in `src/lib/asr/models.ts`.
+ *
+ * What matters is that the *runtime* stays: every language that does not go through
+ * a transformers.js model is built out of this one download of wasm. See
+ * `src/lib/asr/models.ts` for the registry these ids mirror, and
+ * `src/workers/asr.worker.ts` for the module-worker counterpart.
+ *
+ * Packs can differ in shape, not just in bytes: SenseVoice is one graph with a
+ * language it picks itself, while a transducer pack (the removed Korean one, and
+ * anything added later) is encoder/decoder/joiner as three files decoded greedily
+ * without an LM. That difference is confined to the `config` builder of each pack;
+ * everything around it (download, mount, self-check, release) is written against
+ * the pack's file table.
  *
  * What was actually missing was never the model, it was the runtime:
  *   - the npm `sherpa-onnx` package is Node-only (`require('./…-nodejs.js')`,
@@ -130,16 +141,12 @@ const MESSAGES = {
     '这个版本不认识识别模块 {module}': 'This build does not know the recognition module {module}',
     '模型已在内存中': 'The model is already in memory',
     'sherpa-onnx WASM + SenseVoice Small int8（CPU）': 'sherpa-onnx WASM + SenseVoice Small int8 (CPU)',
-    'sherpa-onnx WASM + Zipformer 韩语 int8（CPU）': 'sherpa-onnx WASM + Korean Zipformer int8 (CPU)',
     // Noun phrases, because one label lands in two different sentences: the
     // progress line (see `report`, which adds "Downloading") and the breadcrumb
     // `已下载 {what}`. With the verb inside the label those two stacked up into
-    // "Downloaded Downloading the Korean model".
+    // "Downloaded Downloading the Chinese model".
     '词表': 'the vocabulary',
     '中文模型': 'the Chinese model',
-    '韩语模型': 'the Korean model',
-    '韩语模型解码器': 'the Korean model’s decoder',
-    '韩语模型连接器': 'the Korean model’s joiner',
     '运行环境': 'the runtime',
     '正在下载 {what}': 'Downloading {what}',
     '初始化识别模块': 'Initialising the recognition module',
@@ -177,12 +184,8 @@ const MESSAGES = {
     '这个版本不认识识别模块 {module}': '이 버전은 인식 모듈 {module}을(를) 모릅니다',
     '模型已在内存中': '모델이 이미 메모리에 있습니다',
     'sherpa-onnx WASM + SenseVoice Small int8（CPU）': 'sherpa-onnx WASM + SenseVoice Small int8(CPU)',
-    'sherpa-onnx WASM + Zipformer 韩语 int8（CPU）': 'sherpa-onnx WASM + 한국어 Zipformer int8(CPU)',
     '词表': '어휘 목록',
     '中文模型': '중국어 모델',
-    '韩语模型': '한국어 모델',
-    '韩语模型解码器': '한국어 모델 디코더',
-    '韩语模型连接器': '한국어 모델 조이너',
     '运行环境': '런타임',
     '正在下载 {what}': '{what} 내려받는 중',
     '初始化识别模块': '인식 모듈 초기화 중',
@@ -274,46 +277,30 @@ const PACKS = {
       },
     }),
   },
-  ko: {
-    cache: 'rc-model-ko-sherpa-zipformer',
-    // k2-fsa's Korean zipformer, pinned to the revision these sizes and this
-    // decode path were verified against.
-    repo:
-      'https://huggingface.co/k2-fsa/sherpa-onnx-zipformer-korean-2024-06-24/resolve/0fb4b2b5c8d3e5766121481ba911961e3649c664/',
-    engine: 'sherpa-zipformer-ko-int8',
-    reason: 'sherpa-onnx WASM + Zipformer 韩语 int8（CPU）',
-    // A transducer: three graphs and no `featConfig`, for the same reason the
-    // removed `en-nemo` pack needed none — the encoder export carries its own
-    // frontend metadata (sample rate, feature dim, subsampling).
-    //
-    // No `modelingUnit`/`bpeVocab` either: the pinned runtime keeps the spaces
-    // between Hangul syllables as they are (measured on this exact build: ` 그는
-    // 괜찮은 척하려고 …`), and passing `bpe` + `bpe.model` changed the text by
-    // nothing at all. What *does* remove them is `RemoveSpaceBetweenCjk`, which
-    // later sherpa-onnx versions run on every transducer result and whose CJK
-    // ranges include Hangul — so this pack's output depends on the runtime pin
-    // above. See `src/lib/asr/models.ts` for the measurement and for what an
-    // upgrade would cost.
-    weights: 'encoder',
-    files: {
-      tokens: { name: 'tokens.txt', bytes: 60246, label: '词表' },
-      encoder: { name: 'encoder-epoch-99-avg-1.int8.onnx', bytes: 70784728, label: '韩语模型' },
-      decoder: { name: 'decoder-epoch-99-avg-1.int8.onnx', bytes: 2844692, label: '韩语模型解码器' },
-      joiner: { name: 'joiner-epoch-99-avg-1.int8.onnx', bytes: 2581421, label: '韩语模型连接器' },
-    },
-    config: (paths) => ({
-      modelConfig: {
-        debug: 0,
-        tokens: paths.tokens,
-        transducer: {
-          encoder: paths.encoder,
-          decoder: paths.decoder,
-          joiner: paths.joiner,
-        },
-      },
-    }),
-  },
-  // `en-nemo` sat here: NVIDIA Parakeet TDT-CTC 110M int8, English, punctuated,
+  // A `ko` pack sat here: k2-fsa's Zipformer Korean int8, pinned to
+  // `0fb4b2b5c8d3e5766121481ba911961e3649c664` — encoder 67.5 MB + decoder 2.7 MB
+  // + joiner 2.5 MB + tokens, a transducer with `weights: 'encoder'` and **no**
+  // `featConfig` (the export carries its own frontend metadata). Removed because a
+  // real recording broke it while SenseVoice and Moonshine both read it; the
+  // numbers are in `src/lib/asr/models.ts`.
+  //
+  // Two facts about it are worth keeping, because they are about this runtime
+  // rather than that model, and both cost real time to establish:
+  //
+  //   - a transducer pack has no `modelingUnit`/`bpeVocab` to set. Spaces between
+  //     Hangul syllables come out intact on the pinned build (` 그는 괜찮은 척하려고
+  //     …`), and passing `bpe` + `bpe.model` changed the text by nothing at all.
+  //     What *does* strip them is `RemoveSpaceBetweenCjk`, which later sherpa-onnx
+  //     versions run over every transducer result and whose CJK ranges (0xA840–
+  //     0xD7AF) include Hangul. So transducer output — not the token stream, which
+  //     is identical — is a property of the runtime pin, and upgrading that pin has
+  //     to be re-checked against Korean audio; Chinese cannot show the difference.
+  //   - the pinned runtime is the *only* one that matters here. It comes from the
+  //     published browser demo on HuggingFace (the npm package is Node-only and
+  //     k2-fsa.github.io is unreachable from mainland networks), and the heap
+  //     checkpoints in this file are how a phone answers for it.
+  //
+  // `en-nemo` also sat here: NVIDIA Parakeet TDT-CTC 110M int8, English, punctuated,
   // served through the `nemoCtc` branch of this same runtime. Measured against
   // Moonshine on the same audio it lost — after Moonshine's four threads it was
   // 1.8× slower (521→291 ms against Parakeet's 448 ms), twice the download, and
@@ -337,15 +324,6 @@ const PACKS = {
  */
 const FS_PATHS = {
   zh: { model: './model.zh.int8.onnx', tokens: './tokens.zh.txt' },
-  // One entry per file the pack declares, and no two packs may share a path: a
-  // worker that has mounted two modules in its lifetime keeps the tokens of the
-  // one its recogniser is still pointing at.
-  ko: {
-    tokens: './tokens.ko.txt',
-    encoder: './encoder.ko.int8.onnx',
-    decoder: './decoder.ko.int8.onnx',
-    joiner: './joiner.ko.int8.onnx',
-  },
 }
 
 /** The built recognizer, its module, and the runtime they belong to. */

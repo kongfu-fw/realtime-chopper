@@ -14,11 +14,12 @@ import { MoonshineEngine, type DevicePlan } from './moonshine'
  * monolingual (Moonshine Base, a Chinese zipformer CTC), so a wrong guess does
  * not degrade gracefully, it produces nonsense.
  *
- * Only the transformers.js engine is built here. The sherpa one — Chinese
- * (SenseVoice) and Korean (Zipformer), which is one runtime with two packs — runs
- * on a runtime that can only be evaluated as a classic script, so it lives in its
- * own worker (static/sherpa-asr.worker.js) and never reaches this module worker at
- * all.
+ * Only the transformers.js engine is built here — which, after Korean moved back to
+ * Moonshine, is both of the modules that use it (English and the phone's Korean).
+ * The sherpa one — Chinese, and Korean on any device that can hold SenseVoice —
+ * runs on a runtime that can only be evaluated as a classic script, so it lives in
+ * its own worker (static/sherpa-asr.worker.js) and never reaches this module worker
+ * at all.
  *
  * Note the argument: a *module*, not a language. A module is a set of bytes that
  * answers a language; the two are mapped rather than equated, so a language alone

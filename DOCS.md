@@ -23,10 +23,12 @@
 | 源语言 | 模块 | 引擎 | 为什么是它 |
 |---|---|---|---|
 | 英文 | 英文识别模块（约 62MB） | Moonshine Base · transformers.js | 这一档能用 **WebGPU**，失败自动回落 CPU |
-| 韩语 | 韩语识别模块（约 84MB） | Zipformer Korean **int8** · sherpa-onnx WASM | 与中文同一个运行时、另一份权重（约 73MB）；非自回归，实测 **CER 1.3%**（k2-fsa 自带的 4 条韩语音频，16.2 秒，单线程 CPU）—— 同音频下 SenseVoice 3.9%、Moonshine Base-KO 18.4%；词间空格与句末标点都在 |
-| 中文 | 中文识别模块（约 240MB） | SenseVoice Small **int8** · sherpa-onnx WASM | 多语言（中英日韩粤），非自回归，实测 RTF ≈ 0.40（同音频下 Whisper-base 约 0.9）；sherpa 的 WASM 构建自带 fbank，所以本项目里没有一行特征提取代码 |
+| 中文 | **中韩识别模块**（约 240MB） | SenseVoice Small **int8** · sherpa-onnx WASM | 多语言（中英日韩粤），非自回归，实测 RTF ≈ 0.40（同音频下 Whisper-base 约 0.9）；sherpa 的 WASM 构建自带 fbank，所以本项目里没有一行特征提取代码 |
+| 韩语 | 同上；**手机上**改用韩语识别模块（约 64MB） | SenseVoice；手机上换成 Moonshine Base-KO | 真机录音下实测：专门为韩语选的 Zipformer 把一句话读成一个字（`음`），SenseVoice 和 Moonshine 都读对了 —— 而 iPhone 装不下 240MB 的模块，64MB 那份装得下。数据在下面「韩语」那节 |
 
-**一次只驻留一个模块**：切换源语言时先释放旧的再加载新的，所以手机上不会同时占几百兆内存。这一版起**每种语言都有自己的权重**：中文与英文各一个模块，韩语也不再借用中文的（见下面「韩语换成专门的模型」）—— 三种语言之间切换都要换权重，换完再开始录音时才加载。
+**一次只驻留一个模块**：切换源语言时先释放旧的再加载新的，所以手机上不会同时占几百兆内存。
+中文与韩语在装得下 240MB 的机器上共用同一份 SenseVoice 权重；手机上的韩语改用 64MB 的
+Moonshine（详见下节）；英文一份 Moonshine。换语言时该释放的释放、该加载的加载。
 
 **Moonshine 的解码预算自己算，不用库的默认值**：论文（arXiv:2410.15608v2）给的规矩是「每秒钟音频最多 6 个输出 token」，用来挡住短句上的重复输出。transformers.js 自己算的是 `floor(秒数) * 6` —— **只按整秒算**，而本项目 VAD 的分段下限是 600ms：实测 0.85 秒的真话（`And so my`）在库的预算下只剩 `And`（预算 0 被当成「一个 token」），自己算就是 `And so`。`src/lib/asr/moonshine.ts` 因此用 `round` 而不是 `floor`。代价写在那个常量旁边：真正的重复会多跑约 4 个 token 才被截断（实测 1.9 秒的片段：库 `…fellow Merr`，我们 `…Merrimeters and so my`）—— 论文的 6/s 是**限幅**不是纠错，两错相权，不丢真话更重要。
 
@@ -257,20 +259,48 @@ design/                设计稿原图（几 MB 那种）：不进构建、不�
   DOCKER.md 里 304 那一节），所以它不再依赖缓存头。用内容哈希而不是 `APP_VERSION`：缓存键要
   的不变式是「同 URL 同字节」，而版本号只靠人记得改。
 
-**韩语换成专门的模型（Zipformer Korean）**
+**韩语：SenseVoice 认得出真机录音，Moonshine 认得下手机**
 
-这一版之前韩语跑在中文模块的权重上。现在是 `k2-fsa/sherpa-onnx-zipformer-korean-2024-06-24`
-（int8：encoder 67.5MB + decoder 2.7MB + joiner 2.5MB + 词表 59KB ≈ 73MB，与中文共用那 11MB 的
-wasm 运行时，**不需要新下载运行时**）。测法：k2-fsa 自带的 4 条韩语测试音频（`test_wavs/`，共 16.2 秒，
-Node 里单线程 CPU），CER 按 Hangul 归一化后算：
+韩语这一格换过三次，最后一次是被一段真机录音推翻的 —— **用应用自己的 worker、同一个钉住的
+运行时、同一段 2.47 秒的真话**（用户录的，不是朗读样音，16kHz 单声道）：
+
+| 模块 | 输出 | 耗时 | 体积 |
+|---|---|---|---|
+| `ko` Zipformer Korean int8（当初专门为韩语选的） | `음` —— 整句只剩一个字 | 155ms | 84MB（装机后） |
+| `ko` Moonshine Base-KO q8（现在手机上的韩语） | `우리는 교회를 다니는 사람이 아니야` | 174ms | 64MB |
+| `zh` SenseVoice Small int8（`language: auto`） | `우리는 교회를 다니는 사람이 아니.` 一字不差 | 419ms | 240MB |
+
+- **不是音量问题**：k2-fsa 自带的参照音频衰减到 rms 0.004（比这段录音还轻三倍多）仍然全对；
+  而这段录音从 1× 到 24× 增益都没救（依次是 `음` / `우리는` / `본인이` / `오레인은왜를`）。
+- **是训练域的问题**：这段录音的响帧约 70% 能量在 2–3 kHz、辅音帧比元音还响；而它训练用的
+  KsponSpeech（k2-fsa 发布的**每一个**韩语模型都是它的转换）是 90–98% 能量在 1 kHz 以下的朗读
+  录音。SenseVoice 在嘈杂、多来源的数据上训过，Moonshine 也不是朗读域的模型，两种输入都读得出。
+- **所以按设备路由**（`src/lib/asr/models.ts` 的 `moduleIdFor` + `FALLBACK_MODULE_FOR_LANG`，
+  以及 `moduleUsedOnThisDevice`）：装得下 240MB 的机器（桌面、安卓）韩语走 SenseVoice，**手机上
+  回到 64MB 的 Moonshine** —— 在那里它是「韩语能用」和「韩语不能用」的区别。这台机器上用不到
+  的模块会在安装对话框和设置里标出「手机上使用」，不会让人白下 64MB。
+- **Moonshine 那份当初的差评要更正，而且错在本项目**：它被记为 18.4% CER 就此出局，但那个数字
+  是**解码预算**造成的 —— `TOKENS_PER_SECOND = 6` 是按英文校准的，韩语每句都被截断。同一批音频
+  实测：6/s → 35.5% CER（`그는 괜찮은 척 하려고` 而不是整句），12/s → 11.8%。所以预算现在跟着
+  模块走（`tokensPerSecond`，韩语 12），不再写死在 `moonshine.ts` 里。
+
+**当初为什么先选了 Zipformer（以及那批数字）**
+
+`k2-fsa/sherpa-onnx-zipformer-korean-2024-06-24`（int8：encoder 67.5MB + decoder 2.7MB +
+joiner 2.5MB + 词表 59KB ≈ 73MB，与中文共用那 11MB 的 wasm 运行时，**不需要新下载运行时**）
+在 k2-fsa 自带的 4 条韩语测试音频（`test_wavs/`，共 16.2 秒，Node 里单线程 CPU）上是最好的一份，
+CER 按 Hangul 归一化后算：
 
 | 模型 | 体积 | CER | RTF | 词间空格 |
 |---|---|---|---|---|
-| **Zipformer Korean int8** | ~73MB | **1.3%** | 0.05 | 无（运行时删的，见下） |
-| SenseVoice Small int8（原来的中韩共用） | ~228MB | 3.9% | 0.17 | 有 |
-| Moonshine Base-KO q8（更早试过的） | 63MB | 18.4%（限 60 tok/s） | 0.09 | 有 |
+| **Zipformer Korean int8** | ~84MB（装机后） | **1.3%** | 0.05 | 无（运行时删的，见下） |
+| SenseVoice Small int8（中韩共用那份） | ~240MB | 3.9% | 0.17 | 有 |
+| Moonshine Base-KO q8（现在手机上的韩语） | 64MB | 11.8%（韩语 12 tok/s）；6 tok/s 时 35.5% | 0.08 | 有 |
 
-- **空格与标点都在（已在本项目的运行时里实测）**：用应用自己的 worker（dev 预览里，钉住的
+教训是那 16.2 秒全是干净的朗读样音：在它上面 1.3% 对 3.9% 看着是压倒性的，到真机录音上
+排序就反过来了。挑选模型的测试集如果只有一种域，量出来的只是那个域。
+
+- **空格与标点都在（这份权重已移除，但下面两条关于运行时的事仍然算数）**：用应用自己的 worker（dev 预览里，钉住的
   那个 commit）跑 k2-fsa 的四条音频，得到 ` 그는 괜찮은 척하려고 애쓰는 것 같았다.` /
   ` 주민등록증을 보여 주시겠어요?` —— 词间空格和句末标点都在。所以「这个模型没有标点」
   和「需要补断句」两件事都不成立：断句本来就是 VAD 按停顿切的（设置里那两条），标点只影响
@@ -280,14 +310,13 @@ Node 里单线程 CPU），CER 按 Hangul 归一化后算：
     同一段音频会变成一串连写（用 npm 那份 1.13 线的 wasm 实测：无空格，其它一切相同）。
     **换运行时 pin 之前必须用韩语音频重测一遍**，只测中文看不出来 —— 中文没有词间空格。
   - 顺带记一笔：韩语结果开头会带一个空格（第一个 token 自带词边界），worker 里已经 trim 掉。
-- **Moonshine Base-KO 当初的差评要更正**：它读得差有一半是本项目的锅 —— 解码预算
-  `TOKENS_PER_SECOND = 6` 是按英文校准的，而韩语需要 8.2–11.9 tok/s，于是每句话的尾巴都被截掉
-  （`그는 괜찮은 척 하려고` 而不是整句）。修好预算它也只有 18.4% CER（还多补了一句幻觉），所以
-  韩语仍用 Zipformer；但「Moonshine 不认识韩语」这句话本身是错的。
-- 模块 id、体积、缓存桶在 `src/lib/asr/models.ts`，文件清单与 transducer 配置在
-  `static/sherpa-asr.worker.js` 的 `PACKS.ko`。**缓存桶名 `rc-model-ko-sherpa-zipformer` 以已退役
-  前缀 `rc-model-ko-` 开头**，所以 `purgeRetiredModuleCaches` 会跳过「当前注册表里还在读」的桶 ——
-  否则每次启动都会把刚下好的韩语模型删掉。
+- 模块 id、体积、缓存桶在 `src/lib/asr/models.ts`。韩语那格现在和英文一样走 transformers.js，
+  缓存桶就是 **`transformers-cache`**（这个库把所有模型都塞在同一个桶里，所以清除/自检按桶名走）。
+  那份 Zipformer 包的 73MB 落在 `rc-model-ko-sherpa-zipformer`，现在命中已退役前缀 `rc-model-ko-`，
+  下次启动自动清掉 —— 而它当初必须以「仍在读的桶」被保护（`LIVE_CACHE_KEYS`），否则每次启动都会
+  把刚下好的模型删掉，这一条别丢。
+- `static/sherpa-asr.worker.js` 里那个 `ko` 包已经移除（连同它四个文件的下载标签），但两份笔记
+  留在原处：transducer 包**没有** `modelingUnit`/`bpeVocab` 可设、以及空格/标点由运行时那根钉  决定（见上）。将来要在这个运行时上再加 transducer 模型时，直接从那段注释开始。
 
 **已移除：英文的第二个模块（Parakeet）**
 

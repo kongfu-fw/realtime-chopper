@@ -29,13 +29,13 @@ export const KO_CORE: Record<string, string> = {
   // a missing one is added by hand, and checked by eye in all three languages.
   '英文识别模块': '영어 인식 모듈',
   '韩语识别模块': '한국어 인식 모듈',
-  '中文识别模块': '중국어 인식 모듈',
+  '中韩识别模块': '중국어·한국어 인식 모듈',
   '英文 · Moonshine': '영어 · Moonshine',
-  '韩语 · Zipformer': '한국어 · Zipformer',
-  '中文 · SenseVoice': '중국어 · SenseVoice',
+  '韩语 · Moonshine': '한국어 · Moonshine',
+  '中韩 · SenseVoice': '중국어·한국어 · SenseVoice',
   '英文识别模块（Moonshine Base）': '영어 인식 모듈(Moonshine Base)',
-  '韩语识别模块（Zipformer Korean int8）': '한국어 인식 모듈(Zipformer Korean int8)',
-  '中文识别模块（SenseVoice Small int8）': '중국어 인식 모듈(SenseVoice Small int8)',
+  '韩语识别模块（Moonshine Base）': '한국어 인식 모듈(Moonshine Base)',
+  '中韩识别模块（SenseVoice Small int8）': '중국어·한국어 인식 모듈(SenseVoice Small int8)',
   '英文识别模块（Parakeet，已移除）': '영어 인식 모듈(Parakeet, 제거됨)',
   '这个设备内存不够装这个模块：关掉其他应用，或先装英文模块':
     '이 기기에는 이 모듈을 담을 메모리가 없습니다: 다른 앱을 닫거나 영어 모듈을 먼저 설치하세요',
@@ -247,8 +247,8 @@ export const KO_CORE: Record<string, string> = {
   '识别加速方式': '인식 가속 방식',
   '将使用 {device}（{dtype}）—— {reason}': '{device}({dtype})를 씁니다 — {reason}',
   '存储空间': '저장 공간',
-  '可用配额约 {quota} GB，已用 {used} MB · 中文模块约 230 MB，韩语模块约 84 MB':
-    '할당량 약 {quota} GB, 사용 {used} MB · 중국어 모듈 약 230 MB, 한국어 모듈 약 84 MB',
+  '可用配额约 {quota} GB，已用 {used} MB · 中韩模块约 230 MB，手机上的韩语模块约 64 MB':
+    '할당량 약 {quota} GB, 사용 {used} MB · 중국어·한국어 모듈 약 230 MB, 휴대폰용 한국어 모듈 약 64 MB',
   '这个浏览器不提供存储配额信息': '이 브라우저는 저장 할당량 정보를 주지 않습니다',
   '无法读取存储配额': '저장 할당량을 읽지 못했습니다',
   '已缓存，可直接使用': '캐시되어 바로 쓸 수 있습니다',

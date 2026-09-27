@@ -11,7 +11,13 @@
     TARGET_ORDER,
     langLabel,
   } from '../lib/store/settings'
-  import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS, moduleShort } from '../lib/asr/models'
+  import {
+    ASR_MODULES,
+    MODULE_CACHE_KEYS,
+    MODULE_IDS,
+    moduleShort,
+    moduleUsedOnThisDevice,
+  } from '../lib/asr/models'
   import {
     LANG_NAMES,
     SUPPORTED_LANGS,
@@ -244,6 +250,9 @@
       {#each MODULE_IDS as key (key)}
         <div class="module">
           <span>{moduleShort(key, $uiLang)}</span>
+          {#if !moduleUsedOnThisDevice(key)}
+            <span class="dim">{tr('手机上使用')}</span>
+          {/if}
           <span class="dim">{formatBytes(ASR_MODULES[key].approxBytes, $uiLang)}</span>
           {#if isModuleCurrent(key, $settings.installedModels[key])}
             <span class="badge ok">{tr('已安装')}</span>
@@ -253,7 +262,9 @@
           {/if}
         </div>
       {/each}
-      <p class="dim note">{tr('每种语言一个模块：中文 SenseVoice、韩语 Zipformer、英文 Moonshine；同时只驻留一个。')}</p>
+      <p class="dim note">
+        {tr('中文和韩语共用 SenseVoice；英文和手机上的韩语用 Moonshine（更小、约 64 MB）；同时只驻留一个。')}
+      </p>
     </div>
   </section>
 

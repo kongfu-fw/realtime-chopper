@@ -143,12 +143,26 @@ const SAMPLE_RATE = 16000
  * `_call_moonshine`), so ours wins. A future transformers.js could reorder that;
  * if it does, this silently reverts to the floor-based rule above — which is why
  * the numbers are written down here instead of only in the commit.
+ *
+ * The *rate* is per-module rather than a constant here, and Korean is why. This
+ * app once rejected Moonshine Base-KO at 18.4% CER and replaced it with a model
+ * built for Korean — then the real recording those clips never contained showed
+ * the opposite, and the 18.4% turned out to be this rate: at English's 6/s every
+ * Korean utterance is cut mid-word. Same four clips, measured here:
+ *
+ *   6/s   → 35.5% CER, truncation every time ("그는 괜찮은 척 하려고", "주민등록증을 보여")
+ *   12/s  → 11.8% CER, sentences whole
+ *
+ * Korean's rate lives with the Korean module (`tokensPerSecond` in `models.ts`).
  */
-const TOKENS_PER_SECOND = 6
+const DEFAULT_TOKENS_PER_SECOND = 6
 
-/** The paper's per-second budget for one clip. `1` is a floor, nothing more. */
-function tokenBudget(samples: number): number {
-  return Math.max(1, Math.round((samples / SAMPLE_RATE) * TOKENS_PER_SECOND))
+/**
+ * The per-second budget for one clip, at that module's own token rate.
+ * `1` is a floor, nothing more: a sub-second segment must still emit a word.
+ */
+function tokenBudget(samples: number, perSecond: number): number {
+  return Math.max(1, Math.round((samples / SAMPLE_RATE) * perSecond))
 }
 
 /**
@@ -272,6 +286,11 @@ export class MoonshineEngine {
     return this.actual
   }
 
+  /** This module's own token rate — Korean is not English's; see `tokenBudget`. */
+  private get tokensPerSecond(): number {
+    return moduleSpec(this.module).tokensPerSecond ?? DEFAULT_TOKENS_PER_SECOND
+  }
+
   get ready(): boolean {
     return this.pipe !== null
   }
@@ -349,7 +368,7 @@ export class MoonshineEngine {
     // `max_new_tokens` is ours, not the library's default: see `TOKENS_PER_SECOND`.
     const output = await this.pipe(samples, {
       sampling_rate: SAMPLE_RATE,
-      max_new_tokens: tokenBudget(samples.length),
+      max_new_tokens: tokenBudget(samples.length, this.tokensPerSecond),
     })
     const text = Array.isArray(output) ? (output[0]?.text ?? '') : (output.text ?? '')
     return {

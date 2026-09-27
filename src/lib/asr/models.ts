@@ -50,14 +50,16 @@ export const MODULE_IDS: readonly ModuleId[] = ['en', 'ko', 'zh']
 export const MODULE_NAME: Record<ModuleId, string> = {
   en: '英文识别模块',
   ko: '韩语识别模块',
-  zh: '中文识别模块',
+  // Not "the Chinese module" any more: it transcribes Korean too, and on every
+  // device that can hold it, Korean is routed here. See `moduleIdFor`.
+  zh: '中韩识别模块',
 }
 
 /** Shorter form, for the settings list where a size sits next to it. */
 export const MODULE_SHORT: Record<ModuleId, string> = {
   en: '英文 · Moonshine',
-  ko: '韩语 · Zipformer',
-  zh: '中文 · SenseVoice',
+  ko: '韩语 · Moonshine',
+  zh: '中韩 · SenseVoice',
 }
 
 export function moduleTitle(id: ModuleId, uiLang: Lang = currentLang()): string {
@@ -115,6 +117,16 @@ export interface AsrModuleSpec {
    */
   version: string
   /**
+   * Output tokens per second of audio this module is allowed, when its engine
+   * needs a budget at all (Moonshine only).
+   *
+   * Left unset for English on purpose: Moonshine's own paper rate (6/s) is the
+   * default and it is calibrated on English. Korean measured at 12/s — at 6/s the
+   * same clips come out at 35.5% CER because every utterance is truncated. The
+   * numbers are in `moonshine.ts` next to the constant.
+   */
+  tokensPerSecond?: number
+  /**
    * Asset URLs for the sherpa engines live in `static/sherpa-asr.worker.js`, not
    * here: that worker is a hand-written classic script (it has to be, see the
    * header comment there) so it cannot import a module. This string is kept
@@ -136,43 +148,42 @@ export const ASR_MODULES: Record<ModuleId, AsrModuleSpec> = {
   ko: {
     id: 'ko',
     lang: 'ko',
-    engine: 'sherpa',
-    label: '韩语识别模块（Zipformer Korean int8）',
-    // k2-fsa's own Korean zipformer, the same runtime as the Chinese module —
-    // no new engine, no new download of wasm, just 72 MB of weights.
+    engine: 'moonshine',
+    label: '韩语识别模块（Moonshine Base）',
+    // The Korean model that survived a real recording — and the one this app first
+    // tried and wrongly rejected. The history is worth keeping straight:
     //
-    // Chosen by measurement, on the four Korean clips k2-fsa ships with it
-    // (`test_wavs/`, 16.2 s of real speech): **1.3% CER**, against 3.9% for
-    // SenseVoice Small on the same audio and 18.4% for Moonshine Base-KO — the
-    // model this app tried first and rejected, which turned out to be the app's
-    // own token budget (6/s, calibrated for English) cutting every Korean
-    // utterance short rather than the model reading Korean badly. A transducer
-    // does not decode token by token, so that budget never applies here.
+    //   1. Moonshine Base-KO was the Korean module. It measured 18.4% CER on
+    //      k2-fsa's clips and was replaced by a dedicated Korean model.
+    //   2. That dedicated model (k2-fsa's Zipformer Korean int8) measured 1.3% CER
+    //      on the same clips, so Korean got its own 73 MB sherpa pack.
+    //   3. On a real 2.47 s recording from this app's microphone the Zipformer
+    //      returned one syllable (`음`) for a whole sentence, while Moonshine —
+    //      both at the same time — read it. The 18.4% in step 1 was the app's own
+    //      token budget (6/s, calibrated for English) cutting Korean short, not the
+    //      model: at the Korean rate measured here the same clips land at 11.8%.
     //
-    // It is non-autoregressive and CPU-only, ~0.05 RTF single-threaded, punctuates
-    // sentence ends, and keeps the spaces between words. That last one is worth
-    // spelling out because the runtime decides it rather than the model: the
-    // pinned build (static/sherpa-asr.worker.js) answers ` 그는 괜찮은 척하려고
-    // 애쓰는 것 같았다.` — measured through the app's own worker on k2-fsa's four
-    // clips — while *later* sherpa-onnx builds run `RemoveSpaceBetweenCjk` over
-    // every transducer result, and its CJK ranges (0xA840–0xD7AF) include Hangul,
-    // which turns the same audio into one run-together string. Translation does not
-    // care either way (measured: the same Chinese for both spellings), but the
-    // "原文" line does, so an upgrade of that pin has to be checked against Korean
-    // output rather than only against Chinese. The token stream itself is right on
-    // both, which is how the two can be told apart at all.
+    // The clips and the recording disagree in the way benchmark domains always do.
+    // k2-fsa's Korean weights are all conversions of KsponSpeech, i.e. scripted
+    // read speech in a quiet room — 90–98% of its energy below 1 kHz — and full
+    // measurements of both sides are in `moduleIdFor` below and in DOCS.md.
     //
-    // A leading space is part of that output too (the first token carries its word
-    // boundary) and is trimmed in the worker before it becomes a line.
-    source: 'sherpa-onnx-zipformer-korean-2024-06-24',
-    approxBytes: 70784728 + 2844692 + 2581421 + 60246 + 11722172 + 95308 + 47391,
-    version: 'zipformer-korean-int8-2024-06-24',
+    // So this module is the phone's Korean: 64 MB installed, against the 84 MB the
+    // Zipformer pack occupied once its share of the shared runtime was counted —
+    // q8, and running on the engine already proven on an iPhone, since the English
+    // module is the same architecture through the same path. Every device that can
+    // hold SenseVoice uses that instead (see `moduleIdFor`).
+    hfModelId: 'onnx-community/moonshine-base-ko-ONNX',
+    approxBytes: 20656286 + 42752973 + 3761751 + 135803 + 988 + 215 + 184 + 3 + 310,
+    version: 'moonshine-base-ko-onnx',
+    /** Korean is not English's token rate; see the field's comment and `moonshine.ts`. */
+    tokensPerSecond: 12,
   },
   zh: {
     id: 'zh',
     lang: 'zh',
     engine: 'sherpa',
-    label: '中文识别模块（SenseVoice Small int8）',
+    label: '中韩识别模块（SenseVoice Small int8）',
     // SenseVoice-Small int8 on sherpa-onnx's own WASM build. That runtime brings
     // the Kaldi fbank feature extraction the ONNX graph expects, which is why no
     // feature-extraction code of ours exists anywhere.
@@ -180,10 +191,11 @@ export const ASR_MODULES: Record<ModuleId, AsrModuleSpec> = {
     // The model is multilingual (zh/en/ja/ko/yue) and non-autoregressive: measured
     // at RTF ~0.40 here, against ~0.9 for Whisper-base on the same audio, and it is
     // the only one of the three that survives a sentence mixing Chinese with
-    // English words. Its "auto" language mode means it can still read Korean —
-    // worse than the Korean module does — which is why the picker maps Korean to
-    // `ko` and this stays the Chinese download. Where the runtime comes from — and
-    // why it is a runtime problem rather than a model problem — is documented in
+    // English words. Its "auto" language mode is what makes it usable for Korean at
+    // all — and on real recordings it beats the model that was built for Korean,
+    // which is why the picker routes Korean here rather than to `ko` (the
+    // measurement is on `moduleIdFor`). Where the runtime comes from — and why it is
+    // a runtime problem rather than a model problem — is documented in
     // static/sherpa-asr.worker.js.
     source: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17',
     approxBytes: 239233841 + 11722172 + 95308 + 47391 + 315894,
@@ -194,24 +206,71 @@ export const ASR_MODULES: Record<ModuleId, AsrModuleSpec> = {
 /**
  * Which module transcribes a given source language.
  *
- * One language, one module — and written as a table rather than an expression
- * because this used to be `lang === 'en' ? 'en' : 'zh'`, with Korean sharing the
- * Chinese bytes. That sharing is what the table exists to make visible: a lookup
- * keyed by language answers "which download do I need", and for two years the
- * honest answer for Korean was "the Chinese one".
+ * A lookup keyed by language answering "which download do I need" — with one
+ * exception, and it is a measured one. Korean has two models that can do the job,
+ * and the one that was *built* for Korean is not the one that reads Korean best.
  *
- * The consequence of the split: switching between Chinese and Korean now swaps
- * one model for another, so the old engine is released (see `session.prepare`)
- * instead of the switch being free.
+ * The evidence came from a real recording rather than a benchmark: 2.47 s of
+ * clear Korean speech from this app's own microphone (`우리는 교회를 다니는 사람이
+ * 아니.`), 16 kHz mono, run through the app's own workers:
+ *
+ *     ko  Zipformer Korean int8 (73 MB)   →  "음"                    155 ms
+ *     ko  Moonshine Base-KO q8 (64 MB)    →  the sentence                174 ms
+ *     zh  SenseVoice Small int8 (228 MB)  →  the sentence exactly       419 ms
+ *
+ * The Zipformer got here on its own benchmark first: CER 1.3% on k2-fsa's four
+ * clips, against 3.9% for SenseVoice and 11.8% for Moonshine-at-a-Korean-token-rate.
+ * Those clips are scripted read speech in a quiet room — k2-fsa's Korean models are
+ * all conversions of KsponSpeech — and the recording is not that domain: its loud
+ * frames carry ~70% of their energy at 2–3 kHz with the consonant frames as loud as
+ * the vowels, where the clips it was trained on are 90–98% below 1 kHz. It is not a
+ * level problem: k2-fsa's own clip still transcribes perfectly when attenuated to
+ * rms 0.004, while the recording fails at every gain from 1× to 24×.
+ *
+ * So Korean prefers SenseVoice here, and falls back to Moonshine — smaller than the
+ * module it replaced (64 MB against 84 MB), and running on the engine this app
+ * already trusts on an iPhone, since the English module is the same architecture
+ * through the same path. `moduleTooBigForDevice` refuses 228 MB on an Apple-mobile
+ * page before the download starts; on those devices the fallback is the difference
+ * between Korean working and Korean not existing. Devices that can hold SenseVoice
+ * never load it (see `moduleUsedOnThisDevice`, which is what lets the lists say so).
  */
 export function moduleIdFor(lang: Lang): ModuleId {
-  return MODULE_FOR_LANG[lang]
+  const preferred = MODULE_FOR_LANG[lang]
+  const fallback = FALLBACK_MODULE_FOR_LANG[lang]
+  if (fallback && moduleTooBigForDevice(ASR_MODULES[preferred])) return fallback
+  return preferred
 }
 
 const MODULE_FOR_LANG: Record<Lang, ModuleId> = {
   en: 'en',
-  ko: 'ko',
+  // SenseVoice is multilingual; it answers Korean too, and better. See above.
+  ko: 'zh',
   zh: 'zh',
+}
+
+/**
+ * What a language uses when its preferred module cannot be installed here.
+ *
+ * Only Korean has one, because only Korean has two models that can do the job and
+ * only Korean's preferred model is too big for a phone. Every other language's
+ * single module is the answer on every device.
+ */
+const FALLBACK_MODULE_FOR_LANG: Partial<Record<Lang, ModuleId>> = {
+  ko: 'ko',
+}
+
+/**
+ * Whether any language on *this* device routes to this module.
+ *
+ * The Korean module is why this exists. On a desktop it is never loaded — SenseVoice
+ * is — yet it is still a real module and the only one an iPhone can use. A row the
+ * app will never load has to say so, or the list reads as "install this and Korean
+ * will work" while the app has already decided otherwise, and 64 MB is not a
+ * rounding error on a phone plan.
+ */
+export function moduleUsedOnThisDevice(id: ModuleId): boolean {
+  return (Object.keys(MODULE_FOR_LANG) as Lang[]).some((lang) => moduleIdFor(lang) === id)
 }
 
 export function moduleSpec(id: ModuleId): AsrModuleSpec {
@@ -242,11 +301,17 @@ export function moduleFor(lang: Lang): AsrModuleSpec {
  * *high* end of the measurement.
  *
  * Korean is the other side of the line and the reason the number is where it is:
- * at ~84 MB it is the largest module a phone is allowed to try, three times
- * smaller than the one an iPhone 12 was measured losing its page to. Whether that
- * is small enough is not knowable from here — the heap checkpoints in
+ * at 64 MB it is the largest module a phone is allowed to try, three times smaller
+ * than the one an iPhone 12 was measured losing its page to. (That module used to
+ * be the Korean sherpa pack, 84 MB installed; the line did not move, the model did.)
+ * Whether that is small enough is not knowable from here — the heap checkpoints in
  * static/sherpa-asr.worker.js are what a real device answers with, and the log
  * tail survives the page being killed.
+ *
+ * It is also read by `moduleIdFor`, so it does not only decide what the install
+ * dialog warns about: on a device that answers true, Korean is routed to the small
+ * module instead of the accurate one. A guard that says "this cannot work here"
+ * should change what the app does, not just what it prints.
  */
 export function moduleTooBigForDevice(spec: AsrModuleSpec): boolean {
   return isAppleMobile() && spec.approxBytes >= 150 * 1024 * 1024
@@ -309,24 +374,29 @@ export function isMemoryFailure(message: string): boolean {
  */
 export const MODULE_CACHE_KEYS: Record<ModuleId, readonly string[]> = {
   en: ['transformers-cache'],
-  ko: ['rc-model-ko-sherpa-zipformer'],
+  // Same bucket as English, and that is correct rather than sloppy: both are
+  // transformers.js models and that library caches everything under one name. It
+  // also means the retired `rc-model-ko-…` prefix can sweep the Korean Zipformer's
+  // 73 MB — nothing live is spelled that way any more.
+  ko: ['transformers-cache'],
   zh: ['rc-model-zh-sherpa-zh'],
 }
 
 /**
  * Cache buckets this build no longer reads.
  *
- * Two modules are gone and their bytes are still on disk: the Korean model that
- * came and went before this one (~62 MB, a transformers.js Moonshine that read
- * Korean badly) and the Parakeet English module (~126 MB). Nothing will ever open
- * either of them again, and on a phone that is most of a quota.
+ * Two modules are gone and their bytes are still on disk: the Korean Zipformer
+ * pack this build replaces (~73 MB, the one that collapsed on real recordings) and
+ * the Parakeet English module (~126 MB). Nothing will ever open either of them
+ * again, and on a phone that is most of a quota.
  *
  * Matched as a prefix, so a bucket this worker created with a suffix still goes.
- * That is also the trap: the Korean module is *back*, and its bucket is spelled
- * `rc-model-ko-…`, which starts with a retired prefix. `purgeRetiredModuleCaches`
- * skips live buckets for exactly that reason — a startup cleanup that deleted a
- * module the registry still reads would make the app download it again on every
- * load, which is the kind of bug that looks like a network problem.
+ * `LIVE_CACHE_KEYS` is the other half of that: a startup cleanup that deleted a
+ * bucket the registry still reads would make the app download it again on every
+ * load, which is the kind of bug that looks like a network problem. The prefix
+ * above is only safe to retire because the Korean module moved back to
+ * transformers.js, whose bucket is named `transformers-cache` — spelled nothing
+ * like the pack it replaces.
  */
 const RETIRED_CACHE_PREFIXES = ['rc-model-ko-', 'rc-model-en-sherpa-nemo']
 

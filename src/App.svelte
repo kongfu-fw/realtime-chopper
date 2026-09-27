@@ -85,7 +85,7 @@
     // the record to drop was the one the *Chinese* module's download had left
     // behind (that module was answering Korean), so `ko` could only be a leftover
     // from the Moonshine era. Korean has a module of its own again, which makes
-    // `ko` the genuine key — this line would have deleted a real 84 MB install on
+    // `ko` the genuine key — this line would have deleted a real Korean install on
     // every reload, and the app would have asked for the download again each
     // time, which reads as storage that does not stick.
     //

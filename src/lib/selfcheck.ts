@@ -107,7 +107,7 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
       results.push({
         label: t('存储空间'),
         ok: quotaGb > 1 ? true : 'warn',
-        detail: t('可用配额约 {quota} GB，已用 {used} MB · 中文模块约 230 MB，韩语模块约 84 MB', {
+        detail: t('可用配额约 {quota} GB，已用 {used} MB · 中韩模块约 230 MB，手机上的韩语模块约 64 MB', {
           quota: quotaGb.toFixed(2),
           used: usageMb.toFixed(1),
         }),

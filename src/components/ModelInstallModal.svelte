@@ -9,6 +9,7 @@
     moduleLabel,
     moduleTitle,
     moduleTooBigForDevice,
+    moduleUsedOnThisDevice,
   } from '../lib/asr/models'
   import { formatBytes, markModelInstalled, isModuleCurrent, settings } from '../lib/store/settings'
   import { info } from '../lib/log/store'
@@ -60,8 +61,8 @@
   const memoryHint = $derived(
     rawError && isMemoryFailure(rawError)
       ? isAppleMobile()
-        ? tr('iPhone 内存比较紧：先关掉其他 App 再试；英文（62 MB）和韩语（84 MB）模块都比中文模块轻得多。')
-        : tr('内存不够：关掉其他应用，或换用更小的模块（英文 62 MB、韩语 84 MB）。')
+        ? tr('iPhone 内存比较紧：先关掉其他 App 再试；英文（62 MB）和手机上的韩语（64 MB）模块都比中文模块轻得多。')
+        : tr('内存不够：关掉其他应用，或换用更小的模块（英文 62 MB、手机上的韩语 64 MB）。')
       : '',
   )
 
@@ -138,7 +139,16 @@
 
 <Modal title={tr('语音识别模块')} onclose={downloading ? undefined : (reason) => oncancel(reason ?? t('关闭'))}>
   {#each MODULE_IDS as key (key)}
-    <div class="module">        <span class="name">{moduleTitle(key, $uiLang)}</span>
+    <div class="module">
+      <span class="name">{moduleTitle(key, $uiLang)}</span>
+      <!--
+        A module this device will never load has to say so, or the row reads as
+        "install this and Korean works" when the app has already routed Korean
+        elsewhere. See `moduleUsedOnThisDevice`.
+      -->
+      {#if !moduleUsedOnThisDevice(key)}
+        <span class="size">{tr('手机上使用')}</span>
+      {/if}
 
       <span class="spacer"></span>
 
@@ -166,7 +176,7 @@
     -->
     {#if moduleTooBigForDevice(ASR_MODULES[key]) && !isModuleCurrent(key, $settings.installedModels[key])}
       <p class="warn">
-        {tr('iPhone 上装不下：iOS 给一个网页的内存比电脑少一个数量级（实测：几百 MB 就会把整页关掉），这个模块的模型文件本身就有 {size}。手机上先用英文模块，中文留给电脑。', {
+        {tr('iPhone 上装不下：iOS 给一个网页的内存比电脑少一个数量级（实测：几百 MB 就会把整页关掉），这个模块的模型文件本身就有 {size}。手机上用英文和韩语（韩语会自动换用更小的 Moonshine 模块），中文留给电脑。', {
           size: formatBytes(ASR_MODULES[key].approxBytes),
         })}
       </p>

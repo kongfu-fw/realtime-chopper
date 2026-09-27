@@ -33,14 +33,13 @@ export const EN_CORE: Record<string, string> = {
   // a missing one is added by hand, and checked by eye in all three languages.
   '英文识别模块': 'English recognition module',
   '韩语识别模块': 'Korean recognition module',
-  '中文识别模块': 'Chinese recognition module',
+  '中韩识别模块': 'Chinese & Korean recognition module',
   '英文 · Moonshine': 'English · Moonshine',
-  '韩语 · Zipformer': 'Korean · Zipformer',
-  '中文 · SenseVoice': 'Chinese · SenseVoice',
+  '韩语 · Moonshine': 'Korean · Moonshine',
+  '中韩 · SenseVoice': 'Chinese & Korean · SenseVoice',
   '英文识别模块（Moonshine Base）': 'English recognition module (Moonshine Base)',
-  '韩语识别模块（Zipformer Korean int8）':
-    'Korean recognition module (Zipformer Korean int8)',
-  '中文识别模块（SenseVoice Small int8）':
+  '韩语识别模块（Moonshine Base）': 'Korean recognition module (Moonshine Base)',
+  '中韩识别模块（SenseVoice Small int8）':
     'Chinese recognition module (SenseVoice Small int8)',
   '英文识别模块（Parakeet，已移除）': 'English recognition module (Parakeet, removed)',
   '这个设备内存不够装这个模块：关掉其他应用，或先装英文模块':
@@ -253,8 +252,8 @@ export const EN_CORE: Record<string, string> = {
   '识别加速方式': 'Recognition accelerator',
   '将使用 {device}（{dtype}）—— {reason}': 'Will use {device} ({dtype}) — {reason}',
   '存储空间': 'Storage',
-  '可用配额约 {quota} GB，已用 {used} MB · 中文模块约 230 MB，韩语模块约 84 MB':
-    'About {quota} GB of quota available, {used} MB used · the Chinese module is about 230 MB, the Korean one about 84 MB',
+  '可用配额约 {quota} GB，已用 {used} MB · 中韩模块约 230 MB，手机上的韩语模块约 64 MB':
+    'About {quota} GB of quota available, {used} MB used · the Chinese & Korean module is about 230 MB, the phone-only Korean one about 64 MB',
   '这个浏览器不提供存储配额信息': 'This browser does not report a storage quota',
   '无法读取存储配额': 'The storage quota could not be read',
   '已缓存，可直接使用': 'Cached and ready to use',

@@ -34,11 +34,11 @@ function guard(worker: Worker, name: string): Worker {
 
 /**
  * Two recognition workers exist because their runtimes are loaded in mutually
- * exclusive ways: transformers.js (the Moonshine English module) goes through
- * `import()`, so it must live in a module worker, while sherpa-onnx's published
- * runtime is a pair of classic scripts that install globals, so the sherpa
- * modules — Chinese SenseVoice and Korean Zipformer — live in
- * `static/sherpa-asr.worker.js`.
+ * exclusive ways: transformers.js (the Moonshine English and Korean modules) goes
+ * through `import()`, so it must live in a module worker, while sherpa-onnx's
+ * published runtime is a pair of classic scripts that install globals, so the
+ * sherpa module — Chinese SenseVoice, which also answers Korean wherever it can be
+ * installed — lives in `static/sherpa-asr.worker.js`.
  *
  * The split follows the runtime, not the language.
  *

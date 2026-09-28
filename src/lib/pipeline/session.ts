@@ -23,6 +23,7 @@ import { estimateLagSeconds, estimateSpeechSeconds } from './latency'
 import { AsrWorkerClient, MtWorkerClient, VadWorkerClient } from '../workers'
 import { describeModuleError, moduleIdFor, moduleSpec, moduleName, moduleTooBigForDevice } from '../asr/models'
 import { planDevice } from '../asr/moonshine'
+import { transcriptFlaw, type TranscriptFlaw } from '../asr/transcript-guard'
 import { createTtsEngine, ttsConfigFrom, type SpeakOutcome, type TtsEngine } from '../tts/engine'
 import { speechSnapshot } from '../tts/speech'
 import { resolveWorkingProvider } from '../mt/probe'
@@ -48,6 +49,24 @@ function isAbort(err: unknown): boolean {
  */
 function speechKeyOf(settings: Settings): string {
   return `${settings.ttsEngine}|${settings.ttsProxyUrl}`
+}
+
+/**
+ * Why a recognised line was refused, in words.
+ *
+ * A function rather than a table because `t` reads the language as it is *now*:
+ * a table built at import time would keep the language the page happened to
+ * load in.
+ */
+function flawReason(flaw: TranscriptFlaw): string {
+  switch (flaw) {
+    case 'memorised':
+      return t('模型背下来的句子')
+    case 'no-script':
+      return t('句子里没有这种语言的文字')
+    case 'repetition':
+      return t('同一句重复了三遍')
+  }
 }
 
 /**
@@ -387,6 +406,7 @@ export class Session {
         silenceMs: settings.silenceMs,
         minSegMs: settings.minSegMs,
         maxSegMs: settings.maxSegMs,
+        coalesceMs: this.coalesceMs(),
       })
       this.vad.onSegment = (segment) => this.onSegment(segment)
       this.vad.onLevel = (level) => this.level.set(level)
@@ -572,6 +592,19 @@ export class Session {
 
   // ------------------------------------------------------------------ capture
 
+  /**
+   * How much *speech* an utterance needs before it is worth asking a recogniser
+   * about, for the module the current source language routes to.
+   *
+   * The number belongs to the module rather than to the settings, because it is a
+   * property of the model: only Moonshine's Korean finetune was measured inventing
+   * text out of short input, so every other language routes to a module that
+   * returns zero here and sees exactly the segmentation it saw before.
+   */
+  private coalesceMs(): number {
+    return moduleSpec(moduleIdFor(getSettings().sourceLang)).coalesceMs ?? 0
+  }
+
   private onSegment(segment: SpeechSegment): void {
     // Always full-duplex: the app keeps listening while it reads out loud. Audio
     // from its own voice only reaches the microphone when the output is a
@@ -610,6 +643,23 @@ export class Session {
     const text = result.text.trim()
     if (!text) {
       // Silence, music or a non-speech noise burst: not worth a line.
+      this.updateQueues()
+      return
+    }
+    const flaw = transcriptFlaw(text, getSettings().sourceLang)
+    if (flaw) {
+      // The other half of "silence is an empty string", which is only true of the
+      // English module: a recogniser has no way to say "I did not understand", so
+      // the Korean one says something plausible instead (see the guard for the
+      // measurements). Refused text goes to the log rather than into the
+      // transcript, and the recording still holds the audio — a line dropped here
+      // can be re-cut and read again, which is not true of one translated and read
+      // aloud.
+      warn('asr', t('识别结果是编的，已丢弃这一段：{text}', { text: text.slice(0, 40) }), {
+        [t('语音时长')]: (segment.speechMs / 1000).toFixed(1),
+        [t('原因')]: flawReason(flaw),
+        [t('引擎')]: result.engine,
+      })
       this.updateQueues()
       return
     }
@@ -696,6 +746,7 @@ export class Session {
       silenceMs: settings.silenceMs,
       minSegMs: settings.minSegMs,
       maxSegMs: settings.maxSegMs,
+      coalesceMs: this.coalesceMs(),
     })
     this.vad?.setRecordingLimit(settings.audioRetentionMin)
     this.applyMtConfig()
@@ -1051,10 +1102,24 @@ export class Session {
     }
     const id = this.nextRetryId--
     info('asr', t('从录音重新识别这一句（{sec} 秒）', { sec: (samples.length / 16000).toFixed(1) }))
-    const result = await this.recognizeSamples({ id, startMs: line.startMs, endMs: line.endMs, samples })
+    const result = await this.recognizeSamples({
+      id,
+      startMs: line.startMs,
+      endMs: line.endMs,
+      // This range was cut out of the recording on purpose, so all of it counts as
+      // speech as far as anything downstream is concerned — nothing analysed it.
+      speechMs: line.endMs - line.startMs,
+      samples,
+    })
     const text = result.text.trim()
     if (!text) {
       this.notice.set(t('重新识别没有听出内容'))
+      return
+    }
+    if (transcriptFlaw(text, getSettings().sourceLang)) {
+      // Same reason as the live path: don't overwrite a real line with an invented
+      // one. A shorter range is what fixes this, so say that instead of nothing.
+      this.notice.set(t('重新识别只听到模型编的内容，没有采用：换个长一点的范围'))
       return
     }
     const updated: Line = {

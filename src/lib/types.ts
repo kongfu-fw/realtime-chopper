@@ -52,6 +52,15 @@ export interface SpeechSegment {
   id: number
   startMs: number
   endMs: number
+  /**
+   * How much of `samples` the segmenter classified as speech — not the segment's
+   * duration, which also covers the pre-roll, the tail the cut keeps and every
+   * pause inside the utterance (see `EmittedSegment` in `asr/segmenter.ts`). This
+   * is the number that says whether a recogniser has enough to read (`coalesceMs`)
+   * and the one worth printing when a result is refused, so it travels with the
+   * segment instead of being re-derived.
+   */
+  speechMs: number
   /** 16 kHz mono PCM. */
   samples: Float32Array
 }

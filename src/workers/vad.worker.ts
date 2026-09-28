@@ -149,7 +149,14 @@ self.onmessage = async (event: MessageEvent) => {
     case 'flush':
       for (const segment of segmenter.flush()) {
         postMessage(
-          { type: 'segment', id: nextId++, startMs: segment.startMs, endMs: segment.endMs, samples: segment.samples },
+          {
+            type: 'segment',
+            id: nextId++,
+            startMs: segment.startMs,
+            endMs: segment.endMs,
+            speechMs: segment.speechMs,
+            samples: segment.samples,
+          },
           [segment.samples.buffer],
         )
       }
@@ -162,7 +169,14 @@ self.onmessage = async (event: MessageEvent) => {
       recording.append(pcm16)
       for (const segment of segmenter.push(pcm16)) {
         postMessage(
-          { type: 'segment', id: nextId++, startMs: segment.startMs, endMs: segment.endMs, samples: segment.samples },
+          {
+            type: 'segment',
+            id: nextId++,
+            startMs: segment.startMs,
+            endMs: segment.endMs,
+            speechMs: segment.speechMs,
+            samples: segment.samples,
+          },
           [segment.samples.buffer],
         )
       }

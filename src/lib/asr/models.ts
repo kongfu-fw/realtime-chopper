@@ -127,6 +127,34 @@ export interface AsrModuleSpec {
    */
   tokensPerSecond?: number
   /**
+   * How much *speech* one utterance of this module's language needs before the
+   * engine can be believed, in ms. Unset (or zero) means "no floor".
+   *
+   * Korean is why this exists, and the measurement is blunt: handed an utterance
+   * with less than about a second of speech in it, `moonshine-base-ko-ONNX` does
+   * not report that it heard nothing — it answers with a sentence it memorised
+   * while being trained. Measured on this repo (q8, the app's own call options,
+   * 16 kHz mono, macOS TTS Korean as the speech):
+   *
+   *   0.6 s of clear Korean speech  → "audiotext", at every level, −48…−8 dBFS
+   *   "네." (0.26 s), "맞아요." (0.61 s), "질문이 있어요." (1.06 s) → "audiotext"
+   *   1.20 s                        → the sentence, word for word
+   *   1.5 s of silence              → "언망 언망 언"
+   *   4.0 s of room noise           → "다음 영상에서 만나요."
+   *
+   * It is not monotonic — a 1.35 s slice was invented while a 1.2 s one was read —
+   * so this is a floor to *join short utterances to*, not a threshold to discard
+   * at. The segmenter holds anything shorter and sends it with the next utterance,
+   * and the transcript guard refuses whatever comes out of the segments no join
+   * could fix. Both layers are needed: the floor removes most of the failures, and
+   * only the screen can catch the rest.
+   *
+   * English leaves it unset on purpose: the same 0.6 s of speech through
+   * `moonshine-base-ONNX` comes back as its first three words, and silence comes
+   * back as an empty string, which the pipeline already filters.
+   */
+  coalesceMs?: number
+  /**
    * Asset URLs for the sherpa engines live in `static/sherpa-asr.worker.js`, not
    * here: that worker is a hand-written classic script (it has to be, see the
    * header comment there) so it cannot import a module. This string is kept
@@ -178,6 +206,12 @@ export const ASR_MODULES: Record<ModuleId, AsrModuleSpec> = {
     version: 'moonshine-base-ko-onnx',
     /** Korean is not English's token rate; see the field's comment and `moonshine.ts`. */
     tokensPerSecond: 12,
+    /**
+     * The one measured floor in the registry. 1.2 s is where the probes stop
+     * inventing and start reading; below it, every input tried — speech at any
+     * level, silence, room noise, a single word — came back as memorised text.
+     */
+    coalesceMs: 1200,
   },
   zh: {
     id: 'zh',

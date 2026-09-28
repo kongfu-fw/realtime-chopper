@@ -102,7 +102,14 @@ export class VadWorkerClient {
     )
     this.worker.onmessage = (event: MessageEvent) => {
       const msg = event.data as
-        | { type: 'segment'; id: number; startMs: number; endMs: number; samples: Float32Array }
+        | {
+            type: 'segment'
+            id: number
+            startMs: number
+            endMs: number
+            speechMs: number
+            samples: Float32Array
+          }
         | { type: 'level'; level: number }
         | { type: 'audio'; inputDb: number; outputDb: number; gainDb: number; snrDb: number }
         | { type: 'recording'; info: RecordingInfo }
@@ -113,6 +120,7 @@ export class VadWorkerClient {
             id: msg.id,
             startMs: msg.startMs,
             endMs: msg.endMs,
+            speechMs: msg.speechMs,
             samples: msg.samples,
           })
           break

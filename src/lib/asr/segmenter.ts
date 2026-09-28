@@ -24,6 +24,25 @@ export interface SegmenterOptions {
   maxSegMs: number
   /** Audio kept from just before the trigger, so the first syllable survives. */
   preRollMs: number
+  /**
+   * Utterances holding less *speech* than this are not emitted on their own: they
+   * wait for the next one and are joined to it. `0` turns the rule off.
+   *
+   * A recogniser that cannot read an utterance does not say so — it answers with
+   * something plausible instead — so the floor on "is this enough audio to ask
+   * about" has to be on this side of the model. It is a property of the model, so
+   * the value comes from the module (`coalesceMs` in `asr/models.ts`) rather than
+   * from the user's settings: only Moonshine's Korean finetune was measured saying
+   * things it never heard, and only on short input, so every other module runs
+   * with this at zero and behaves exactly as it did before.
+   *
+   * Padding a short utterance was the other candidate and is *worse*, measured:
+   * 0.6 s of Korean speech followed by a second of digital silence still comes
+   * back as invented text (and 2 s of it comes back as a repetition loop). What
+   * the model needs is more speech to listen to, not more audio — which only the
+   * next utterance can supply.
+   */
+  coalesceMs: number
   /** Frame length for analysis. */
   frameMs?: number
 }
@@ -31,6 +50,19 @@ export interface SegmenterOptions {
 export interface EmittedSegment {
   startMs: number
   endMs: number
+  /**
+   * How much of `samples` was classified as speech.
+   *
+   * Not the same as the segment's duration, and the difference is the point:
+   * `samples` also carries the pre-roll before the utterance, the short tail a
+   * silence close keeps after it (`TAIL_MS`), and every pause inside it — a
+   * syllable gap, a breath, a quiet consonant — which the detector did not call
+   * speech. Measured on a 700 ms + 200 ms + 700 ms utterance: 1720 ms of audio,
+   * 1400 ms of speech. This is the number that predicts whether a recogniser can
+   * read the utterance, so `coalesceMs` is a floor on it rather than on the
+   * duration.
+   */
+  speechMs: number
   samples: Float32Array
 }
 
@@ -39,7 +71,42 @@ export const DEFAULT_SEGMENTER: SegmenterOptions = {
   minSegMs: 600,
   maxSegMs: 8000,
   preRollMs: 150,
+  coalesceMs: 0,
 }
+
+/** The rate every segment is cut at — the rate the models read. */
+const SAMPLE_RATE = 16000
+
+/**
+ * How long a held utterance waits for a neighbour before going alone.
+ *
+ * Joining is what makes a short utterance readable, and waiting forever for the
+ * next one is not free: one word said into a silent room would sit here for the
+ * rest of the session, and its line would appear after — and inside — whatever
+ * was said next. So the hold expires once this much audio has gone by with
+ * **nothing being said**, and the utterance is sent as itself.
+ *
+ * "Nothing being said" is the half that took a second attempt to get right. Timed
+ * from the hold alone, the grace expires while the *next* utterance is still being
+ * spoken — a 0.7 s word followed by 0.9 s of silence and a 1.6 s sentence had the
+ * grace fire 3.3 s in, 0.4 s before that sentence closed, so the join it was
+ * waiting for never happened. While a segment is open, no clock is running here:
+ * whatever is being said right now is by definition the neighbour to wait for.
+ *
+ * Measured against the audio clock rather than the wall clock, so a session that
+ * was paused (or a page that was backgrounded) does not expire a hold either.
+ */
+const HOLD_GRACE_MS = 2500
+
+/**
+ * Longest real silence inserted between two joined utterances.
+ *
+ * The gap is preserved rather than removed, because removing it would speed the
+ * audio up and shift every later timestamp. It is capped because two utterances
+ * a minute apart are not one sentence: past this the join is a compression of
+ * time rather than a faithful copy of it.
+ */
+const MAX_JOIN_GAP_MS = 1000
 
 /**
  * Tuning of the energy detector, relative to the input level on purpose.
@@ -133,6 +200,11 @@ export class EnergySegmenter {
   private preRoll: Float32Array[] = []
   private active: Float32Array[] = []
   /**
+   * An utterance too short to ask about on its own, waiting for the next one.
+   * See `settle` and `coalesceMs`.
+   */
+  private held: EmittedSegment | null = null
+  /**
    * Index into `active` of the most recent frame classified as speech.
    *
    * The tail trim needs a **position**, not a count. Deriving it from
@@ -153,12 +225,12 @@ export class EnergySegmenter {
   constructor(options: SegmenterOptions = DEFAULT_SEGMENTER, tuning: Partial<VadTuning> = {}) {
     this.opts = { frameMs: 10, ...options }
     this.tuning = { ...DEFAULT_TUNING, ...tuning }
-    this.frameSamples = Math.round((16000 * this.opts.frameMs) / 1000)
+    this.frameSamples = Math.round((SAMPLE_RATE * this.opts.frameMs) / 1000)
   }
 
   configure(options: Partial<SegmenterOptions>): void {
     this.opts = { ...this.opts, ...options }
-    this.frameSamples = Math.round((16000 * this.opts.frameMs) / 1000)
+    this.frameSamples = Math.round((SAMPLE_RATE * this.opts.frameMs) / 1000)
   }
 
   /** Feed 16 kHz mono audio; returns any utterances that closed. */
@@ -175,12 +247,35 @@ export class EnergySegmenter {
     // Rebuilt rather than sliced: a fresh Float32Array keeps the concrete
     // ArrayBuffer type the typed-array generics expect.
     this.leftover = new Float32Array(this.leftover.subarray(offset))
+    // A held utterance that nobody joined: send it before waiting any longer.
+    // After the loop, so the emitter's own order (older first) still holds: a
+    // segment emitted by this call either consumed the held one or is later than
+    // it, and in both cases `held` is empty by now. `active` is the other half of
+    // the condition — see `HOLD_GRACE_MS`.
+    if (this.held && this.active.length === 0 && this.timeMs - this.held.endMs >= HOLD_GRACE_MS) {
+      out.push(this.held)
+      this.held = null
+    }
     return out
   }
 
-  /** Close whatever is open, e.g. when the user stops recording. */
+  /**
+   * Close whatever is open, e.g. when the user stops recording.
+   *
+   * End of stream is the one moment a held utterance must not be held for: there
+   * is nothing left to join it to, so it goes alone and takes its chances with the
+   * recogniser's screen (`asr/transcript-guard.ts`) rather than being dropped.
+   */
   flush(): EmittedSegment[] {
-    if (this.active.length === 0) return []
+    const ready = this.settle(this.closeOpen())
+    const held = this.held
+    this.held = null
+    return [ready, held].filter((segment): segment is EmittedSegment => segment !== null)
+  }
+
+  /** The utterance still open, cut at the last speech frame and filtered by `minSegMs`. */
+  private closeOpen(): EmittedSegment | null {
+    if (this.active.length === 0) return null
     const frameMs = this.opts.frameMs
     const frames = this.active.slice(0, this.tailIndex())
     const samples = concatAll(frames)
@@ -188,8 +283,30 @@ export class EnergySegmenter {
     const endMs = startMs + frames.length * frameMs
     const speechMs = this.activeSpeechMs
     this.resetActive()
-    if (speechMs < this.opts.minSegMs) return []
-    return [{ startMs, endMs, samples }]
+    if (speechMs < this.opts.minSegMs) return null
+    return { startMs, endMs, speechMs, samples }
+  }
+
+  /**
+   * Decides whether an utterance is worth asking about yet, and joins it to a
+   * held one when it is not.
+   *
+   * Returns the segment to emit, or `null` when this one has to wait. A held
+   * utterance is joined to the *next* one rather than to the previous: the model
+   * reads an utterance in the context of what follows it just as much as what
+   * precedes it, and the first attempt (pad the short one with silence) is the
+   * one that measured as useless.
+   */
+  private settle(segment: EmittedSegment | null): EmittedSegment | null {
+    if (!segment) return null
+    const floor = this.opts.coalesceMs
+    const held = this.held
+    if (!held && segment.speechMs >= floor) return segment
+    const joined = held ? joinSegments(held, segment) : segment
+    this.held = null
+    if (joined.speechMs >= floor) return joined
+    this.held = joined
+    return null
   }
 
   reset(): void {
@@ -200,6 +317,9 @@ export class EnergySegmenter {
     this.inSpeech = false
     this.quietRunMs = 0
     this.preRoll = []
+    // A held utterance belongs to the session that was running: whoever reset the
+    // segmenter did not want its audio carried into the next one.
+    this.held = null
     this.resetActive()
   }
 
@@ -327,7 +447,7 @@ export class EnergySegmenter {
     this.timeMs += frameMs
     if (!shouldClose && !tooLong) return null
 
-    return this.close(shouldClose ? 'silence' : 'max')
+    return this.settle(this.close(shouldClose ? 'silence' : 'max'))
   }
 
   private close(reason: 'silence' | 'max'): EmittedSegment | null {
@@ -360,7 +480,25 @@ export class EnergySegmenter {
       this.segmentStartMs = endMs
     }
     if (speechDuration < this.opts.minSegMs) return null
-    return { startMs, endMs, samples }
+    return { startMs, endMs, speechMs: speechDuration, samples }
+  }
+}
+
+/**
+ * Two utterances as one: same audio, back to back, with the silence between them
+ * put back (capped) so nothing that was said moves in time.
+ */
+function joinSegments(a: EmittedSegment, b: EmittedSegment): EmittedSegment {
+  const gapMs = Math.min(Math.max(0, b.startMs - a.endMs), MAX_JOIN_GAP_MS)
+  const gap = Math.round((gapMs * SAMPLE_RATE) / 1000)
+  const samples = new Float32Array(a.samples.length + gap + b.samples.length)
+  samples.set(a.samples, 0)
+  samples.set(b.samples, a.samples.length + gap)
+  return {
+    startMs: a.startMs,
+    endMs: b.endMs,
+    speechMs: a.speechMs + b.speechMs,
+    samples,
   }
 }
 

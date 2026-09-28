@@ -90,6 +90,11 @@ export const EN_CORE: Record<string, string> = {
   '音频启动失败，换个浏览器或设备再试：{error}': 'Audio capture would not start — try another browser or device: {error}',
   '麦克风已开启': 'Microphone open',
   '麦克风已关闭': 'Microphone closed',
+  // The pickup summary the vad worker reports every few seconds. "Input" is the raw
+  // level the microphone delivered — the number that says whether the phone is too
+  // far from the speaker; "gain" is how much the front-end added to it.
+  '拾音：输入 {input} dBFS，增益 {gain} dB，输出 {output} dBFS，信噪比 {snr} dB':
+    'Pickup: input {input} dBFS · gain {gain} dB · output {output} dBFS · SNR {snr} dB',
   '启动被取消': 'Starting was cancelled',
 
   // ── diag.ts ───────────────────────────────────────────────────────────────

@@ -85,6 +85,8 @@ export const KO_CORE: Record<string, string> = {
   '音频启动失败，换个浏览器或设备再试：{error}': '오디오를 시작하지 못했습니다. 다른 브라우저나 기기로 시도하세요: {error}',
   '麦克风已开启': '마이크를 켰습니다',
   '麦克风已关闭': '마이크를 껐습니다',
+  '拾音：输入 {input} dBFS，增益 {gain} dB，输出 {output} dBFS，信噪比 {snr} dB':
+    '수음: 입력 {input} dBFS · 이득 {gain} dB · 출력 {output} dBFS · SNR {snr} dB',
   '启动被取消': '시작을 취소했습니다',
 
   // ── diag.ts ───────────────────────────────────────────────────────────────

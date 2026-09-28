@@ -62,7 +62,7 @@
  * The model packs are ours rather than the demo's: that build embeds a resource
  * manifest in its JS (a fixed offset table for /silero_vad.onnx, /tokens.txt and a
  * 367 MB /zipformer-ctc.onnx) and the packager then fetches one big `.data` file.
- * We fetch the files we actually want and empty that manifest, so the 362 MB /
+ * We fetch the files we actually want and empty that manifest, so the 367 MB /
  * Mandarin-only CTC pack never enters the picture.
  *
  * How those files reach the runtime — this is the part that decides whether a
@@ -80,6 +80,28 @@
  * the weights into its ONNX session we unlink the file — leaving one copy of the
  * model inside the session instead of two in this worker, and none of it resident
  * after startup. Same files, same runtime, ~240 MB less.
+ *
+ * The buffer itself is the one thing here that cannot be removed, and it is worth
+ * writing down why, because it is the obvious next thing to try. sherpa-onnx takes a
+ * *path*, never a buffer, so its file system has to hold the model contiguously, and
+ * this runtime offers no way to hand it something that is not ours: `Module.FS` is
+ * not exported (only `FS_createDataFile`, `FS_unlink`, `FS_createPreloadedFile`,
+ * `FS_createPath`, `FS_createLazyFile`, `FS_createDevice`), and a `Module.preRun`
+ * callback is *called from* the runtime's scope rather than evaluated in it, so a
+ * custom node backed by a Blob on disk cannot be installed either. `FS_createLazyFile`
+ * looks like it, and is a trap: it keeps every 1 MB chunk it fetches in
+ * `lazyArray.chunks` for the life of the worker and reads byte by byte through
+ * `LazyUint8Array.get` — 239 million calls for this model. Mounting the model inside
+ * the wasm heap instead (a `HEAPU8` view, which `canOwn` accepts) loses two ways, and
+ * both are read straight out of the wasm's own memory section rather than estimated:
+ * the initial size this build declares is `8192 pages = 512 MB`, reserved before the
+ * runtime has read a byte, and the maximum is `32768 pages = 2 GB` — a ceiling this
+ * worker should not be the one to test on a phone. The second is that an Emscripten
+ * heap never shrinks, so a 228 MB model mounted in it stays resident for the life of
+ * the worker even after its file is unlinked, with the session's own copy of the
+ * weights on top of it. So the model stays on our side of the boundary on purpose,
+ * where the heap has to hold it once — and where unlinking our copy hands that memory
+ * back to the browser instead of to a heap that cannot return it.
  *
  * The message protocol is byte-for-byte the one in src/workers/asr.worker.ts, so
  * the main thread cannot tell which of the two workers answered:
@@ -587,37 +609,30 @@ function mountPack(Module, module, downloaded) {
  * Downloads one module in one pass, reporting progress against the whole module.
  *
  * The dialog has a single bar, so the numbers have to be cumulative: reporting
- * each file against itself (a 300 KB word list, then 126 MB of model, then an
- * 11 MB runtime) makes one download look like three, and each one ends by
- * snapping the bar back to zero.
+ * each file against itself (a 300 KB word list, then 228 MB of model) makes one
+ * download look like two, and each one ends by snapping the bar back to zero —
+ * with the runtime's 11 MB already spent before either of them starts.
  *
- * The runtime is part of the same pass on purpose — from the user's side it is one
- * install, and the denominator is what the bar is measured against. On a second
- * module it is already cached, so it costs two cache reads and the bar finishes
- * early rather than lying about how much is left.
+ * The runtime is in the denominator but not in the pass. `ensureRuntime` fetched it
+ * before this function was called, so its bytes are already in the cache *and* on
+ * `Module.wasmBinary`, and nothing here ever reads them: what the bar wants from it
+ * is its size, which is a constant. Reading it again to measure it would put a
+ * second 11 MB array in the JavaScript heap at the one moment this worker cannot
+ * spare one, and then throw it away — which is what this used to do. From the
+ * user's side nothing changes: the bar describes one install, and the runtime's
+ * share of it is simply already behind us by the time a file starts.
  */
 async function downloadPack(pack) {
-  const items = [
-    ...Object.keys(pack.files).map((key) => ({
-      key,
-      cache: pack.cache,
-      url: pack.repo + pack.files[key].name,
-      bytes: pack.files[key].bytes,
-      label: pack.files[key].label,
-    })),
-    {
-      key: 'wasm',
-      cache: RUNTIME_CACHE,
-      url: RUNTIME.wasm.url,
-      bytes: RUNTIME.wasm.bytes,
-      // The Chinese source text, like the pack labels: `report` translates it, and
-      // the error paths below translate it again for the same reason.
-      label: '运行环境',
-    },
-  ]
-  const total = items.reduce((sum, item) => sum + item.bytes, 0)
+  const items = Object.keys(pack.files).map((key) => ({
+    key,
+    cache: pack.cache,
+    url: pack.repo + pack.files[key].name,
+    bytes: pack.files[key].bytes,
+    label: pack.files[key].label,
+  }))
+  const total = items.reduce((sum, item) => sum + item.bytes, 0) + RUNTIME.wasm.bytes
   const assets = {}
-  let done = 0
+  let done = RUNTIME.wasm.bytes
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
     const remaining = items.slice(i + 1).reduce((sum, next) => sum + next.bytes, 0)
@@ -927,7 +942,11 @@ async function fetchText(cacheName, url) {
  * WebAssembly heap.
  *
  * `scale` is absent for the runtime wasm, which is fetched before any progress
- * accounting exists; the file still reports its own bytes, just without a fraction.
+ * accounting exists: those 11.7 MB arrive as bytes and nothing else — no fraction,
+ * no breadcrumb. `initRuntime` reports the runtime once all three of its files are
+ * in, and `downloadPack` counts the wasm in its denominator without fetching it
+ * again. The branch below that skips `report` when there is no scale is that case,
+ * not a shortcut for a file whose position in the total is unknown.
  */
 async function fetchIntoCache(cacheName, url, label, fallbackBytes, scale) {
   const offset = scale ? scale.offset : 0

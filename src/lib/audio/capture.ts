@@ -50,9 +50,11 @@ export interface CaptureOptions {
    *
    * There is deliberately no level callback here. There used to be — the peak of
    * each block, for the record button's halo — and having two producers for one
-   * meter (this one, and the segmenter's `rms`, at different rates and different
-   * scales) is what made the halo read as broken. The level now comes from the
-   * segmenter alone; see the vad worker for why that is the honest one to draw.
+   * meter (this one, and a second measurement of the same audio inside the vad
+   * worker, at a different rate and a different scale) is what made the halo read as
+   * broken. The level now has exactly one producer, in the vad worker, and it is the
+   * level of the signal *before* the front-end's gain; see `reportLevel` there for
+   * why that is the number a user can act on.
    */
   signal?: AbortSignal
 }

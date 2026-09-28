@@ -1,4 +1,4 @@
-import { rms } from '../audio/resample'
+import { rms } from '../audio/level.ts'
 
 /**
  * Utterance segmentation — the missing requirement.
@@ -150,8 +150,6 @@ export class EnergySegmenter {
   private segmentStartMs = 0
   private leftover = new Float32Array(0)
 
-  onLevel: ((level: number) => void) | null = null
-
   constructor(options: SegmenterOptions = DEFAULT_SEGMENTER, tuning: Partial<VadTuning> = {}) {
     this.opts = { frameMs: 10, ...options }
     this.tuning = { ...DEFAULT_TUNING, ...tuning }
@@ -294,7 +292,6 @@ export class EnergySegmenter {
     const level = rms(frame)
     const frameMs = this.opts.frameMs
     const isSpeech = this.classify(level, frameMs)
-    this.onLevel?.(level)
 
     if (!this.active.length) {
       if (isSpeech) {

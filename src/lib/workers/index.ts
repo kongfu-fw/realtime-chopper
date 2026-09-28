@@ -80,6 +80,12 @@ interface RecordResultMessage {
 export class VadWorkerClient {
   private readonly worker: Worker
   onSegment: ((segment: SpeechSegment) => void) | null = null
+  /**
+   * The input level, for the record button's halo. `input` means *before* the
+   * front-end's gain — the level the microphone actually delivered, which is the
+   * number its dB scale was calibrated against and the one that says whether the
+   * phone is too far from the speaker. See `reportLevel` in `workers/vad.worker.ts`.
+   */
   onLevel: ((level: number) => void) | null = null
   onRecording: ((info: RecordingInfo) => void) | null = null
 
@@ -98,6 +104,7 @@ export class VadWorkerClient {
       const msg = event.data as
         | { type: 'segment'; id: number; startMs: number; endMs: number; samples: Float32Array }
         | { type: 'level'; level: number }
+        | { type: 'audio'; inputDb: number; outputDb: number; gainDb: number; snrDb: number }
         | { type: 'recording'; info: RecordingInfo }
         | RecordResultMessage
       switch (msg.type) {
@@ -111,6 +118,18 @@ export class VadWorkerClient {
           break
         case 'level':
           this.onLevel?.(msg.level)
+          break
+        // The pickup summary, once every few seconds. It exists for the diagnostic
+        // report: "输入 −47 dBFS，增益 +18 dB" is the difference between "the app
+        // misheard me" and "the phone was four metres away", and on a phone there is
+        // no other way to find that out — no console, no devtools, only this log.
+        case 'audio':
+          info('capture', t('拾音：输入 {input} dBFS，增益 {gain} dB，输出 {output} dBFS，信噪比 {snr} dB'), {
+            input: msg.inputDb.toFixed(1),
+            gain: msg.gainDb.toFixed(1),
+            output: msg.outputDb.toFixed(1),
+            snr: msg.snrDb.toFixed(1),
+          })
           break
         case 'recording':
           this.onRecording?.(msg.info)

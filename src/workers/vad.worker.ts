@@ -1,15 +1,22 @@
 /// <reference lib="webworker" />
 import { EnergySegmenter, type SegmenterOptions } from '../lib/asr/segmenter'
-import { resampleLinear } from '../lib/audio/resample'
 import { RecordingSink } from '../lib/audio/recorder'
+import { SpeechFrontend, TARGET_RATE, type FrontendStats } from '../lib/audio/enhance'
 
 /**
  * Segmentation worker.
  *
  * Runs off the main thread for the same reason the recogniser does: with the
  * target hardware being a phone, every millisecond on the main thread shows up
- * as jank in the transcript list. Audio arrives at the device's native rate
- * (48 kHz on iOS) and is converted to the 16 kHz the models expect here.
+ * as jank in the transcript list.
+ *
+ * Audio arrives at the device's native rate (48 kHz on iOS) and goes through the
+ * speech front-end here — anti-aliased decimation to the 16 kHz the models expect,
+ * then high-pass, noise suppression and a bounded gain (see lib/audio/enhance.ts
+ * for what each of those is for and what was measured). Both consumers of that
+ * audio sit below it: the segmenter and the session recording. That ordering is
+ * deliberate, and it is what keeps the recording a faithful copy of the
+ * recogniser's input rather than a second, differently-processed signal.
  *
  * It also owns the session recording, and that is not a coincidence: this is the
  * one place that sees every sample the microphone produced, on the same clock as
@@ -17,39 +24,52 @@ import { RecordingSink } from '../lib/audio/recorder'
  * only exists inside a worker anyway (see lib/audio/recorder.ts).
  */
 
-const MODEL_RATE = 16000
-
 const segmenter = new EnergySegmenter()
+const frontend = new SpeechFrontend(TARGET_RATE)
 
 /**
- * How often the input level is reported, for the halo on the record button.
+ * The level ring, and the pickup summary behind it.
  *
- * The segmenter calls back once per *frame* — a hundred times a second at the
- * default 10 ms frame — and the meter can use none of that: a hundred
- * `postMessage`s a second across the thread boundary, plus a style write each, to
- * move a shadow by a fraction of a pixel. 15 Hz is above what an eye reads as
- * smooth for a level, and every report lands with 66 ms to settle.
+ * The number the ring draws is now the level of the signal *as the microphone
+ * delivered it* — before the noise suppression and before the gain — and that is a
+ * change of meaning worth stating, because the ring has been through this argument
+ * twice. It used to be the segmenter's own frame rms, chosen so that the meter and
+ * the recogniser agreed about what "loud" meant; `capture.ts` having reported the
+ * peak of each block into the same store was what made it flicker between two
+ * scales. Both of those still hold — there is exactly one producer and one number —
+ * but with a gain stage in the path the post-gain number is pinned near its target
+ * whenever anyone speaks at all. A phone five metres from the speaker would then
+ * show a healthy ring while the audio is unusable, which is the one failure this
+ * meter exists to report. The input level is also the number its own dB scale was
+ * calibrated against (−60 ≈ quiet room, −12 ≈ close speech), so anchoring on it
+ * makes the ring agree with its labels again.
  *
- * What is sent is the segmenter's own `rms` of the frame — the same number its
- * speech threshold is compared against — rather than a second measurement of the
- * same audio taken elsewhere. The halo and the recogniser then agree about what
- * "loud" means, so the meter cannot disagree with the thing that decides whether
- * the user is being heard.
+ * Cadence: one report per received chunk, i.e. 10 Hz. The chunk *is* the natural
+ * rate here — every other rate in this pipeline is derived from it — and it is
+ * above what an eye reads as smooth. (The 15 Hz this replaces existed because the
+ * level then came from 10 ms frames; nothing needs that resolution to move a
+ * shadow by a fraction of a pixel.)
  *
- * Exactly one producer writes the level, and that is the point of removing the
- * other one: `capture.ts` used to report the *peak* of each 100 ms block into the
- * same store, at a tenth of this rate and a few times this size. The two together
- * made the halo flicker between two scales, and the smaller of them — the one
- * that also arrived last, most of the time — is what the ring was mostly drawn
- * from, which is why it looked like a level meter that never moved.
+ * The summary is for the diagnostic report rather than the screen: "the phone is
+ * four metres away" is a fact the user can act on, and the only way to see it on a
+ * phone is to write it into the log. Every five seconds is enough to characterise a
+ * session and little enough to leave the ring buffer readable.
  */
-const LEVEL_INTERVAL_MS = 1000 / 15
-let lastLevelAt = 0
-segmenter.onLevel = (level) => {
+const STATS_INTERVAL_MS = 5000
+let lastStatsAt = 0
+
+function reportLevel(stats: FrontendStats): void {
+  postMessage({ type: 'level', level: stats.inputRms })
   const now = Date.now()
-  if (now - lastLevelAt < LEVEL_INTERVAL_MS) return
-  lastLevelAt = now
-  postMessage({ type: 'level', level })
+  if (now - lastStatsAt < STATS_INTERVAL_MS) return
+  lastStatsAt = now
+  postMessage({
+    type: 'audio',
+    inputDb: stats.inputDb,
+    outputDb: stats.outputDb,
+    gainDb: stats.gainDb,
+    snrDb: stats.snrDb,
+  })
 }
 
 const recording = new RecordingSink((info) => postMessage({ type: 'recording', info }))
@@ -123,6 +143,7 @@ self.onmessage = async (event: MessageEvent) => {
     }
     case 'reset':
       segmenter.reset()
+      frontend.reset()
       nextId = 1
       break
     case 'flush':
@@ -134,8 +155,7 @@ self.onmessage = async (event: MessageEvent) => {
       }
       break
     case 'chunk': {
-      const pcm16 =
-        msg.rate === MODEL_RATE ? msg.samples : resampleLinear(msg.samples, msg.rate, MODEL_RATE)
+      const pcm16 = frontend.process(msg.samples, msg.rate)
       // Recorded before segmentation, and regardless of segmentation: the file is
       // the copy that is complete by construction. Anything the pipeline later
       // decides to drop can be recovered from here.
@@ -146,6 +166,7 @@ self.onmessage = async (event: MessageEvent) => {
           [segment.samples.buffer],
         )
       }
+      reportLevel(frontend.stats)
       break
     }
   }

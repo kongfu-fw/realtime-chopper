@@ -33,6 +33,10 @@ export const KO_CORE: Record<string, string> = {
   '英文 · Moonshine': '영어 · Moonshine',
   '韩语 · Moonshine': '한국어 · Moonshine',
   '中韩 · SenseVoice': '중국어·한국어 · SenseVoice',
+  '韩语识别服务（koasr）': '한국어 인식 서비스(koasr)',
+  '韩语 · 网络服务': '한국어 · 네트워크 서비스',
+  '韩语识别服务（koasr · faster-whisper large-v3-turbo 韩语）':
+    '한국어 인식 서비스(koasr · faster-whisper large-v3-turbo 한국어)',
   '英文识别模块（Moonshine Base）': '영어 인식 모듈(Moonshine Base)',
   '韩语识别模块（Moonshine Base）': '한국어 인식 모듈(Moonshine Base)',
   '中韩识别模块（SenseVoice Small int8）': '중국어·한국어 인식 모듈(SenseVoice Small int8)',
@@ -69,6 +73,22 @@ export const KO_CORE: Record<string, string> = {
   '{module} 不在本 worker 中运行（{engine} 有自己的 worker）':
     '{module}은(는) 이 worker에서 돌지 않습니다({engine}에 자체 worker가 있습니다)',
   '没有为 {module} 决定用哪个加速器': '{module}에 쓸 가속기를 정하지 않았습니다',
+  '没有给 {module} 配置服务地址': '{module}에 서비스 주소가 설정되어 있지 않습니다',
+
+  // ── asr/koasr.ts ──────────────────────────────────────────────────────────
+  // The recognition service on the network: what it says about itself, and what
+  // the app says when it cannot be reached.
+  '正在连接识别服务': '인식 서비스에 연결하는 중',
+  '网络识别服务': '네트워크 인식 서비스',
+  '服务在用 {engine}，队列 {depth}': '서비스가 {engine}을(를) 쓰는 중, 대기열 {depth}',
+  '识别服务正在关闭（{status}）': '인식 서비스가 종료 중입니다 ({status})',
+  '识别服务没有就绪（HTTP {status}）': '인식 서비스가 준비되지 않았습니다 (HTTP {status})',
+  '识别服务 {sec} 秒没有回应': '인식 서비스가 {sec}초 안에 응답하지 않았습니다',
+  '连不上识别服务（{reason}）': '인식 서비스에 연결하지 못했습니다({reason})',
+  '识别服务还没连上': '아직 인식 서비스에 연결되지 않았습니다',
+  '识别服务出错了（HTTP {status}）': '인식 서비스에서 오류가 났습니다 (HTTP {status})',
+  '识别服务出错了：{message}': '인식 서비스 오류: {message}',
+  '识别服务返回了看不懂的内容': '인식 서비스가 이해할 수 없는 응답을 보냈습니다',
 
   // ── audio/capture.ts ──────────────────────────────────────────────────────
   '麦克风权限被拒绝了：点地址栏的锁图标，允许麦克风后再试一次':
@@ -126,6 +146,9 @@ export const KO_CORE: Record<string, string> = {
   '缓存桶：读取失败': '캐시 저장소: 읽지 못했습니다',
   '# 乔巴 · 诊断信息': '# 乔巴 · 진단 정보',
   '情况：{headline}': '상황: {headline}',
+  '识别服务：{backend} · {url} · 当前语言用 {module}':
+    '인식: {backend} · {url} · 현재 언어는 {module}',
+  '没填地址': '주소 없음',
 
   // ── log/store.ts ──────────────────────────────────────────────────────────
   '页面重新加载过：已恢复上一个标签页留下的 {n} 条日志（那个标签页已经不在了）':
@@ -184,6 +207,16 @@ export const KO_CORE: Record<string, string> = {
   '正在加载识别模块': '인식 모듈을 불러오는 중',
   '识别模块没能装好：{reason}': '인식 모듈을 설치하지 못했습니다: {reason}',
   '识别模块没能装好，再试一次': '인식 모듈을 설치하지 못했습니다. 한 번 더 시도하세요',
+  '网络识别服务 {url}': '네트워크 인식 서비스 {url}',
+  '还没填识别服务地址': '인식 서비스 주소가 비어 있습니다',
+  '地址是 http、页面是 https，浏览器不会发这个请求':
+    '주소는 http이고 페이지는 https라서 브라우저가 이 요청을 보내지 않습니다',
+  '{module}用不了，改用本机模型：{reason}':
+    '{module}을(를) 쓸 수 없어 로컬 모델로 바꿉니다: {reason}',
+  '网络识别服务用不了，这一场改用本机模型：{reason}':
+    '네트워크 인식 서비스를 쓸 수 없어 이번 세션은 로컬 모델로 진행합니다: {reason}',
+  '网络识别服务用不了：{reason}。这台设备不退回本机模型：把服务调通，或者在设置里把「识别走哪里」改成「只用本机模型」。':
+    '네트워크 인식 서비스를 쓸 수 없습니다: {reason}. 이 기기는 로컬 모델로 넘어가지 않습니다 — 서비스를 연결하거나, 설정에서 「인식을 어디서 할지」를 「로컬 모델만 사용」으로 바꾸세요.',
   '正在连接翻译服务': '번역 서비스에 연결하는 중',
   '录音已达上限，后面的不再保存': '녹음이 한도에 이르러 이후는 저장하지 않습니다',
   '录音中断了，语音识别不受影响': '녹음이 끊겼습니다. 음성 인식에는 영향이 없습니다',

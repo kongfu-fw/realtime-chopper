@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store'
 import type { Lang, ModuleId, SourceLang, TargetLang } from '../types'
-import { ASR_MODULES, moduleIdFor } from '../asr/models'
+import { ASR_MODULES, moduleIdFor, setAsrBackendChoice } from '../asr/models'
 import { APP_ICONS, DEFAULT_APP_ICON, type AppIconId } from '../brand/logo'
 import { EDGE_TTS_DEFAULT_PROXY } from '../tts/edge'
 import type { TtsEngineId } from '../tts/engine'
@@ -16,6 +16,22 @@ import { SUPPORTED_LANGS, currentLang, translate, type UiLangSetting } from '../
 
 export type MtProviderId = 'google' | 'microsoft' | 'llm'
 export type Precision = 'high' | 'eco'
+/**
+ * Where the languages that have both routings get recognised.
+ *
+ * `auto` is the recommended one and it is deliberately not "the network": what
+ * it means is written down in `networkAsrPreferred` (`asr/models.ts`), and the
+ * short version is "on the device whose local model is the small one" — the
+ * iPhone, whose Korean is Moonshine Base-KO because the better model does not fit
+ * an Apple page. A desktop already runs SenseVoice, which is both faster and
+ * already there, so `auto` leaves it alone.
+ *
+ * `network` is the escape hatch for the case the guess gets wrong (a desktop that
+ * wants the big model, a phone on a good connection), and `local` is the "no
+ * dependence on anything" setting. Neither is a downgrade: the local model is the
+ * only thing that works with the machine across the room switched off.
+ */
+export type AsrBackend = 'auto' | 'network' | 'local'
 export type Accelerator = 'auto' | 'webgpu' | 'wasm'
 export type LlmFormat = 'openai' | 'anthropic' | 'gemini'
 export type LogLevelSetting = 'debug' | 'info' | 'warn' | 'error'
@@ -40,6 +56,22 @@ export interface Settings {
   maxSegMs: number
   precision: Precision
   accelerator: Accelerator
+  /** Where a language that has a network recogniser gets recognised; see `AsrBackend`. */
+  asrBackend: AsrBackend
+  /**
+   * Address of the recogniser service, for the languages that have one.
+   *
+   * A path on the app's own origin (`/asr`) is the recommended form and the
+   * default, because it is the only one that cannot be blocked: a page served over
+   * HTTPS may not call `http://…`, and this app is opened over HTTPS on a phone.
+   * An absolute address is accepted for a service reached directly — see
+   * `addressProblem` in `asr/koasr.ts`, which is what turns that mistake into a
+   * sentence instead of a silent fallback.
+   *
+   * An empty address disables the whole route without changing the setting, which
+   * is what `'auto'` reads to decide there is nothing to try.
+   */
+  asrBaseUrl: string
 
   /** Translation */
   targetLang: TargetLang
@@ -98,6 +130,12 @@ export const DEFAULT_SETTINGS: Settings = {
   maxSegMs: 8000,
   precision: 'high',
   accelerator: 'auto',
+  asrBackend: 'auto',
+  // Where the recogniser service is served *next to this app*. One command on the
+  // machine the app is served from puts it here (`tailscale serve --set-path`, see
+  // DOCS.md); until then the path 404s, the phone notices in one round trip and
+  // uses its own model, which is the same behaviour as this setting being off.
+  asrBaseUrl: '/asr',
 
   targetLang: 'zh',
   mtProvider: 'google',
@@ -159,6 +197,12 @@ function readStored(): Partial<Settings> {
     if (engine !== undefined && engine !== 'system' && engine !== 'edge') {
       delete (parsed as Record<string, unknown>).ttsEngine
     }
+    // And the recognition backend, for the same reason: an id this build does not
+    // know must not leave the picker empty while the app quietly uses the default.
+    const backend = (parsed as Partial<Settings>).asrBackend
+    if (backend !== undefined && backend !== 'auto' && backend !== 'network' && backend !== 'local') {
+      delete (parsed as Record<string, unknown>).asrBackend
+    }
     // And the interface language, for a sharper reason than a blank picker: an
     // unknown language is used as an index into the dictionaries, so a
     // hand-edited `'jp'` would throw on the first string the app renders.
@@ -177,6 +221,28 @@ function readStored(): Partial<Settings> {
 }
 
 export const settings = writable<Settings>({ ...DEFAULT_SETTINGS, ...readStored() })
+
+/**
+ * Whether the network recogniser may be used at all, from a settings snapshot.
+ *
+ * Two conditions, and both are needed: the user has to allow it (`'local'` is a
+ * no), and there has to be somewhere to call. The address is what makes the second
+ * condition real — with the field cleared, turning the picker to `'network'` is a
+ * statement about a service nobody has named, and the honest reading of that is
+ * "off" rather than a request to a guessed hostname. That is also why the settings
+ * screen prints a warning in exactly that state instead of quietly doing nothing.
+ */
+export function networkAsrAllowed(settings: Settings): boolean {
+  return settings.asrBackend !== 'local' && settings.asrBaseUrl.trim() !== ''
+}
+
+// The routing tables in `asr/models.ts` cannot read this store (`isLangInstalled`
+// below goes the other way, and an import in both directions is a cycle), so the
+// choice is pushed to them — the same shape as `setUiLang` in `lib/i18n`.
+// Subscribing also runs the callback once, which is what seeds it at startup.
+settings.subscribe((value) =>
+  setAsrBackendChoice(networkAsrAllowed(value) ? value.asrBackend : 'local'),
+)
 
 let persistTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -230,6 +296,12 @@ export function markModelInstalled(key: string, bytes?: number, version?: string
  * installed?" are different questions for `zh` and `ko`.
  */
 export function isModuleCurrent(module: ModuleId, record?: { version?: string }): boolean {
+  // A module that is a service has nothing installed and cannot be stale: the
+  // question this answers is "would a download be needed", and for `ko-net` the
+  // answer is no whether or not anything was ever installed. Without this, routing
+  // Korean over the network would make the status bar offer a 64 MB download for
+  // the model it is deliberately not using.
+  if (ASR_MODULES[module].remote) return true
   return !!record && record.version === ASR_MODULES[module].version
 }
 

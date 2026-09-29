@@ -165,6 +165,36 @@ function appVersionMeta(): Plugin {
   }
 }
 
+/**
+ * The recognition service, reachable under the path the address setting defaults to.
+ *
+ * `/asr` is the address the setting ships with, so this proxy is what makes the
+ * default work in dev: the app asks its own origin for `/asr/healthz` and the
+ * request is forwarded to the service unchanged, with no CORS in the picture. (The
+ * service does answer with `Access-Control-Allow-Origin: *`, so a direct
+ * `http://127.0.0.1:8900` would work here too — but only after editing a setting,
+ * which would stop this from exercising the address a deployment actually uses.)
+ * Without the proxy the one deployment the docs recommend could only be tried on a
+ * deployment.
+ *
+ * `RC_ASR_URL` moves the target, so a service running on another machine can be
+ * tried through the same same-origin path.
+ */
+const ASR_TARGET = process.env.RC_ASR_URL ?? 'http://127.0.0.1:8900'
+
+/**
+ * Strips the `/asr` prefix — the same job `tailscale serve --set-path=/asr` does in
+ * `DOCKER.md`: the app asks for `/asr/healthz` and the service is asked for
+ * `/healthz`.
+ */
+const ASR_PROXY = {
+  '/asr': {
+    target: ASR_TARGET,
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/asr/, ''),
+  },
+}
+
 export default defineConfig({
   plugins: [svelte(), crossOriginIsolation(), appVersionMeta()],
   // Read by `src/lib/workers/index.ts`, which appends it to the sherpa worker's
@@ -191,10 +221,12 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5273,
     allowedHosts: TAILNET_HOSTS,
+    proxy: ASR_PROXY,
   },
   preview: {
     host: '127.0.0.1',
     port: 5274,
     allowedHosts: TAILNET_HOSTS,
+    proxy: ASR_PROXY,
   },
 })

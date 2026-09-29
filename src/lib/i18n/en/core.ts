@@ -37,6 +37,10 @@ export const EN_CORE: Record<string, string> = {
   '英文 · Moonshine': 'English · Moonshine',
   '韩语 · Moonshine': 'Korean · Moonshine',
   '中韩 · SenseVoice': 'Chinese & Korean · SenseVoice',
+  '韩语识别服务（koasr）': 'Korean recognition service (koasr)',
+  '韩语 · 网络服务': 'Korean · network service',
+  '韩语识别服务（koasr · faster-whisper large-v3-turbo 韩语）':
+    'Korean recognition service (koasr · faster-whisper large-v3-turbo, Korean)',
   '英文识别模块（Moonshine Base）': 'English recognition module (Moonshine Base)',
   '韩语识别模块（Moonshine Base）': 'Korean recognition module (Moonshine Base)',
   '中韩识别模块（SenseVoice Small int8）':
@@ -74,6 +78,24 @@ export const EN_CORE: Record<string, string> = {
   '{module} 不在本 worker 中运行（{engine} 有自己的 worker）':
     '{module} does not run in this worker ({engine} has one of its own)',
   '没有为 {module} 决定用哪个加速器': 'no accelerator was chosen for {module}',
+  '没有给 {module} 配置服务地址': 'no service address is configured for {module}',
+
+  // ── asr/koasr.ts ──────────────────────────────────────────────────────────
+  // The recognition service on the network: everything it says about itself, and
+  // everything the app has to say when it cannot be reached. The last two exist
+  // because a fetch that fails has no useful error of its own — these are what
+  // turn "Failed to fetch" into a sentence about the service.
+  '正在连接识别服务': 'Connecting to the recognition service',
+  '网络识别服务': 'Network recognition service',
+  '服务在用 {engine}，队列 {depth}': 'the service is running {engine}, queue {depth}',
+  '识别服务正在关闭（{status}）': 'The recognition service is shutting down ({status})',
+  '识别服务没有就绪（HTTP {status}）': 'The recognition service is not ready (HTTP {status})',
+  '识别服务 {sec} 秒没有回应': 'The recognition service did not answer within {sec}s',
+  '连不上识别服务（{reason}）': 'Could not reach the recognition service ({reason})',
+  '识别服务还没连上': 'The recognition service is not connected yet',
+  '识别服务出错了（HTTP {status}）': 'The recognition service failed (HTTP {status})',
+  '识别服务出错了：{message}': 'The recognition service failed: {message}',
+  '识别服务返回了看不懂的内容': 'The recognition service returned something unreadable',
 
   // ── audio/capture.ts ──────────────────────────────────────────────────────
   '麦克风权限被拒绝了：点地址栏的锁图标，允许麦克风后再试一次':
@@ -134,6 +156,9 @@ export const EN_CORE: Record<string, string> = {
   '缓存桶：读取失败': 'Cache buckets: reading them failed',
   '# 乔巴 · 诊断信息': '# 乔巴 · diagnostics',
   '情况：{headline}': 'What happened: {headline}',
+  '识别服务：{backend} · {url} · 当前语言用 {module}':
+    'Recognition: {backend} · {url} · {module} for the current language',
+  '没填地址': 'no address',
 
   // ── log/store.ts ──────────────────────────────────────────────────────────
   '页面重新加载过：已恢复上一个标签页留下的 {n} 条日志（那个标签页已经不在了）':
@@ -192,6 +217,16 @@ export const EN_CORE: Record<string, string> = {
   '正在加载识别模块': 'Loading the recognition module',
   '识别模块没能装好：{reason}': 'The recognition module could not be installed: {reason}',
   '识别模块没能装好，再试一次': 'The recognition module could not be installed — try once more',
+  '网络识别服务 {url}': 'Network recognition service {url}',
+  '还没填识别服务地址': 'No recognition service address is filled in',
+  '地址是 http、页面是 https，浏览器不会发这个请求':
+    'the address is http and the page is https, so the browser will not send the request',
+  '{module}用不了，改用本机模型：{reason}':
+    '{module} is unavailable, so the local model is used instead: {reason}',
+  '网络识别服务用不了，这一场改用本机模型：{reason}':
+    'The network recognition service is unavailable, so this session uses the local model: {reason}',
+  '网络识别服务用不了：{reason}。这台设备不退回本机模型：把服务调通，或者在设置里把「识别走哪里」改成「只用本机模型」。':
+    'The network recognition service is unavailable: {reason}. This device does not fall back to the local model — make the service reachable, or set “Where recognition happens” to “Local model only” in settings.',
   '正在连接翻译服务': 'Connecting to the translation service',
   '录音已达上限，后面的不再保存': 'The recording limit was reached; nothing further is saved',
   '录音中断了，语音识别不受影响': 'The recording was interrupted; recognition is unaffected',

@@ -3,6 +3,7 @@ import type { RecordingInfo } from '../audio/recorder'
 import type { MtConfig, MtItem, MtItemResult } from '../mt/client'
 import type { SegmenterOptions } from '../asr/segmenter'
 import type { DevicePlan } from '../asr/moonshine'
+import type { RemoteAsrConfig } from '../asr/koasr'
 import { describeModuleError, moduleSpec } from '../asr/models'
 import { currentLang, t } from '../i18n/index.ts'
 import { debug, error as logError, info, warn } from '../log/store'
@@ -40,7 +41,10 @@ function guard(worker: Worker, name: string): Worker {
  * sherpa module — Chinese SenseVoice, which also answers Korean wherever it can be
  * installed — lives in `static/sherpa-asr.worker.js`.
  *
- * The split follows the runtime, not the language.
+ * The split follows the runtime, not the language — and the network module is on
+ * the module-worker side of it, not because HTTP needs `import()` but because it
+ * needs nothing the classic script offers, and the module worker is where the
+ * ordered recognition chain already lives.
  *
  * That URL is a plain string built from BASE_URL on purpose: writing
  * `new URL('…', import.meta.url)` here would make the bundler treat the file as
@@ -48,7 +52,7 @@ function guard(worker: Worker, name: string): Worker {
  * `importScripts` — which is the one API the sherpa runtime needs.
  */
 function createAsrWorker(module: ModuleId): Worker {
-  if (moduleSpec(module).engine !== 'moonshine') {
+  if (moduleSpec(module).engine === 'sherpa') {
     // The query string is the point, not decoration: this file keeps its name
     // between builds, so without a changing URL a browser can run a *previous*
     // build's worker against this build's client and answer a legitimate request
@@ -356,7 +360,7 @@ export class AsrWorkerClient {
    * bytes have been downloaded, not after the request was sent. Rejects when the
    * worker reports a load failure, and only then can an install be recorded.
    */
-  load(module: ModuleId, plan: DevicePlan | null): Promise<void> {
+  load(module: ModuleId, plan: DevicePlan | null, remote?: RemoteAsrConfig | null): Promise<void> {
     // A second request supersedes the first; the old one must not hang forever.
     this.pendingLoad?.settle(new Error(t('已被新的加载请求取代')))
     const done = new Promise<void>((resolve, reject) => {
@@ -376,7 +380,7 @@ export class AsrWorkerClient {
     // `lang` on the module name (an older cached copy of it reads that field),
     // and a second meaning for one key is how a Chinese module ends up being
     // requested with the string "en".
-    this.worker.postMessage({ type: 'load', module, plan, uiLang: currentLang() })
+    this.worker.postMessage({ type: 'load', module, plan, remote: remote ?? null, uiLang: currentLang() })
     return done
   }
 

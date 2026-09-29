@@ -18,6 +18,8 @@
     moduleShort,
     moduleUsedOnThisDevice,
   } from '../lib/asr/models'
+  import { addressProblem } from '../lib/asr/koasr'
+  import { isAppleMobile } from '../lib/asr/device'
   import {
     LANG_NAMES,
     SUPPORTED_LANGS,
@@ -36,6 +38,7 @@
   import { info } from '../lib/log/store'
   import type {
     Accelerator,
+    AsrBackend,
     LlmFormat,
     LogLevelSetting,
     MtProviderId,
@@ -74,6 +77,24 @@
     })
   }
 
+  /**
+   * Changing where recognition happens has to drop the resident recogniser.
+   *
+   * The two backends are different modules, and a module is what a client is bound
+   * to: leaving the old one loaded would keep answering with the engine the user
+   * just turned off, while the picker said otherwise. Same reasoning — and the same
+   * call — as the language picker in `TitleBar`.
+   */
+  async function pickAsrBackend(id: AsrBackend) {
+    if (id === $settings.asrBackend) return
+    setSetting('asrBackend', id)
+    session.applySettings()
+    await session.releaseModel()
+    info('ui', t('识别后端换为 {backend}', { backend: id }), {
+      note: t('下次开始录音时生效'),
+    })
+  }
+
   function pickIcon(id: AppIconId) {
     if (id === $settings.appIcon) return
     setSetting('appIcon', id)
@@ -107,6 +128,46 @@
   const totalInstalledBytes = $derived(
     installed.reduce((sum, key) => sum + ($settings.installedModels[key]?.bytes ?? ASR_MODULES[key].approxBytes), 0),
   )
+
+  /**
+   * Whether this device refuses to fall back to the local recogniser.
+   *
+   * Read from the device rather than from a setting, because that is where the
+   * rule lives (`mayFallBackToLocal`), and the sentences below have to be the ones
+   * that match what will actually happen: on a phone, "the local model" is the
+   * small Korean model this whole route exists to stop using.
+   */
+  const asrNoFallback = isAppleMobile()
+
+  /**
+   * Why the configured service address cannot be used from this page, in words.
+   *
+   * Shown *here* rather than discovered at the start of a session, because at the
+   * start of a session the only visible symptom is "it used the local model" — and
+   * the whole point of the setting is that this device was supposed to use the
+   * service. The two faults are the two ways it silently does not happen: nothing
+   * configured, and an `http://` address on an `https:` page, which the browser
+   * blocks before the request exists. Where the fallback is not allowed at all
+   * (`asrNoFallback`) neither fault is quiet — both stop the session — so the
+   * sentence has to say that rather than promise a local model.
+   */
+  const asrAddressFault = $derived.by(() => {
+    if ($settings.asrBackend === 'local') return ''
+    const fault = addressProblem($settings.asrBaseUrl, location.protocol)
+    if (!fault) return ''
+    // Apple's mobile has nothing to fall back to (`mayFallBackToLocal`), so there
+    // the same two faults are not "the network will not be used": they are a
+    // session that will not start. Two sentences per fault, because a warning that
+    // describes the softer behaviour is worse than no warning at all.
+    if (asrNoFallback) {
+      return fault === 'empty'
+        ? tr('还没填地址。这台设备连不上识别服务就直接报错，不会退回本机模型：要么把地址填上，要么把上面改成「只用本机模型」。')
+        : tr('页面是 https，填 http 的地址浏览器会直接拦掉，而这台设备不会退回本机模型：把服务也用 https 发出来（见 DOCKER.md），或者把这里改成同一台机器上的 /asr。')
+    }
+    return fault === 'empty'
+      ? tr('还没填地址，网络识别不会启用。')
+      : tr('页面是 https，填 http 的地址浏览器会直接拦掉：把服务也用 https 发出来（见 DOCKER.md），或者把这里改成同一台机器上的 /asr。')
+  })
 
   /** Continuous recording state, mirrored from the pipeline worker. */
   const { recording } = session
@@ -266,6 +327,44 @@
         {tr('中文和韩语共用 SenseVoice；英文和手机上的韩语用 Moonshine（更小、约 64 MB）；同时只驻留一个。')}
       </p>
     </div>
+
+    <!--
+      The network recogniser, beside the downloads it can replace rather than in
+      another section: "where does recognition happen" is one question, and the two
+      answers are a file on this device and a machine on the network.
+    -->
+    <SettingRow
+      label={tr('识别走哪里')}
+      help={tr('韩语还能交给网络上的识别服务：模型大得多，认得更准，但要在同一网络里有台机器开着它。自动档只在手机上用网络——电脑上的韩语本来就有个更大的本机模型，换成网络只会变慢。') +
+        (asrNoFallback ? tr('这台设备连不上识别服务会直接报错，不会退回本机韩语模型。') : '')}
+    >
+      <select
+        class="rc-select"
+        value={$settings.asrBackend}
+        onchange={(e) => void pickAsrBackend((e.currentTarget as HTMLSelectElement).value as AsrBackend)}
+      >
+        <option value="auto">{tr('自动（手机上韩语走网络）')}</option>
+        <option value="local">{tr('只用本机模型')}</option>
+        <option value="network">{tr('网络服务优先')}</option>
+      </select>
+    </SettingRow>
+
+    <SettingRow
+      label={tr('识别服务地址')}
+      help={tr('默认 /asr，指的是和本页面同一台机器上的服务（怎么转发见 DOCKER.md）。也可以填完整地址，比如 https://主机名:8444（跨源，服务默认允许）—— 但页面是 https 时 http:// 开头的那种地址会被浏览器直接拦掉。')}
+    >
+      <input
+        class="rc-input"
+        type="text"
+        placeholder="/asr"
+        value={$settings.asrBaseUrl}
+        oninput={(e) => setSetting('asrBaseUrl', (e.currentTarget as HTMLInputElement).value)}
+      />
+    </SettingRow>
+
+    {#if asrAddressFault}
+      <p class="warn">{asrAddressFault}</p>
+    {/if}
   </section>
 
   <section>
@@ -648,6 +747,13 @@
   .note {
     margin: 4px 0 0;
     font-size: 12px;
+  }
+
+  /* The same alarm colour the log drawer uses for errors (see `app.css`). */
+  .warn {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--rc-danger);
   }
 
   .badge {

@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 import type { AsrEngine, AsrLoadProgress, Lang, ModuleId } from '../lib/types'
 import type { DevicePlan } from '../lib/asr/moonshine'
+import type { RemoteAsrConfig } from '../lib/asr/koasr'
 import { createEngine } from '../lib/asr/router'
 import { setUiLang, t } from '../lib/i18n/index.ts'
 
@@ -29,6 +30,12 @@ type Inbound =
       /** Device decision made on the main thread; see `DevicePlan`. */
       plan: DevicePlan | null
       /**
+       * Address and language for a module that is a *service* rather than a
+       * download; `null` for every other module. Sent with the request for the same
+       * reason as `plan`: the settings live on a thread this one is not.
+       */
+      remote?: RemoteAsrConfig | null
+      /**
        * The interface language, which has to be sent over: a worker is a separate
        * thread with its own copy of the i18n module, so without it every line this
        * worker writes — the load progress, the plan's reasons, the failures — would
@@ -45,7 +52,7 @@ self.onmessage = (event: MessageEvent) => {
   switch (msg.type) {
     case 'load':
       if (msg.uiLang) setUiLang(msg.uiLang)
-      chain = chain.then(() => handleLoad(msg.module, msg.plan))
+      chain = chain.then(() => handleLoad(msg.module, msg.plan, msg.remote ?? null))
       break
     case 'recognize':
       chain = chain.then(() => handleRecognize(msg.id, msg.samples, msg.startMs, msg.endMs))
@@ -60,7 +67,11 @@ self.onmessage = (event: MessageEvent) => {
   }
 }
 
-async function handleLoad(module: ModuleId, plan: DevicePlan | null): Promise<void> {
+async function handleLoad(
+  module: ModuleId,
+  plan: DevicePlan | null,
+  remote: RemoteAsrConfig | null,
+): Promise<void> {
   // Compared by module, not by language: one module serves two languages, so
   // treating "still Chinese" as "still loaded" would rebuild a model that already
   // answers Korean as well.
@@ -71,7 +82,7 @@ async function handleLoad(module: ModuleId, plan: DevicePlan | null): Promise<vo
   engine?.dispose()
   engine = null
   try {
-    const next = createEngine(module, plan)
+    const next = createEngine(module, plan, remote)
     const info = await next.load((progress: AsrLoadProgress) => {
       postMessage({ type: 'load-progress', module, ...progress })
     })

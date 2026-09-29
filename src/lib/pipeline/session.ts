@@ -21,8 +21,17 @@ import { OrderedQueue, pump } from './queues'
 import { RateController } from './rate'
 import { estimateLagSeconds, estimateSpeechSeconds } from './latency'
 import { AsrWorkerClient, MtWorkerClient, VadWorkerClient } from '../workers'
-import { describeModuleError, moduleIdFor, moduleSpec, moduleName, moduleTooBigForDevice } from '../asr/models'
+import {
+  describeModuleError,
+  localModuleIdFor,
+  mayFallBackToLocal,
+  moduleIdFor,
+  moduleSpec,
+  moduleName,
+  moduleTooBigForDevice,
+} from '../asr/models'
 import { planDevice } from '../asr/moonshine'
+import { addressProblem, remoteConfigFor } from '../asr/koasr'
 import { transcriptFlaw, type TranscriptFlaw } from '../asr/transcript-guard'
 import { createTtsEngine, ttsConfigFrom, type SpeakOutcome, type TtsEngine } from '../tts/engine'
 import { speechSnapshot } from '../tts/speech'
@@ -248,6 +257,25 @@ export class Session {
    * finished install. Progress while it runs arrives through `onProgress`.
    */
   async prepare(module: ModuleId): Promise<void> {
+    const spec = moduleSpec(module)
+    const configured = getSettings().asrBaseUrl
+    // The address is checked *before* a worker is built for it, for two reasons and
+    // both matter. The failure it catches has no useful symptom — a page on HTTPS
+    // asking for an `http://` service is refused by the browser before a packet
+    // exists, which from here is the same `TypeError` as an unreachable host — and
+    // a module whose address cannot work should not pay for a worker that is about
+    // to be thrown away. See `addressProblem`.
+    const addressFault = spec.remote ? addressProblem(configured, location.protocol) : null
+    if (addressFault) {
+      await this.fallBackToLocal(
+        module,
+        addressFault === 'empty'
+          ? t('还没填识别服务地址')
+          : t('地址是 http、页面是 https，浏览器不会发这个请求'),
+      )
+      return
+    }
+    const remote = spec.remote ? remoteConfigFor(module, configured, location.origin) : null
     const client = this.ensureAsrClient(module)
     // Which accelerator this attempt will actually use, decided *before* the
     // engine starts — the crash note records it, and the log states it, because a
@@ -258,8 +286,7 @@ export class Session {
     // Moonshine is the only engine with a choice to make: sherpa-onnx's WASM
     // build is CPU-only, so Chinese/Korean has nothing to decide. The plan is
     // handed to the worker with the request; see `DevicePlan`.
-    const plan =
-      moduleSpec(module).engine === 'moonshine' ? planDevice(settings.accelerator, settings.precision) : null
+    const plan = spec.engine === 'moonshine' ? planDevice(settings.accelerator, settings.precision) : null
     const accelerator = plan?.primary.device ?? 'wasm'
     info(
       'asr',
@@ -271,7 +298,12 @@ export class Session {
               dtype: plan.primary.dtype,
               reason: plan.primary.reason,
             })
-          : t('sherpa WebAssembly（CPU）'),
+          : remote
+            ? // The address is the whole answer here: there is no accelerator to
+              // pick and no file to read, and on a phone this log line is the only
+              // way to find out which machine the audio was actually sent to.
+              t('网络识别服务 {url}', { url: remote.baseUrl })
+            : t('sherpa WebAssembly（CPU）'),
       }),
     )
     // A device that this module has already killed *as often as is conclusive* does
@@ -353,7 +385,7 @@ export class Session {
     markAsrAttempt(module, accelerator)
     try {
       await withTimeout(
-        client.load(module, plan),
+        client.load(module, plan, remote),
         MODEL_LOAD_TIMEOUT_MS,
         t('下载太久没动静，检查网络后重试'),
       )
@@ -363,8 +395,54 @@ export class Session {
       forgetAsrCrashes(module, accelerator)
     } catch (err) {
       clearAsrAttempt()
+      if (spec.remote) {
+        // A recogniser that does not answer is not a broken install. Everything
+        // this module was reached for — a better model — is an upgrade over a
+        // local one that is already here, so an unreachable service costs the
+        // session a sentence of explanation and nothing else. The opposite choice
+        // (fail the start) would turn the laptop being asleep into "the app is
+        // broken", which is the report this whole route exists to avoid.
+        await this.fallBackToLocal(module, err instanceof Error ? err.message : String(err))
+        return
+      }
       throw err
     }
+  }
+
+  /**
+   * Re-routes a remote module to the local one for the same language.
+   *
+   * One hop and no more: the target is `localModuleIdFor`, which is defined by the
+   * device rather than by the settings, so it cannot be remote again. Saying so out
+   * loud matters in a classroom — a transcript that quietly changes model has a
+   * different error profile, and the next person reading the log needs to know why.
+   *
+   * On Apple's mobile there is no hop at all (see `mayFallBackToLocal`): the local
+   * Korean answer there is the small model this route was built to stop using, so
+   * the failure is reported instead. The sentence carries both halves — what is
+   * wrong, and the two ways to get a session back — because the alternative to a
+   * fallback has to be a *visible* choice, not a hunt through settings.
+   */
+  private async fallBackToLocal(module: ModuleId, reason: string): Promise<void> {
+    const local = localModuleIdFor(moduleSpec(module).lang)
+    if (local === module) throw new Error(reason)
+    if (!mayFallBackToLocal()) {
+      throw new Error(
+        t(
+          '网络识别服务用不了：{reason}。这台设备不退回本机模型：把服务调通，或者在设置里把「识别走哪里」改成「只用本机模型」。',
+          { reason },
+        ),
+      )
+    }
+    warn('asr', t('{module}用不了，改用本机模型：{reason}', { module: moduleName(module), reason }))
+    // The reason comes last, after the sentence, because it is the part that is a
+    // raw detail rather than prose — and because a reason that already carries its
+    // own parentheses (`连不上识别服务（…）`) would nest them here.
+    this.notice.set(t('网络识别服务用不了，这一场改用本机模型：{reason}', { reason }))
+    // The failure state above the button would otherwise keep saying the module
+    // could not be prepared while the model that just replaced it is running.
+    this.failure.set(null)
+    return this.prepare(local)
   }
 
   async start(): Promise<void> {
@@ -386,7 +464,11 @@ export class Session {
         this.stage.set(t('正在加载识别模块'))
         this.model.set({ status: t('准备识别模块') })
         await this.prepare(wanted)
-        if (this.modelModule !== wanted) {
+        // `null`, not `!== wanted`: `prepare` may have delivered the *local* module
+        // for this language instead (see `fallBackToLocal`), and a resident model is
+        // what this check is actually about. Comparing against `wanted` would turn
+        // a working fallback into "the module could not be installed".
+        if (this.modelModule === null) {
           // Never "go and read the log drawer": that drawer only exists in debug
           // mode, so on a phone the old sentence was a dead end. The reason
           // itself travels to the status bar instead.
@@ -421,7 +503,9 @@ export class Session {
       if (settings.keepAudio) this.vad.startRecording()
       else this.vad.attachRecording()
 
-      this.ensureAsrClient(wanted)
+      // The module that ended up resident — which is `wanted` unless the network
+      // route fell back to the local model, and the client has to match it.
+      this.ensureAsrClient(this.modelModule ?? wanted)
       this.ensureMtClient()
 
       // Recognition pump: one segment in flight at a time, in order.

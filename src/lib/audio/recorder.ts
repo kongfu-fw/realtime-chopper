@@ -106,8 +106,19 @@ export class RecordingSink {
   private stopped: RecordingStopReason = null
   private recording = false
   private lastNotify = 0
+  /**
+   * Assigned rather than declared as a parameter property, and the reason is the
+   * test runner: `node --test` strips types instead of compiling them, and a
+   * parameter property is real syntax to it rather than a type, so a module that
+   * uses one cannot be imported by any test at all. This file has one pure
+   * function worth testing (`pcmToWav`, which the network engine sends as its
+   * request body), and that is enough to be worth spelling this out.
+   */
+  private readonly notify?: (info: RecordingInfo) => void
 
-  constructor(private readonly notify?: (info: RecordingInfo) => void) {}
+  constructor(notify?: (info: RecordingInfo) => void) {
+    this.notify = notify
+  }
 
   get info(): RecordingInfo {
     return {

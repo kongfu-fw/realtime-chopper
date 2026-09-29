@@ -22,8 +22,14 @@ export type Lang = SourceLang
  * pthreads, so Moonshine stayed. The id is still *parsed* rather than deleted:
  * an install record, a cache bucket and a crash note written by an older build
  * all still mention it. It is simply never resolved to a module.
+ *
+ * `ko-net` breaks the "module = a download" reading on purpose: it is a Korean
+ * recogniser on another machine, reached over HTTP. It is still a module because
+ * the question the rest of the app asks is the same one — which bytes answer this
+ * language — and the answer for Korean on a phone is now "none of ours". See
+ * `networkModuleFor` in `asr/models.ts`.
  */
-export type ModuleId = 'en' | 'ko' | 'zh'
+export type ModuleId = 'en' | 'ko' | 'zh' | 'ko-net'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 

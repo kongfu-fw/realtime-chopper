@@ -1,5 +1,6 @@
 import { exportLogs, formatStamp } from './log/store'
 import { gpuBlockReason, isAppleMobile, readGpuVerdict, webgpuAvailable } from './asr/device'
+import { moduleIdFor, moduleName } from './asr/models'
 import { speechSnapshot, speechSupported } from './tts/speech'
 import { ttsEngineLabel } from './tts/engine'
 import { getSettings } from './store/settings'
@@ -87,6 +88,23 @@ export function platformLines(): string[] {
         t(' · 语音会话：{session}', { session: speech.session }),
     )
   }
+  // Where recognition actually happens, and — the part a report cannot be read
+  // without — which *module* the current language resolved to. On a phone the
+  // difference between the 64 MB local Korean model and a service on the network is
+  // invisible in the interface and decides both the latency and the error profile,
+  // so a report that does not name it leaves the two indistinguishable.
+  lines.push(
+    t('识别服务：{backend} · {url} · 当前语言用 {module}', {
+      backend:
+        settings.asrBackend === 'local'
+          ? t('只用本机模型')
+          : settings.asrBackend === 'network'
+            ? t('网络服务优先')
+            : t('自动'),
+      url: settings.asrBaseUrl.trim() || t('没填地址'),
+      module: moduleName(moduleIdFor(settings.sourceLang)),
+    }),
+  )
   return lines
 }
 

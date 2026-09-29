@@ -24,7 +24,16 @@ import { isAppleMobile } from './device.ts'
  * here, because a phone that installed it is holding the leftovers.
  */
 
-export type AsrEngineId = 'moonshine' | 'sherpa'
+/**
+ * How a module's bytes get turned into text.
+ *
+ * `koasr` is the odd one because its "bytes" are not on this device at all: it
+ * is a recogniser reached over HTTP. It is still an engine rather than a separate
+ * pipeline, because every question the rest of the app asks about a recogniser —
+ * which language does it answer, is it ready, what did it say — is the same one.
+ * See `asr/koasr.ts`.
+ */
+export type AsrEngineId = 'moonshine' | 'sherpa' | 'koasr'
 
 /**
  * The language a module transcribes.
@@ -35,7 +44,16 @@ export type AsrEngineId = 'moonshine' | 'sherpa'
  */
 export type ModuleLang = 'en' | 'ko' | 'zh'
 
-/** Every module, in the order the install dialog shows them (smallest first). */
+/**
+ * Every module that has bytes to install, in the order the install dialog shows
+ * them (smallest first).
+ *
+ * Deliberately *not* every `ModuleId`: `ko-net` is a recogniser running on
+ * another machine, so there is nothing to download and nothing to clear, and a
+ * row for it here would offer a button that cannot do anything. The lists that
+ * iterate this are talking about storage; the ones that ask "what answers this
+ * language" go through `moduleIdFor`.
+ */
 export const MODULE_IDS: readonly ModuleId[] = ['en', 'ko', 'zh']
 
 /**
@@ -53,6 +71,7 @@ export const MODULE_NAME: Record<ModuleId, string> = {
   // Not "the Chinese module" any more: it transcribes Korean too, and on every
   // device that can hold it, Korean is routed here. See `moduleIdFor`.
   zh: '中韩识别模块',
+  'ko-net': '韩语识别服务（koasr）',
 }
 
 /** Shorter form, for the settings list where a size sits next to it. */
@@ -60,6 +79,7 @@ export const MODULE_SHORT: Record<ModuleId, string> = {
   en: '英文 · Moonshine',
   ko: '韩语 · Moonshine',
   zh: '中韩 · SenseVoice',
+  'ko-net': '韩语 · 网络服务',
 }
 
 export function moduleTitle(id: ModuleId, uiLang: Lang = currentLang()): string {
@@ -155,6 +175,18 @@ export interface AsrModuleSpec {
    */
   coalesceMs?: number
   /**
+   * Nothing to download: the recogniser is a service this app calls over HTTP.
+   *
+   * It changes three things and no more. The install dialog leaves the module out
+   * (there is nothing to install), `isModuleCurrent` answers yes for it whatever
+   * the install records say, and a load that cannot reach the service counts as a
+   * *network* failure — which is what lets the session fall back to the local
+   * model for the same language instead of failing the start. Where the service is
+   * and how it is spoken to is `asr/koasr.ts`, because a URL belongs with the
+   * code that fetches it rather than in a table of download sizes.
+   */
+  remote?: boolean
+  /**
    * Asset URLs for the sherpa engines live in `static/sherpa-asr.worker.js`, not
    * here: that worker is a hand-written classic script (it has to be, see the
    * header comment there) so it cannot import a module. This string is kept
@@ -235,6 +267,61 @@ export const ASR_MODULES: Record<ModuleId, AsrModuleSpec> = {
     approxBytes: 239233841 + 11722172 + 95308 + 47391 + 315894,
     version: 'sensevoice-small-int8-2024-07-17',
   },
+  'ko-net': {
+    id: 'ko-net',
+    lang: 'ko',
+    engine: 'koasr',
+    label: '韩语识别服务（koasr · faster-whisper large-v3-turbo 韩语）',
+    // A recogniser the app *calls*: koasr, a FastAPI service on the machine in the
+    // classroom, answering with Whisper large-v3-turbo finetuned on Korean
+    // (`ghost613/faster-whisper-large-v3-turbo-korean`) through faster-whisper on
+    // the CPU. Nothing above is downloadable and `approxBytes` is honestly zero —
+    // no bytes of this ever reach the phone.
+    //
+    // Why it exists at all, next to two working Korean recognisers: neither of
+    // them is a *large* model. On Apple mobile Korean is answered by Moonshine
+    // Base-KO q8 (64 MB) because SenseVoice's 228 MB does not fit an Apple page,
+    // and the recording this app was built for is a classroom — a teacher 4–5 m
+    // from a phone, which is the input these small models are worst at. Whisper
+    // large-v3-turbo is roughly twenty times the parameters of either, and it can
+    // be twenty times the size precisely because it does not have to fit in a web
+    // page: it runs on a machine that is already on the same network.
+    //
+    // The cost is latency and a dependency, and both are real. Measured against the
+    // running service on this project's machine, one request in flight: 2.3 s of
+    // audio came back in 4.3 s, 7.9 s in 4.6 s and 18.5 s in 5.2 s — and 6.1, 6.5
+    // and 7.4 s for the same three clips ten minutes later, so the level moves with
+    // the machine while the shape does not. Almost all of it is a *fixed* cost —
+    // Whisper pads every input to its 30 s window and the encoder runs over the
+    // whole window — which is why `coalesceMs` matters more here than it does
+    // locally: every round trip pays the constant again, and the audio it carries is
+    // nearly free.
+    //
+    // That is why this module is a *first* choice rather than an only one, with one
+    // deliberate exception. On a laptop `session.prepare` drops back to the local
+    // module for the same language when the service cannot be reached, so a
+    // classroom with a cold machine still records; on Apple mobile there is no hop
+    // at all (`mayFallBackToLocal`) and the failure is reported, because the local
+    // Korean answer there is the small model this route exists to stop using.
+    remote: true,
+    approxBytes: 0,
+    // Only ever compared through `isModuleCurrent`, which short-circuits on
+    // `remote`. Kept meaningful anyway: it is what the log and a future cache
+    // entry would name.
+    version: 'koasr-faster-whisper-large-v3-turbo-ko',
+    source: 'koasr /v1/transcriptions',
+    /**
+     * The same floor Korean's local module carries, for two reasons rather than
+     * one. The second is the decisive one here: every request to this service
+     * costs a fixed several seconds regardless of how much audio it carries, so
+     * three 0.7 s utterances joined into one look-ahead are one round trip instead
+     * of three. The first is that Whisper's failure mode on sub-second input is
+     * the same family as Moonshine's — it does not report that it heard nothing,
+     * it invents something — and the numbers behind 1200 ms are the local module's,
+     * so the floor is inherited rather than re-measured.
+     */
+    coalesceMs: 1200,
+  },
 }
 
 /**
@@ -270,6 +357,18 @@ export const ASR_MODULES: Record<ModuleId, AsrModuleSpec> = {
  * never load it (see `moduleUsedOnThisDevice`, which is what lets the lists say so).
  */
 export function moduleIdFor(lang: Lang): ModuleId {
+  const network = NETWORK_MODULE_FOR_LANG[lang]
+  if (network && networkAsrPreferred()) return network
+  return localModuleIdFor(lang)
+}
+
+/**
+ * Which module answers this language with the network service out of the picture.
+ *
+ * The whole of today's routing, and the answer `prepare` falls back to when the
+ * service this device was routed to cannot be reached.
+ */
+export function localModuleIdFor(lang: Lang): ModuleId {
   const preferred = MODULE_FOR_LANG[lang]
   const fallback = FALLBACK_MODULE_FOR_LANG[lang]
   if (fallback && moduleTooBigForDevice(ASR_MODULES[preferred])) return fallback
@@ -295,6 +394,98 @@ const FALLBACK_MODULE_FOR_LANG: Partial<Record<Lang, ModuleId>> = {
 }
 
 /**
+ * The languages whose recogniser can run on the network service as well as here.
+ *
+ * Korean only, for now, and that is the state of the work rather than a
+ * limitation of the service: koasr has a *Korean* finetune loaded, so it is the
+ * only language it has been set up to answer. Whether Chinese and English join it
+ * is an open question (the service can be pointed at other weights), and the
+ * honest thing while it is open is for this table to say nothing about them — routing a language to a recogniser nobody has measured it
+ * on is how "the app got worse" reports start. See `settings.asrBackend` for how a
+ * user overrides the routing this table decides.
+ */
+const NETWORK_MODULE_FOR_LANG: Partial<Record<Lang, ModuleId>> = {
+  ko: 'ko-net',
+}
+
+/**
+ * The user's answer to "where does recognition happen", as this file reads it.
+ *
+ * Deliberately the same three words the settings screen uses (`AsrBackend` in
+ * `store/settings.ts`, structurally identical) — one vocabulary, so the picker and
+ * the routing table cannot drift into disagreeing about what "auto" means.
+ */
+export type AsrBackendChoice = 'auto' | 'network' | 'local'
+
+/**
+ * The current choice, pushed in by the settings store.
+ *
+ * A module variable rather than a store read, because `store/settings.ts` imports
+ * this file (`isLangInstalled`) and reading the store from here would be a cycle.
+ * The store keeps it current — `settings.subscribe` calls the setter, the same
+ * shape as `setUiLang` in `lib/i18n` — and it also folds in the second condition,
+ * which is that there has to be an address to call at all.
+ */
+let backendChoice: AsrBackendChoice = 'local'
+
+export function setAsrBackendChoice(value: AsrBackendChoice): void {
+  backendChoice = value
+}
+
+/**
+ * Whether the network recogniser should answer Korean on this device.
+ *
+ * `'auto'` is Apple mobile, and the reason is what each device already has:
+ *
+ *   iPhone  Korean is Moonshine Base-KO q8 (64 MB) — the small model that exists
+ *           because the good one does not fit an Apple page (see
+ *           `moduleTooBigForDevice`). Whisper large-v3-turbo is an upgrade, and
+ *           the phone is the one device with no larger local model to upgrade to.
+ *   desktop Korean is SenseVoice Small int8: already larger than the phone's
+ *           model, already 419 ms, where the network round trip measured 5.5 s
+ *           for the same class of clip. Automatically sending a desktop to the
+ *           network would be a slower app for a gain nobody asked for.
+ *
+ * `'network'` overrides that on any device, and it has to: the guess above is a
+ * guess, and a desktop deliberately pointed at the big model would otherwise be
+ * silently ignored — the one failure mode that makes a setting worthless. `'local'`
+ * is the other direction, and the only setting that works with the network down.
+ */
+export function networkAsrPreferred(): boolean {
+  if (backendChoice === 'local') return false
+  return backendChoice === 'network' || isAppleMobile()
+}
+
+/**
+ * Whether a network module that does not answer may quietly become a local one.
+ *
+ * No on Apple's mobile, and it is the one device where the question has an answer
+ * worth writing down. Everywhere else the fallback is right: a desktop's local
+ * Korean answer is SenseVoice, which is larger than what a phone has and runs in
+ * 419 ms, so a sleeping laptop should cost a session an explanation and nothing
+ * else. On an iPhone the local Korean answer is Moonshine Base-KO — the small
+ * model this whole route exists to stop using — so falling back there does not
+ * merely degrade the app: it removes the upgrade *invisibly*, and the transcript
+ * gets worse for a reason nobody in the room can see. Silence is what makes that
+ * dangerous, so the phone reports the failure, and the way back to a working
+ * session is a visible choice: make the service reachable, or put
+ * `settings.asrBackend` on `'local'` on purpose.
+ *
+ * Deliberately a device question rather than a setting one. "Where does
+ * recognition happen" already has `'local'` as its escape hatch, and reading the
+ * route's own failure as a second vote on it would make the one setting that
+ * cannot be checked in advance the one the app second-guesses.
+ */
+export function mayFallBackToLocal(): boolean {
+  return !isAppleMobile()
+}
+
+/** The module a language uses over the network, or `null` if it has none. */
+export function networkModuleFor(lang: Lang): ModuleId | null {
+  return NETWORK_MODULE_FOR_LANG[lang] ?? null
+}
+
+/**
  * Whether any language on *this* device routes to this module.
  *
  * The Korean module is why this exists. On a desktop it is never loaded — SenseVoice
@@ -304,7 +495,7 @@ const FALLBACK_MODULE_FOR_LANG: Partial<Record<Lang, ModuleId>> = {
  * rounding error on a phone plan.
  */
 export function moduleUsedOnThisDevice(id: ModuleId): boolean {
-  return (Object.keys(MODULE_FOR_LANG) as Lang[]).some((lang) => moduleIdFor(lang) === id)
+  return (Object.keys(MODULE_FOR_LANG) as Lang[]).some((lang) => localModuleIdFor(lang) === id)
 }
 
 export function moduleSpec(id: ModuleId): AsrModuleSpec {
@@ -414,6 +605,10 @@ export const MODULE_CACHE_KEYS: Record<ModuleId, readonly string[]> = {
   // 73 MB — nothing live is spelled that way any more.
   ko: ['transformers-cache'],
   zh: ['rc-model-zh-sherpa-zh'],
+  // Nothing is cached, because nothing arrives: every byte of that module is on
+  // the far side of a socket. An empty list is not a placeholder — it is what
+  // makes the settings list show a size of `0`, which is the truth.
+  'ko-net': [],
 }
 
 /**

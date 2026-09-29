@@ -220,6 +220,31 @@ export const EN_SHELL: Record<string, string> = {
   '中文和韩语共用 SenseVoice；英文和手机上的韩语用 Moonshine（更小、约 64 MB）；同时只驻留一个。':
     'Chinese and Korean share SenseVoice; English and Korean-on-a-phone use Moonshine (smaller, about 64 MB). Only one is resident at a time.',
   '手机上使用': 'phones only',
+  // The network recogniser's rows. The two long ones are the ones that matter:
+  // they are where a user finds out that the service needs a machine switched on,
+  // and that an http address cannot be called from an https page.
+  '识别走哪里': 'Where recognition happens',
+  '韩语还能交给网络上的识别服务：模型大得多，认得更准，但要在同一网络里有台机器开着它。自动档只在手机上用网络——电脑上的韩语本来就有个更大的本机模型，换成网络只会变慢。':
+    'Korean can also be handled by a recognition service on the network: a much larger model that hears more, as long as a machine on the same network is running it. The automatic setting uses the network only on a phone — a desktop already has the larger local model for Korean, so the network would just make it slower.',
+  '自动（手机上韩语走网络）': 'Automatic (Korean over the network on a phone)',
+  '只用本机模型': 'Local model only',
+  '网络服务优先': 'Prefer the network service',
+  '识别服务地址': 'Recognition service address',
+  '默认 /asr，指的是和本页面同一台机器上的服务（怎么转发见 DOCKER.md）。也可以填完整地址，比如 https://主机名:8444（跨源，服务默认允许）—— 但页面是 https 时 http:// 开头的那种地址会被浏览器直接拦掉。':
+    '/asr by default, meaning a service on the same machine as this page (DOCKER.md has the one-line proxy). A full address works too, e.g. https://host:8444 — cross-origin, which the service allows by default — but an http:// address is blocked outright by the browser when this page is https.',
+  '还没填地址，网络识别不会启用。': 'No address is filled in, so network recognition will not be used.',
+  '页面是 https，填 http 的地址浏览器会直接拦掉：把服务也用 https 发出来（见 DOCKER.md），或者把这里改成同一台机器上的 /asr。':
+    'This page is https and this address is http, which the browser blocks outright: publish the service over https as well (see DOCKER.md), or use /asr on this same machine.',
+  // Appended on Apple's mobile, where there is no local answer to fall back to
+  // (`mayFallBackToLocal`) and so no softer sentence to print.
+  '这台设备连不上识别服务会直接报错，不会退回本机韩语模型。':
+    'On this device an unreachable service is an error, not a quiet move to the local Korean model.',
+  '还没填地址。这台设备连不上识别服务就直接报错，不会退回本机模型：要么把地址填上，要么把上面改成「只用本机模型」。':
+    'No address is filled in. This device reports an error instead of falling back to the local model: fill the address in, or change the picker above to “Local model only”.',
+  '页面是 https，填 http 的地址浏览器会直接拦掉，而这台设备不会退回本机模型：把服务也用 https 发出来（见 DOCKER.md），或者把这里改成同一台机器上的 /asr。':
+    'This page is https and this address is http, which the browser blocks outright — and this device does not fall back to the local model: publish the service over https as well (see DOCKER.md), or use /asr on this same machine.',
+  '识别后端换为 {backend}': 'Recognition backend changed to {backend}',
+  '下次开始录音时生效': 'takes effect the next time recording starts',
   '翻译': 'Translation',
   '翻译用哪家': 'Which translator',
   '默认谷歌；谷歌用不了会自动换微软。': 'Google by default; if Google is unreachable it switches to Microsoft by itself.',

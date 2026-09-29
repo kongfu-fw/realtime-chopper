@@ -61,6 +61,51 @@ tailscale serve --bg 8080
 
 `tailscale serve status` 看现状，`tailscale serve --https=443 off` 关掉。
 
+#### 让同一个地址也能访问识别服务（可选）
+
+韩语可以交给网络上的一台机器识别（`../kuakuaASR` 里的 `koasr`：`koasr serve start` 起服务，
+默认监听 `127.0.0.1:8900`，`koasr serve status` 看状态）。把它挂到**应用自己那个域名**下的 `/asr`
+路径上 —— 应用的「识别服务地址」默认就是这个值：
+
+```bash
+tailscale serve --bg --https=443 --set-path=/asr http://127.0.0.1:8900
+# 确认它真的是那个服务（不是 404、不是应用自己）：
+curl -s https://<机器名>.<tailnet>.ts.net/asr/healthz
+```
+
+要看到 `"status":"ok"` 和 `"engine":"faster-whisper"` 才对。返回 404 就说明这次 `serve` 把挂载路径
+**一起发给了后端**（`--set-path` 的语义历史上变过），那就别再跟它绕，改用下面那个不会有歧义的写法：
+
+```bash
+# 另开一个 HTTPS 端口，服务就挂在它的根上 —— 一个字都不用猜
+# 应用里把「识别服务地址」填成 https://<机器名>.<tailnet>.ts.net:8444
+tailscale serve --bg --https=8444 http://127.0.0.1:8900
+curl -s https://<机器名>.<tailnet>.ts.net:8444/healthz
+```
+
+**为什么仍然推荐 `/asr`**：因为它谁都不用配 —— 服务和应用同一个域名，端口不用猜，设置里一个字不用填。
+
+1. **混合内容**：手机上的页面是 `https://`（麦克风只在安全上下文里给），而浏览器会把向 `http://`
+   发的请求直接拦掉 —— 请求根本不会发出去，JS 这边和「服务没开」长得一模一样。所以别在设置里
+   直接填 `http://100.x.y.z:8900`：应用会把这种情况认出来，在设置页写明原因（日志里写的是
+   「地址是 http、页面是 https」，不是一句 `Failed to fetch`）；电脑上会在会话开始时退回本机模型，
+   **手机（Apple 移动端）上则直接报错** —— 手机上不退回本机模型，理由见 DOCS.md 的「韩语走网络」一节。
+2. **跨源（上面 8444 那种写法）现在也能用**：服务带 `CORSMiddleware`，`allow_origins` 取自
+   `KOASR_CORS_ORIGINS`（默认 `*`）—— 实测 `OPTIONS /v1/transcriptions` 回 `200` 且带
+   `access-control-allow-origin: *`，POST 同样带头，所以页面读得到结果。**但这个默认值是可配的**：
+   把 `KOASR_CORS_ORIGINS` 收窄成一份白名单之后，没列进去的那台机器会重新变成那个难认的症状
+   —— 服务日志里一条 `200 OK`，页面上说「连不上识别服务」。
+
+> `tailscale serve` 在一台机器上只有一份配置：已经在用 `tailscale serve --bg 8080` 发应用本身的话，
+> 再加一条是在同配置里追加，不会把前面那条顶掉；`tailscale serve status` 应该能看到两条。
+
+同一 tailnet 里**另一台机器**上跑服务也是这样挂（把命令最后那个参数换成那台机器的地址，例如
+`http://100.x.y.z:8900`）—— 推荐仍然是**挂在应用的那个域名下**：那样对外同源，连 CORS 这回事都没有；
+要是改去用那台机器自己的主机名，就是跨源 —— 服务默认允许，见上面第 2 条。
+
+方案二（自己的域名 + Caddy / 其它反代）同理，把 `/asr/` 代理到 `http://<跑服务的机器>:8900/` 即可；
+nginx 的 `proxy_pass .../;` 带尾斜杠是会去掉前缀的，所以这条路由下 `/asr/healthz` 就是 `/healthz`。
+
 ### 方案二：自己的域名 + Caddy（配置已经写好）
 
 ```bash

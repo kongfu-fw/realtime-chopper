@@ -230,19 +230,19 @@ export const EN_SHELL: Record<string, string> = {
   '只用本机模型': 'Local model only',
   '网络服务优先': 'Prefer the network service',
   '识别服务地址': 'Recognition service address',
-  '默认 /asr，指的是和本页面同一台机器上的服务（怎么转发见 DOCKER.md）。也可以填完整地址，比如 https://主机名:8444（跨源，服务默认允许）—— 但页面是 https 时 http:// 开头的那种地址会被浏览器直接拦掉。':
-    '/asr by default, meaning a service on the same machine as this page (DOCKER.md has the one-line proxy). A full address works too, e.g. https://host:8444 — cross-origin, which the service allows by default — but an http:// address is blocked outright by the browser when this page is https.',
+  '默认是教室那台 Mac 上的 koasr：https://kongfu.kooka-salmon.ts.net —— tailscale serve --bg 8900 把服务的根挂在这个域名上，跨源调用，服务默认允许。换别的服务时主机名可以不带协议（按 https 解析）；想用和页面同一台机器上的服务就填 /asr。页面是 https 时，http:// 开头的地址会被浏览器直接拦掉。':
+    'The default is koasr on the Mac in the classroom: https://kongfu.kooka-salmon.ts.net — `tailscale serve --bg 8900` publishes the service at the root of that host, cross-origin, which the service allows by default. For another service a bare hostname is enough (it is read as https); for a service on the same machine as this page, write /asr. When this page is https, an http:// address is blocked outright by the browser.',
   '还没填地址，网络识别不会启用。': 'No address is filled in, so network recognition will not be used.',
-  '页面是 https，填 http 的地址浏览器会直接拦掉：把服务也用 https 发出来（见 DOCKER.md），或者把这里改成同一台机器上的 /asr。':
-    'This page is https and this address is http, which the browser blocks outright: publish the service over https as well (see DOCKER.md), or use /asr on this same machine.',
+  '页面是 https，填 http 的地址浏览器会直接拦掉：把服务也用 https 发出来（见 DOCKER.md），或者把这里改回默认的 https 地址。':
+    'This page is https and this address is http, which the browser blocks outright: publish the service over https as well (see DOCKER.md), or put the default https address back here.',
   // Appended on Apple's mobile, where there is no local answer to fall back to
   // (`mayFallBackToLocal`) and so no softer sentence to print.
   '这台设备连不上识别服务会直接报错，不会退回本机韩语模型。':
     'On this device an unreachable service is an error, not a quiet move to the local Korean model.',
   '还没填地址。这台设备连不上识别服务就直接报错，不会退回本机模型：要么把地址填上，要么把上面改成「只用本机模型」。':
     'No address is filled in. This device reports an error instead of falling back to the local model: fill the address in, or change the picker above to “Local model only”.',
-  '页面是 https，填 http 的地址浏览器会直接拦掉，而这台设备不会退回本机模型：把服务也用 https 发出来（见 DOCKER.md），或者把这里改成同一台机器上的 /asr。':
-    'This page is https and this address is http, which the browser blocks outright — and this device does not fall back to the local model: publish the service over https as well (see DOCKER.md), or use /asr on this same machine.',
+  '页面是 https，填 http 的地址浏览器会直接拦掉，而这台设备不会退回本机模型：把服务也用 https 发出来（见 DOCKER.md），或者把这里改回默认的 https 地址。':
+    'This page is https and this address is http, which the browser blocks outright — and this device does not fall back to the local model: publish the service over https as well (see DOCKER.md), or put the default https address back here.',
   '识别后端换为 {backend}': 'Recognition backend changed to {backend}',
   '下次开始录音时生效': 'takes effect the next time recording starts',
   '翻译': 'Translation',

@@ -162,11 +162,11 @@
     if (asrNoFallback) {
       return fault === 'empty'
         ? tr('还没填地址。这台设备连不上识别服务就直接报错，不会退回本机模型：要么把地址填上，要么把上面改成「只用本机模型」。')
-        : tr('页面是 https，填 http 的地址浏览器会直接拦掉，而这台设备不会退回本机模型：把服务也用 https 发出来（见 DOCKER.md），或者把这里改成同一台机器上的 /asr。')
+        : tr('页面是 https，填 http 的地址浏览器会直接拦掉，而这台设备不会退回本机模型：把服务也用 https 发出来（见 DOCKER.md），或者把这里改回默认的 https 地址。')
     }
     return fault === 'empty'
       ? tr('还没填地址，网络识别不会启用。')
-      : tr('页面是 https，填 http 的地址浏览器会直接拦掉：把服务也用 https 发出来（见 DOCKER.md），或者把这里改成同一台机器上的 /asr。')
+      : tr('页面是 https，填 http 的地址浏览器会直接拦掉：把服务也用 https 发出来（见 DOCKER.md），或者把这里改回默认的 https 地址。')
   })
 
   /** Continuous recording state, mirrored from the pipeline worker. */
@@ -351,12 +351,12 @@
 
     <SettingRow
       label={tr('识别服务地址')}
-      help={tr('默认 /asr，指的是和本页面同一台机器上的服务（怎么转发见 DOCKER.md）。也可以填完整地址，比如 https://主机名:8444（跨源，服务默认允许）—— 但页面是 https 时 http:// 开头的那种地址会被浏览器直接拦掉。')}
+      help={tr('默认是教室那台 Mac 上的 koasr：https://kongfu.kooka-salmon.ts.net —— tailscale serve --bg 8900 把服务的根挂在这个域名上，跨源调用，服务默认允许。换别的服务时主机名可以不带协议（按 https 解析）；想用和页面同一台机器上的服务就填 /asr。页面是 https 时，http:// 开头的地址会被浏览器直接拦掉。')}
     >
       <input
         class="rc-input"
         type="text"
-        placeholder="/asr"
+        placeholder="kongfu.kooka-salmon.ts.net"
         value={$settings.asrBaseUrl}
         oninput={(e) => setSetting('asrBaseUrl', (e.currentTarget as HTMLInputElement).value)}
       />

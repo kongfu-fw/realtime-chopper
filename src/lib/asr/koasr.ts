@@ -89,8 +89,12 @@ import { moduleSpec } from './models.ts'
  * taken from `KOASR_CORS_ORIGINS` (default `*`), measured on the running service:
  * `OPTIONS /v1/transcriptions` answers `200` with `access-control-allow-origin: *`,
  * and so does the POST. Cross-origin is therefore a deployment choice rather than
- * a trap, and `/asr` stays the default because it needs no configuration on either
- * side — not because it is the only address that works. See DOCS.md.
+ * a trap, and it is the choice this app's default makes: the service is published
+ * at the root of its own tailnet hostname (`tailscale serve --bg 8900`) while the
+ * app is served from another one, so every request here is cross-origin. A path on
+ * the app's own origin (`/asr`, `tailscale serve --set-path`) needs no CORS header
+ * from anyone and stays the neater deployment — DOCKER.md has that command — but
+ * the default names where the service actually is. See DOCS.md.
  */
 
 /**
@@ -193,10 +197,22 @@ export function addressProblem(baseUrl: string, pageProtocol: string): 'empty' |
 /**
  * A configured address, as an absolute URL with no trailing slash.
  *
- * Relative paths are accepted on purpose (`/asr`), and they are the recommended
- * form: resolved against the page's own origin they cannot be mixed content and
- * need no CORS header from anyone, so the only deployment that has to be trusted
- * is the one already serving the app.
+ * Three accepted forms, because this field is filled in on a phone keyboard and
+ * because two of them are what people actually write:
+ *
+ *   `kongfu.kooka-salmon.ts.net`   a host; https is assumed
+ *   `http://100.0.0.1:8900`        an absolute URL, left exactly as written
+ *   `/asr`                         a path on the page's own origin
+ *
+ * The bare host is the one that needs a rule rather than plain `new URL`: without
+ * one it resolves as a *relative path* against the page — `…/kongfu.kooka-salmon.ts.net`
+ * — and 404s, which from a classroom looks exactly like a service that is switched
+ * off. https is the only scheme a scheme-less value can mean here, because the
+ * field exists to reach a service from a page that is `https:` on the device that
+ * needs the service most (a microphone requires a secure context) and such a page
+ * may not call `http://` at all. An `http://` service therefore still has to say
+ * so, and saying so is what lets `addressProblem` explain the mixed-content case
+ * rather than letting it pass as a dead server.
  *
  * The `origin` is handed in rather than read from `location` here: inside a worker
  * that is the same origin, but the caller is the only place that knows which page
@@ -205,7 +221,12 @@ export function addressProblem(baseUrl: string, pageProtocol: string): 'empty' |
 export function resolveBaseUrl(baseUrl: string, origin: string): string {
   const url = baseUrl.trim()
   if (!url) return origin.replace(/\/+$/, '')
-  return new URL(url, origin).toString().replace(/\/+$/, '')
+  // Something that carries a scheme, or starts with a slash or a dot, is already
+  // unambiguously a URL or a path — including `//host/path` and `./asr`, both of
+  // which the parser resolves itself. Everything else is a host, and a host gets a
+  // scheme.
+  const absolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(url) || /^[/.]/.test(url)
+  return new URL(absolute ? url : `https://${url}`, origin).toString().replace(/\/+$/, '')
 }
 
 /**

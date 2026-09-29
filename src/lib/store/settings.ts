@@ -61,15 +61,24 @@ export interface Settings {
   /**
    * Address of the recogniser service, for the languages that have one.
    *
-   * A path on the app's own origin (`/asr`) is the recommended form and the
-   * default, because it is the only one that cannot be blocked: a page served over
-   * HTTPS may not call `http://…`, and this app is opened over HTTPS on a phone.
-   * An absolute address is accepted for a service reached directly — see
-   * `addressProblem` in `asr/koasr.ts`, which is what turns that mistake into a
-   * sentence instead of a silent fallback.
+   * Three forms, all of them read by `resolveBaseUrl` (`asr/koasr.ts`, which is
+   * also where `addressProblem` turns the one real mistake — an `http://` service
+   * called from an `https:` page — into a sentence instead of a silent failure):
    *
-   * An empty address disables the whole route without changing the setting, which
-   * is what `'auto'` reads to decide there is nothing to try.
+   *   `kongfu.kooka-salmon.ts.net`   a host; https is assumed
+   *   `https://100.0.0.1:8900`       an absolute address
+   *   `/asr`                         a path on the app's own origin
+   *
+   * The default is the classroom service: `koasr` published by `tailscale serve`
+   * at the *root* of its own tailnet hostname, which is why there is no path on the
+   * end of it. That makes every call cross-origin, which the service permits
+   * (`KOASR_CORS_ORIGINS`, default `*`) and which was measured end to end on this
+   * deployment — see DOCS.md. A path on our own origin is the neater deployment
+   * (DOCKER.md has the `--set-path` command) and needs no CORS header from anyone,
+   * but it is not the one that is running: the app is served from one tailnet host
+   * and the service from another, so the default has to name where the service
+   * actually is. Clearing the field disables the whole route without changing the
+   * setting, which is what `'auto'` reads to decide there is nothing to try.
    */
   asrBaseUrl: string
 
@@ -131,11 +140,15 @@ export const DEFAULT_SETTINGS: Settings = {
   precision: 'high',
   accelerator: 'auto',
   asrBackend: 'auto',
-  // Where the recogniser service is served *next to this app*. One command on the
-  // machine the app is served from puts it here (`tailscale serve --set-path`, see
-  // DOCS.md); until then the path 404s, the phone notices in one round trip and
-  // uses its own model, which is the same behaviour as this setting being off.
-  asrBaseUrl: '/asr',
+  // Where the recogniser service is: the Mac in the room, running `koasr` behind
+  // `tailscale serve --bg 8900`, which puts the service at the root of this host.
+  // Reachable from anywhere in the tailnet — which is where the app is served from
+  // too, so a phone that can open the app can reach this. The host with no scheme
+  // is enough (`resolveBaseUrl` reads that as https); the full URL is written out
+  // because that is the value a reader of the settings screen should be able to
+  // recognise. Unreachable is not a quiet fallback on Apple's mobile — see
+  // `mayFallBackToLocal` — so this default is only as good as the service being up.
+  asrBaseUrl: 'https://kongfu.kooka-salmon.ts.net',
 
   targetLang: 'zh',
   mtProvider: 'google',

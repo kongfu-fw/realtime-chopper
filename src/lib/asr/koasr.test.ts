@@ -63,15 +63,33 @@ test('空地址和地址写错是两件事', () => {
 })
 
 test('配置的地址解析成不带尾斜杠的绝对地址', () => {
-  // A relative path resolves against the app's own origin, which is the whole
-  // point of supporting it: same-origin cannot be mixed content and needs no CORS
-  // header, which is why it is the address the setting defaults to.
+  // A relative path resolves against the app's own origin: same-origin cannot be
+  // mixed content and needs no CORS header from anyone, so it is still the form
+  // that asks the least of a deployment — it is just not the one that is running.
   assert.equal(resolveBaseUrl('/asr', 'https://app.example'), 'https://app.example/asr')
   assert.equal(resolveBaseUrl('/asr/', 'https://app.example'), 'https://app.example/asr')
   // An absolute address is left alone apart from the trailing slash, which would
   // otherwise double up in every path this engine appends.
   assert.equal(resolveBaseUrl('http://100.0.0.1:8900/', 'https://app.example'), 'http://100.0.0.1:8900')
   assert.equal(resolveBaseUrl('http://100.0.0.1:8900', 'https://app.example'), 'http://100.0.0.1:8900')
+  // A bare host is a host, not a path. `new URL` would resolve it as a relative
+  // path against the page — `/kongfu.kooka-salmon.ts.net` — and 404 there, which
+  // from a classroom is indistinguishable from a service that is switched off.
+  assert.equal(
+    resolveBaseUrl('kongfu.kooka-salmon.ts.net', 'https://app.example'),
+    'https://kongfu.kooka-salmon.ts.net',
+  )
+  // Trailing slash, no scheme, and from an http page: still https, because that
+  // page would not be allowed to call http anyway.
+  assert.equal(
+    resolveBaseUrl('kongfu.kooka-salmon.ts.net/', 'http://kongfu-onedrive.kooka-salmon.ts.net:8080'),
+    'https://kongfu.kooka-salmon.ts.net',
+  )
+  assert.equal(resolveBaseUrl('100.0.0.1:8900', 'https://app.example'), 'https://100.0.0.1:8900')
+  // ...while the forms that are paths stay paths. `./asr` matters: a dot is how a
+  // relative path starts, and it must not become the host `https://./asr`.
+  assert.equal(resolveBaseUrl('./asr', 'https://app.example'), 'https://app.example/asr')
+  assert.equal(resolveBaseUrl('//app.example/asr', 'https://app.example'), 'https://app.example/asr')
   // Empty is the app's own origin rather than the empty string: this value is only
   // built when the setting is non-empty, but a URL builder that can produce one is
   // one that can produce a request to nowhere.

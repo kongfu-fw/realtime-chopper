@@ -37,6 +37,18 @@ export const EN_CORE: Record<string, string> = {
   '屏幕常亮没能开启；录音时请在「设置 → 显示与亮度 → 自动锁定」里选「永不」':
     'The screen wake lock could not be taken; while recording, choose “Never” under “Settings → Display & Brightness → Auto-Lock”',
 
+  // ── app/update.ts ─────────────────────────────────────────────────────────
+  // A page that never navigates never learns about a deploy, so it asks the
+  // server for its own version. These three say what the self-check found: one
+  // line written just before the page reloads itself, and one line plus one
+  // sentence for the case where a session makes it wait.
+  '服务端有新版本 {version}，页面正在自动更新':
+    'The server has a newer version ({version}); the page is updating itself now',
+  '服务端有新版本 {version}，这一场还占着页面：先不更新':
+    'The server has a newer version ({version}), but this session still owns the page: not updating yet',
+  '服务端有新版本 {version}：不打断这一场；把应用关掉再打开就会更新':
+    'The server has a newer version ({version}): this session is not interrupted — close the app and open it again to update',
+
   // ── asr/device.ts ─────────────────────────────────────────────────────────
   '显卡加速可用': 'GPU acceleration works',
   'iPhone / iPad 上开显卡加速会把整个页面带崩（实测：一启用就整页闪一下重开）':
@@ -264,10 +276,12 @@ export const EN_CORE: Record<string, string> = {
   '重新打开麦克风': 'reopened the microphone',
   '刚才息屏了一小段，那一段没有录到；录音和识别已继续':
     'The screen was off for a moment and that stretch was not recorded; recording and recognition have continued',
-  '息屏后麦克风没能恢复，这一场已停下':
-    'The microphone did not come back after the screen was off, so this session has stopped',
-  '息屏后麦克风被系统收回了，这一场已经停下（录音和文字都保留着）；想继续就再点一次开始':
-    'The system took the microphone away while the screen was off, so this session has stopped (the recording and the transcript are kept) — tap start again to continue',
+  '麦克风被系统收回了，这一场已停下':
+    'The system took the microphone away, so this session has stopped',
+  '麦克风被系统收回后，自动重新开始录音':
+    'Recording is starting again by itself after the system took the microphone',
+  '麦克风被系统收回了，录音已停下（录音和文字都保留着）；回到应用会自动重新开始':
+    'The system took the microphone away, so recording has stopped (the recording and the transcript are kept); coming back to the app starts it again',
   '引擎': 'Engine',
   '开始录音了': 'Recording started',
   '源语言': 'Source language',

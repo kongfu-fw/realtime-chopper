@@ -68,7 +68,13 @@ body {
   gap: 8px;
 }
 
-/* Two-column content: side by side on pointer devices, stacked on touch. */
+/* Two-column content: side by side on pointer devices, stacked on touch.
+ *
+ * The first panel's main-axis size is `--split`, a percentage the divider between
+ * the panels sets (`App.svelte`): width in the row direction, height in the column
+ * one. It defaults to half, so a page that never touches the divider keeps exactly
+ * the 50/50 layout this had before the divider existed.
+ */
 .panels {
   flex: 1 1 auto;
   min-height: 0;
@@ -91,14 +97,78 @@ body {
   background: var(--rc-surface);
 }
 
-.panel + .panel {
-  border-left: 2px solid var(--rc-ink);
+.panels > .panel:first-child {
+  flex: 0 0 var(--split, 50%);
+}
+
+/*
+ * The bar between the two panels.
+ *
+ * A 10 px hit area around the 2 px line that used to be the border between them:
+ * the line is what the layout wants, the hit area is what a finger needs. The
+ * grip in the middle is the only thing that says "this one moves" — a bare line
+ * between two panels reads as decoration.
+ */
+.splitter {
+  flex: 0 0 auto;
+  position: relative;
+  width: 10px;
+  cursor: col-resize;
+  /* A drag must not scroll the page on a touch screen, and the browser must hand
+   * us every move rather than reclaiming the gesture halfway through. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  background: var(--rc-surface);
+}
+
+.splitter::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 2px;
+  height: 100%;
+  background: var(--rc-ink);
+}
+
+.splitter::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 4px;
+  height: 26px;
+  border-radius: var(--rc-radius-pill);
+  background: var(--rc-line-strong);
+}
+
+.splitter:hover::after,
+.splitter:focus-visible::after,
+.splitter.dragging::after {
+  background: var(--rc-accent);
+}
+
+.splitter:focus-visible {
+  outline: 2px solid var(--rc-accent);
+  outline-offset: -2px;
 }
 
 @media (pointer: coarse) and (orientation: portrait) {
-  .panel + .panel {
-    border-left: none;
-    border-top: 2px solid var(--rc-ink);
+  .splitter {
+    width: auto;
+    height: 10px;
+    cursor: row-resize;
+  }
+
+  .splitter::before {
+    width: 100%;
+    height: 2px;
+  }
+
+  .splitter::after {
+    width: 26px;
+    height: 4px;
   }
 }
 
@@ -219,11 +289,19 @@ input {
 }
 
 /*
- * Level, drawn on the button: a halo whose spread follows the voice, growing
+ * Level, drawn on the button: two halos whose spread follows the voice, growing
  * inside the fixed ring that marks full scale. This replaces the horizontal meter
  * that used to sit to the left of the button *and* the decorative pulse that used
  * to be the only sign of recording — one element, two facts, and the user looks at
  * one place instead of across the whole bar.
+ *
+ * Two halos rather than one, and 60% rather than 30%, because of how this fails at
+ * the quiet end: the mapping is in decibels (see `meterFraction` in StatusBar), so
+ * a person three metres away already sits around half scale — and a half-scale
+ * halo at 30% alpha over the warm off-white background is a few pixels of hairline
+ * green that the eye refuses to see. The inner ring carries the reading, the wide
+ * outer one keeps it visible when the reading is small, and the button itself
+ * swells a little, which is the part that reads at arm's length.
  *
  * The transition is what keeps that from reading as a flicker, and its length is
  * tied to how often the value changes: the level arrives at 15 Hz, so 60 ms lets
@@ -234,15 +312,19 @@ input {
  */
 .record-btn.recording {
   background: var(--rc-ink);
-  box-shadow: 0 0 0 calc(var(--level, 0) * 9px) rgb(47 122 85 / 30%), var(--rc-shadow-hard);
-  transition: box-shadow 60ms linear;
+  box-shadow:
+    0 0 0 calc(var(--level, 0) * 13px) rgb(47 122 85 / 60%),
+    0 0 0 calc(var(--level, 0) * 22px) rgb(47 122 85 / 20%),
+    var(--rc-shadow-hard);
+  transform: scale(calc(1 + var(--level, 0) * 0.09));
+  transition: box-shadow 60ms linear, transform 60ms linear;
 }
 
 /* Full scale, so "loud enough" has a visible ceiling to reach. */
 .record-btn.recording::after {
   content: '';
   position: absolute;
-  inset: -9px;
+  inset: -13px;
   border-radius: 50%;
   border: 1px solid var(--rc-line-strong);
   pointer-events: none;
@@ -301,6 +383,60 @@ input {
   margin-top: 2px;
   white-space: pre-wrap;
   word-break: break-word;
+  /*
+   * The text arrives with a short fade *because it may not arrive at all*: a line
+   * whose translation is still coming renders nothing (see TranslationPanel), so
+   * without this the sentence pops into an unexpectedly empty row. The animation
+   * belongs to the element, which exists exactly from the moment there is
+   * something to read.
+   */
+  animation: rc-line-in 200ms ease-out;
+  transition: font-size 160ms ease;
+}
+
+/*
+ * Four sizes, newest first — `size-0` is the sentence just translated, `size-3`
+ * everything older, and the classes are set by translation recency rather than by
+ * time or length. The newest line is the one the reader is looking for; the older
+ * ones are context and can recede, which is also what keeps a long lesson's worth
+ * of text from reading as one undifferentiated wall.
+ */
+.line-text.size-0 {
+  font-size: 21px;
+  line-height: 1.4;
+}
+
+.line-text.size-1 {
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+.line-text.size-2 {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.line-text.size-3 {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+@keyframes rc-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line-text {
+    animation: none;
+    transition: none;
+  }
 }
 
 .line.failed {

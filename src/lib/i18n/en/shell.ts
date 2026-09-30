@@ -69,14 +69,19 @@ export const EN_SHELL: Record<string, string> = {
   '不用了': 'Not now',
   '启动失败：{error}': 'Could not start: {error}',
   '戴好了，开始': 'Headphones on — start',
+  // The bar between the two panels, as a separator for assistive technology.
+  '拖动调整原文和译文的大小': 'Drag to resize the original and the translation',
 
   // ── AboutChopper.svelte ───────────────────────────────────────────────────
   '我是{name}': 'I am {name}',
+  '哎呀，好痛。。。': 'Ouch, that hurt…',
+  '谁呀，敲这么重！': 'Hey! Who is knocking so hard?',
   '我来自《海贼王》，作者最喜欢的动漫。': 'I am from One Piece, the maker’s favourite anime.',
   '我是一只驯鹿，也有一半是人。': 'I am a reindeer, and half human.',
   '动物说的话、人说的话，我都能听懂。': 'I understand what animals say, and what people say.',
   '所以在这儿当翻译，正合适 —— 希望我帮得上你。': 'So translating here suits me. I hope I can help.',
-  '想再见到我，点标题栏的小鹿就行。': 'To see me again, tap the little deer in the title bar.',
+  '想再见到我，就在标题栏的小鹿上连点三下；点一下只是挠痒痒。':
+    'To see me again, tap the little deer in the title bar three times — one tap just tickles.',
   '好，翻译去': 'Right — off to translate',
 
   // ── AsrPanel.svelte ───────────────────────────────────────────────────────
@@ -339,7 +344,6 @@ export const EN_SHELL: Record<string, string> = {
 
   // ── TranslationPanel.svelte ───────────────────────────────────────────────
   '翻译失败': 'Translation failed',
-  '翻译中…': 'Translating…',
   '翻译结果': 'Translation result',
   '译文': 'Translation',
   '朗读音色': 'Read-aloud voice',

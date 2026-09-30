@@ -35,11 +35,20 @@
     <img src={art} alt="" width="132" height="132" />
   </div>
 
+  <!--
+    * The reaction to being poked three times to get here. It is the first thing in
+    * the dialog on purpose: the three taps are what the character just felt, and
+    * answering them is what makes the egg feel like a character rather than a
+    * hidden menu.
+    -->
+  <p class="ouch">{tr('哎呀，好痛。。。')}</p>
+  <p>{tr('谁呀，敲这么重！')}</p>
+
   <p class="lead">{tr('我来自《海贼王》，作者最喜欢的动漫。')}</p>
   <p>{tr('我是一只驯鹿，也有一半是人。')}</p>
   <p>{tr('动物说的话、人说的话，我都能听懂。')}</p>
   <p class="hope">{tr('所以在这儿当翻译，正合适 —— 希望我帮得上你。')}</p>
-  <p class="hint">{tr('想再见到我，点标题栏的小鹿就行。')}</p>
+  <p class="hint">{tr('想再见到我，就在标题栏的小鹿上连点三下；点一下只是挠痒痒。')}</p>
 
   {#snippet footer()}
     <!-- The version, in the one dialog a person opens on purpose: it is what a
@@ -71,6 +80,10 @@
 
   .lead {
     font-weight: 600;
+  }
+
+  .ouch {
+    font-weight: 700;
   }
 
   .hope {

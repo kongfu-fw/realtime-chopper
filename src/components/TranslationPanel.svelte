@@ -64,7 +64,12 @@
 
   $effect(() => {
     if (!pinned || !bodyEl) return
-    lines.length
+    // The newest line's translation is a dependency, not just the count: a line
+    // renders nothing until its text arrives and then grows, and a panel that only
+    // followed the count would leave the sentence that just landed below the fold.
+    const newest = lines[lines.length - 1] as Line | undefined
+    void lines.length
+    void newest?.translation
     bodyEl.scrollTop = bodyEl.scrollHeight
   })
 
@@ -73,12 +78,17 @@
     pinned = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 40
   }
 
-  // `tr`, not `t`: the result is rendered under a line, so a language switch has
-  // to be able to change what these two read.
-  function label(line: Line): string {
-    if (line.translation) return line.translation
-    if (line.mtState === 'failed') return tr('翻译失败')
-    return tr('翻译中…')
+  /**
+   * Which of the four sizes a line wears: 0 for the newest, 3 for everything
+   * older.
+   *
+   * Recency, not age and not length: what a reader wants is the sentence that was
+   * *just* translated, and the ladder has to hold still while a slow translation
+   * lands (`lines.length - 1 - index` is stable for every line whose translation
+   * has already arrived, because a new line only ever appears at the end).
+   */
+  function tier(index: number): number {
+    return Math.min(3, lines.length - 1 - index)
   }
 </script>
 
@@ -153,7 +163,7 @@
     {#if lines.length === 0}
       <p class="empty">{tr('译文会出现在这里。')}</p>
     {:else}
-      {#each lines as line (line.id)}
+      {#each lines as line, index (line.id)}
         <div
           class="line selectable"
           class:failed={line.mtState === 'failed'}
@@ -175,8 +185,17 @@
               {/if}
             </div>
           {/if}
-          <div class="line-text">{label(line)}</div>
-          {#if line.mtState === 'failed'}
+          <!--
+            * Nothing at all while the translation is still coming: a sentence is
+            * either there to read or it is not, and a placeholder in its place made
+            * every line flash `翻译中…` — which read as the text arriving twice, and
+            * as a promise the panel could not always keep. The text fades in when
+            * it lands (`.line-text` in app.css).
+            -->
+          {#if line.translation}
+            <div class="line-text size-{tier(index)}">{line.translation}</div>
+          {:else if line.mtState === 'failed'}
+            <div class="line-text size-{tier(index)}">{tr('翻译失败')}</div>
             <button
               class="rc-btn small"
               onclick={(e) => {

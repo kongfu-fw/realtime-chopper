@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { get } from 'svelte/store'
   import TitleBar from './components/TitleBar.svelte'
   import SubtitleBar from './components/SubtitleBar.svelte'
   import AsrPanel from './components/AsrPanel.svelte'
@@ -15,6 +16,7 @@
     logNotice,
     logOpen,
     headphonePrompt,
+    installLang,
     acknowledgeHeadphones,
   } from './lib/app/state'
   import { getSettings, forgetModel, settings } from './lib/store/settings'
@@ -34,6 +36,12 @@
   import { rememberGpuFailure } from './lib/asr/device'
   import { takeAsrCrashReport } from './lib/boot-guard'
   import { APP_VERSION } from './lib/app/version'
+  import {
+    createUpdateChecker,
+    UPDATE_ATTEMPT_KEY,
+    UPDATE_CHECK_MIN_GAP_MS,
+    UPDATE_CHECK_MS,
+  } from './lib/app/update'
   import { effectiveLang, setUiLang, t, translator, uiLang } from './lib/i18n/index.ts'
 
   // Strings shown in the markup go through this one, so that picking a different
@@ -75,6 +83,83 @@
     void $settings
     session.applySettings()
   })
+
+  // ------------------------------------------------------------- panel split
+  /**
+   * How much of the content area the original-text panel gets.
+   *
+   * Kept under its own `localStorage` key rather than in settings: it is a window
+   * measurement ("how much room does the text need right now"), not a preference
+   * about the app, and the settings screen is not the place to go looking for it.
+   * The default is the 50/50 the layout had before the divider existed, and the
+   * range is bounded so neither panel can be dragged out of existence.
+   */
+  const SPLIT_KEY = 'rc.split.v1'
+  const SPLIT_MIN = 0.18
+  const SPLIT_MAX = 0.82
+  /** The same query `app.css` stacks the panels with — the drag axis follows it. */
+  const STACKED_QUERY = '(pointer: coarse) and (orientation: portrait)'
+
+  function clampSplit(value: number): number {
+    return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, value))
+  }
+
+  function readSplit(): number {
+    try {
+      const stored = Number.parseFloat(localStorage.getItem(SPLIT_KEY) ?? '')
+      if (Number.isFinite(stored)) return clampSplit(stored)
+    } catch {
+      /* storage refused: the split just does not survive the page */
+    }
+    return 0.5
+  }
+
+  function saveSplit(): void {
+    try {
+      localStorage.setItem(SPLIT_KEY, String(split))
+    } catch {
+      /* see `readSplit` */
+    }
+  }
+
+  let split = $state(readSplit())
+  /** True while the layout is the stacked one, where the divider drags up and down. */
+  let stacked = $state(window.matchMedia(STACKED_QUERY).matches)
+  let panelsEl: HTMLDivElement | undefined = $state()
+  let splitDragging = $state(false)
+
+  function onSplitDown(event: PointerEvent): void {
+    splitDragging = true
+    // Capture, not a document listener: the pointer only has to stay on the
+    // divider to keep dragging it, and a move that runs off the edge still counts.
+    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+
+  function onSplitMove(event: PointerEvent): void {
+    if (!splitDragging || !panelsEl) return
+    const rect = panelsEl.getBoundingClientRect()
+    split = clampSplit(
+      stacked ? (event.clientY - rect.top) / rect.height : (event.clientX - rect.left) / rect.width,
+    )
+  }
+
+  function endSplitDrag(event: PointerEvent): void {
+    if (!splitDragging) return
+    splitDragging = false
+    ;(event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId)
+    saveSplit()
+  }
+
+  /** The same adjustment from the keyboard, which a drag-only control would deny. */
+  function onSplitKey(event: KeyboardEvent): void {
+    const back = event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+    const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown'
+    if (!back && !forward) return
+    split = clampSplit(split + (back ? -0.04 : 0.04))
+    saveSplit()
+    event.preventDefault()
+  }
 
   onMount(() => {
     // English no longer has a second module (Parakeet) — anyone who installed it
@@ -224,6 +309,90 @@
     document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('pagehide', onPageHide)
 
+    /*
+     * A page that never navigates never learns about a deployment. iOS keeps a
+     * suspended Home Screen web app alive for days, and the page that comes back
+     * is still the build it was opened with — across however many deploys
+     * happened in between. Every check from the outside (the deployed shell, the
+     * asset hashes, the service worker) says the app is current, and the phone
+     * says otherwise, and both are right. So the page asks the server for its own
+     * `index.html` and compares the version stamped into it with the one it is
+     * running; `lib/app/update.ts` owns the rule, this is when it is asked and
+     * what a postponed update says on screen.
+     */
+    const updates = createUpdateChecker({
+      current: APP_VERSION,
+      fetchIndex: async () => {
+        // `no-store`, because the whole question is what the server has *now*.
+        // The request also goes through the service worker, which is
+        // network-first and falls back to its cache only when offline.
+        const response = await fetch(new URL('./', location.href), { cache: 'no-store' })
+        if (!response.ok) throw new Error(`index.html: ${response.status}`)
+        return response.text()
+      },
+      // The things a reload would take away, in the order they matter: a session
+      // in progress, a transcript the user may still need, and a module download
+      // the install dialog is watching. Everything else on screen is rebuilt from
+      // storage on the way back up. `session.model` is deliberately not part of
+      // this: it is a load *progress* readout, and a load abandoned by a cancelled
+      // start leaves it non-null forever — which would turn the update check off
+      // for the rest of the page's life, the one failure this feature exists to
+      // prevent.
+      canReload: () =>
+        get(sessionState) === 'idle' &&
+        get(linesStore).length === 0 &&
+        get(installLang) === null,
+      reload: () => location.reload(),
+      beforeReload: (version) =>
+        info('session', t('服务端有新版本 {version}，页面正在自动更新', { version })),
+      announce: (version) => {
+        warn('session', t('服务端有新版本 {version}，这一场还占着页面：先不更新', { version }))
+        session.notice.set(
+          t('服务端有新版本 {version}：不打断这一场；把应用关掉再打开就会更新', { version }),
+        )
+      },
+      // The loop guard has to survive the reload it describes, hence the storage
+      // rather than a variable — see `UPDATE_ATTEMPT_KEY`. If storage is refused
+      // (private mode), the worst case is one extra reload of an unchanged page.
+      reloadedVersion: () => {
+        try {
+          return sessionStorage.getItem(UPDATE_ATTEMPT_KEY)
+        } catch {
+          return null
+        }
+      },
+      rememberReload: (version) => {
+        try {
+          sessionStorage.setItem(UPDATE_ATTEMPT_KEY, version)
+        } catch {
+          /* see above */
+        }
+      },
+    })
+    let lastUpdateCheck = 0
+    const checkForUpdates = () => {
+      const now = Date.now()
+      if (now - lastUpdateCheck < UPDATE_CHECK_MIN_GAP_MS) return
+      lastUpdateCheck = now
+      void updates.check()
+    }
+    // Foreground is the moment that matters: the user is looking at the app
+    // again, and a build that went stale while it was suspended starts being
+    // wrong right there.
+    const onUpdateCheck = () => {
+      if (document.visibilityState === 'visible') checkForUpdates()
+    }
+    document.addEventListener('visibilitychange', onUpdateCheck)
+    const updateTimer = setInterval(checkForUpdates, UPDATE_CHECK_MS)
+    checkForUpdates()
+
+    // The divider's axis has to follow the layout, and the layout is a media
+    // query — so the query is watched rather than sampled once. Rotating the
+    // phone is exactly when this changes.
+    const stackedMedia = window.matchMedia(STACKED_QUERY)
+    const onStacked = () => (stacked = stackedMedia.matches)
+    stackedMedia.addEventListener('change', onStacked)
+
     if ('storage' in navigator && 'persist' in navigator.storage) {
       // Installed PWAs are exempt from iOS's 7-day storage sweep; asking for
       // persistence is the cheapest available protection for a 230 MB model.
@@ -236,6 +405,9 @@
       window.removeEventListener('pointerdown', armSpeech)
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('pagehide', onPageHide)
+      document.removeEventListener('visibilitychange', onUpdateCheck)
+      clearInterval(updateTimer)
+      stackedMedia.removeEventListener('change', onStacked)
     }
   })
 </script>
@@ -262,8 +434,36 @@
       {#if $settings.debugMode}
         <SubtitleBar />
       {/if}
-      <div class="panels">
+      <div class="panels" bind:this={panelsEl} style={`--split:${(split * 100).toFixed(2)}%`}>
         <AsrPanel {lines} audioAvailable={keepAudio} />
+        <!--
+         * Draggable, and reachable from the keyboard: this is the ARIA window
+         * splitter (a separator with a tabindex), and the arrow keys move it. A
+         * control that only responds to a drag is a control half the users do not
+         * have.
+         *
+         * The two rules below are silenced on purpose, with the reason attached:
+         * they describe the *decorative* separator, and a focusable one is the
+         * interactive splitter.
+         -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <div
+          class="splitter"
+          class:dragging={splitDragging}
+          role="separator"
+          aria-orientation={stacked ? 'horizontal' : 'vertical'}
+          aria-label={tr('拖动调整原文和译文的大小')}
+          aria-valuenow={Math.round(split * 100)}
+          aria-valuemin={Math.round(SPLIT_MIN * 100)}
+          aria-valuemax={Math.round(SPLIT_MAX * 100)}
+          tabindex="0"
+          onpointerdown={onSplitDown}
+          onpointermove={onSplitMove}
+          onpointerup={endSplitDrag}
+          onpointercancel={endSplitDrag}
+          onkeydown={onSplitKey}
+        ></div>
         <TranslationPanel {lines} />
       </div>
     {/if}

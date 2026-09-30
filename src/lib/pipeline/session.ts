@@ -10,7 +10,7 @@ import type {
 import type { Settings } from '../store/settings'
 import { getSettings, ttsVoiceFor } from '../store/settings'
 import { asrCrashCount, clearAsrAttempt, forgetAsrCrashes, markAsrAttempt } from '../boot-guard'
-import { startCapture, type CaptureHandle } from '../audio/capture'
+import { startCapture, type CaptureHandle, type CaptureRevival } from '../audio/capture'
 import { keepScreenAwake, wakeLockAdvice, type ScreenWakeKeeper } from '../app/wakelock'
 import {
   deleteRecordingFile,
@@ -85,6 +85,25 @@ function flawReason(flaw: TranscriptFlaw): string {
  * legitimately allowed to take minutes.
  */
 const MODEL_LOAD_TIMEOUT_MS = 240_000
+
+/**
+ * How often a running session checks that the microphone is still delivering.
+ *
+ * A second, because the failure this exists for leaves no trace anywhere: iOS
+ * takes the device away while the page stays on screen, the track ends or the
+ * context stops, and nothing fires. Every second the panel goes on saying
+ * "recording" over silence is a second of the lesson on the floor.
+ */
+const CAPTURE_WATCH_MS = 1000
+
+/**
+ * How long after one automatic restart the next one is refused.
+ *
+ * A microphone that dies again seconds after being reopened is not something to
+ * keep feeding in a loop: the user is told, and the next return to the app may try
+ * again.
+ */
+const AUTO_RESUME_COOLDOWN_MS = 20_000
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -249,6 +268,26 @@ export class Session {
   private startAbort: AbortController | null = null
   private preferredProvider: MtProviderId | null = null
   private stopping = false
+
+  /**
+   * Set when a session had to stop because the system took the microphone away,
+   * and consumed by the next attempt to bring it back (see `stopAfterMicrophoneLoss`
+   * and `maybeResumeAfterLoss`).
+   *
+   * The distinction it carries is the whole point: a session the *user* ended is
+   * over, and a session the system ended is one they are still expecting to be
+   * running. Without this flag the app cannot tell the two apart, and the button it
+   * draws afterwards is wrong for one of them either way.
+   */
+  private resumeAfterLoss = false
+  /** When the last automatic restart was attempted, for the cooldown. */
+  private lastAutoResumeAt = 0
+  /** The once-a-second liveness check that runs while a session records. */
+  private captureWatch: ReturnType<typeof setInterval> | null = null
+  /** Consecutive dead looks, so one blip does not count as a lost microphone. */
+  private deadLooks = 0
+  /** True while a revival is in flight, so two callers cannot both open a device. */
+  private reviving = false
 
   constructor() {
     this.settings = getSettings()
@@ -456,6 +495,9 @@ export class Session {
 
   async start(): Promise<void> {
     if (get(this.state) === 'recording') return
+    // A start answers the "come back after the system took the microphone" state
+    // whether the user asked for it or the app did.
+    this.resumeAfterLoss = false
     this.state.set('preparing')
     this.stopping = false
     // A failure from the previous attempt must not linger above the button.
@@ -554,6 +596,9 @@ export class Session {
       this.stage.set('')
       this.state.set('recording')
       this.startLagLoop()
+      // The microphone is alive *now*; this is what notices when it stops being so
+      // without telling anyone (see `checkCapture`).
+      this.startCaptureWatch()
       // Not the bare 开始录音: that is the record button's label, and one string
       // cannot be both a button and a log line in a language where the two read
       // differently ("Start recording" against "Recording started").
@@ -584,6 +629,11 @@ export class Session {
   async stop(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
+    // A stop the user asked for is the end of it. Only a session the system ended
+    // is brought back by `maybeResumeAfterLoss`, and this is the line that keeps
+    // the two from being confused — the involuntary path sets the flag again after
+    // this returns.
+    this.resumeAfterLoss = false
     this.state.set('stopping')
     try {
       // The microphone goes first. Everything else can be told to drain, but a
@@ -673,6 +723,101 @@ export class Session {
     if (document.visibilityState !== 'visible') return
     void this.wake?.acquire()
     if (get(this.state) === 'recording') void this.reviveCapture()
+    // A session the *system* ended is one the user still expects to be running, so
+    // coming back is where it starts again by itself.
+    this.maybeResumeAfterLoss()
+  }
+
+  /**
+   * Watches the microphone for as long as the session records.
+   *
+   * Both halves of the failure are here. iOS can take the device away from a page
+   * that is still on screen — a call, another app, the system deciding — and then
+   * the track ends or the audio context stops with no event and no error. Left
+   * alone, the interface goes on saying "recording" over silence, which is the one
+   * failure this app exists to prevent: the session looks alive and the transcript
+   * quietly ends.
+   */
+  private startCaptureWatch(): void {
+    this.stopCaptureWatch()
+    this.deadLooks = 0
+    this.captureWatch = setInterval(() => void this.checkCapture(), CAPTURE_WATCH_MS)
+  }
+
+  private stopCaptureWatch(): void {
+    if (this.captureWatch) clearInterval(this.captureWatch)
+    this.captureWatch = null
+    this.deadLooks = 0
+  }
+
+  private async checkCapture(): Promise<void> {
+    if (this.stopping) return
+    const capture = this.capture
+    if (!capture) return
+    if (capture.alive()) {
+      this.deadLooks = 0
+      return
+    }
+    // Two looks in a row, not one: iOS mutes a track for a moment whenever another
+    // audio session takes the route (a notification chime, the read-aloud starting
+    // on the same device), and reopening the microphone over a blip would be a
+    // worse repair than the blip.
+    this.deadLooks += 1
+    if (this.deadLooks < 2) return
+    // A hidden page is the foreground handler's business, not this one's: the page
+    // is likely suspended anyway, and asking iOS for the device from a hidden page
+    // is refused outright.
+    if (document.visibilityState !== 'visible') return
+    this.deadLooks = 0
+    await this.reviveCapture()
+  }
+
+  /**
+   * Ends a session whose microphone the system took away.
+   *
+   * `stop()` does the teardown — the file is closed, the queues drain, the button
+   * goes back to a start — and this is what remembers, *after* that teardown has
+   * cleared it, that the end was not the user's. Then it either starts again on the
+   * spot (the usual case: the page is visible and the device is back) or leaves the
+   * sentence that says when it will.
+   */
+  private async stopAfterMicrophoneLoss(): Promise<void> {
+    warn('capture', t('麦克风被系统收回了，这一场已停下'))
+    await this.stop()
+    this.resumeAfterLoss = true
+    if (!this.maybeResumeAfterLoss()) {
+      this.notice.set(
+        t('麦克风被系统收回了，录音已停下（录音和文字都保留着）；回到应用会自动重新开始'),
+      )
+    }
+  }
+
+  /**
+   * Starts the next session by itself after one the system ended.
+   *
+   * Returns whether a start was attempted, so the caller knows whether the user
+   * still needs the sentence about coming back.
+   *
+   * Three gates, and each is one of the ways this could go wrong: only an
+   * involuntary end sets the flag (a user's stop is an answer, not an accident),
+   * the page has to be on screen (iOS refuses the device from a hidden page, and a
+   * session that started while nobody was looking would be a surprise), and one
+   * restart per cooldown — a microphone that dies again seconds after being
+   * reopened must not be reopened in a loop.
+   */
+  private maybeResumeAfterLoss(): boolean {
+    if (!this.resumeAfterLoss) return false
+    if (get(this.state) !== 'idle') return false
+    if (document.visibilityState !== 'visible') return false
+    if (Date.now() - this.lastAutoResumeAt < AUTO_RESUME_COOLDOWN_MS) return false
+    this.lastAutoResumeAt = Date.now()
+    this.resumeAfterLoss = false
+    info('session', t('麦克风被系统收回后，自动重新开始录音'))
+    // A failed restart reports itself (`start` sets the error state and the
+    // sentence), and swallowing the rejection here is what keeps the automatic
+    // path from turning an expected failure into an unhandled one.
+    void this.start().catch(() => undefined)
+    return true
   }
 
   /**
@@ -686,8 +831,22 @@ export class Session {
    */
   private async reviveCapture(): Promise<void> {
     const capture = this.capture
-    if (!capture) return
-    const outcome = await capture.revive()
+    // One repair at a time: the watchdog and the return to the foreground both want
+    // the microphone back, and two revivals racing would open two devices — one of
+    // which nothing would ever close.
+    if (!capture || this.reviving) return
+    this.reviving = true
+    let outcome: CaptureRevival
+    try {
+      outcome = await capture.revive()
+    } catch {
+      // `revive` is written not to throw — it reports `failed` instead — and this
+      // is what makes a future break of that promise end the session the same way
+      // rather than leave an unhandled rejection behind.
+      outcome = 'failed'
+    } finally {
+      this.reviving = false
+    }
     if (outcome === 'ok') {
       debug('capture', t('回到前台：麦克风一直在工作'))
       return
@@ -701,12 +860,7 @@ export class Session {
       this.notice.set(t('刚才息屏了一小段，那一段没有录到；录音和识别已继续'))
       return
     }
-    warn('capture', t('息屏后麦克风没能恢复，这一场已停下'))
-    await this.stop()
-    // Set after `stop`, which clears the notice on its way out.
-    this.notice.set(
-      t('息屏后麦克风被系统收回了，这一场已经停下（录音和文字都保留着）；想继续就再点一次开始'),
-    )
+    await this.stopAfterMicrophoneLoss()
   }
 
   /**
@@ -729,6 +883,7 @@ export class Session {
     // back even when everything below it fails.
     await this.releaseScreenLock()
     this.stopLagLoop()
+    this.stopCaptureWatch()
     this.segQ.close()
     this.mtQ.close()
     this.readQ.close()

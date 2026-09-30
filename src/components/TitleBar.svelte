@@ -37,8 +37,50 @@
     info('ui', t('译文语言切换为{lang}', { lang: langLabel(lang) }))
   }
 
-  /** The mascot (or the name beside it) opens the easter egg. */
+  /**
+   * The mascot: one tap is a pat, three quick taps open the easter egg.
+   *
+   * It used to open on any click, which is the wrong door for something that sits
+   * in the corner of the window a person touches all day: one stray tap and the app
+   * leaves the screen. Now a tap is answered with a wobble and nothing else, and
+   * the egg costs the three taps a phone game would ask for.
+   */
+  const TAP_WINDOW_MS = 600
+  const SHAKE_MS = 420
+  const TAPS_FOR_EGG = 3
   let about = $state(false)
+  let shake = $state(false)
+  let taps = 0
+  let tapTimer: ReturnType<typeof setTimeout> | undefined
+  let shakeTimer: ReturnType<typeof setTimeout> | undefined
+
+  /** Answers a tap with the wobble, restarting it if the previous one is still running. */
+  function pat(): void {
+    shake = true
+    if (shakeTimer) clearTimeout(shakeTimer)
+    shakeTimer = setTimeout(() => (shake = false), SHAKE_MS)
+  }
+
+  function onBrand(event: MouseEvent): void {
+    // A keyboard activation arrives with `detail === 0`, and it cannot come three
+    // times in a row — the egg is the only thing behind this button, so Enter (or
+    // Space) opens it directly rather than leaving the keyboard without a door.
+    if (event.detail === 0) {
+      about = true
+      return
+    }
+    pat()
+    taps += 1
+    if (tapTimer) clearTimeout(tapTimer)
+    if (taps >= TAPS_FOR_EGG) {
+      taps = 0
+      about = true
+      return
+    }
+    // Each tap restarts the window, so "three quick taps" is measured between
+    // taps rather than from the first one.
+    tapTimer = setTimeout(() => (taps = 0), TAP_WINDOW_MS)
+  }
 </script>  <div class="titlebar">
     <!-- The language pair is centred by the grid, not by whatever happens to sit
          beside it, so this cell is sized by the grid and clipped if the window
@@ -46,7 +88,8 @@
     <button
       type="button"
       class="brand"
-      onclick={() => (about = true)}
+      class:shake
+      onclick={onBrand}
       title={tr('关于{name}', { name: APP_NAME })}
       aria-label={tr('关于{name}', { name: APP_NAME })}
     >
@@ -157,6 +200,40 @@
   .brand:hover :global(.mark),
   .brand:focus-visible :global(.mark) {
     transform: scale(1.12) rotate(-4deg);
+  }
+
+  /*
+   * The pat: a short wobble of the mascot, and nothing else happens. It is the
+   * whole answer to a tap, which is what makes a tap feel like touching a
+   * character rather than like a missed click — and what makes the difference
+   * between one tap and three taps something the finger learns.
+   */
+  .brand.shake :global(.mark) {
+    animation: rc-pat 420ms ease-in-out;
+  }
+
+  @keyframes rc-pat {
+    0% {
+      transform: none;
+    }
+    25% {
+      transform: rotate(-11deg) scale(1.06);
+    }
+    55% {
+      transform: rotate(9deg) scale(1.04);
+    }
+    80% {
+      transform: rotate(-4deg);
+    }
+    100% {
+      transform: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .brand.shake :global(.mark) {
+      animation: none;
+    }
   }
 
   .brand:focus-visible {

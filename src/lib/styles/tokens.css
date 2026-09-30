@@ -35,6 +35,18 @@
     'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
   --rc-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
+  /*
+   * The leading of a translation row, in pixels and the same for every size.
+   *
+   * A plain value rather than a ratio on purpose: with `line-height: 1.45` a row's
+   * height is a function of its font size, so a sentence ageing from the newest
+   * size to the next would shrink its own block — and the block is what the
+   * reader's eye is already on when the next sentence arrives. Fixed, the height
+   * of a row depends on how many lines it wraps to and nothing else. The
+   * translation list's reserved room is expressed in multiples of this number.
+   */
+  --rc-line-lh: 26px;
+
   --rc-header-h: 56px;
   --rc-footer-h: 68px;
   --rc-subtitle-h: 34px;

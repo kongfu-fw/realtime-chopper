@@ -304,10 +304,15 @@ export const KO_SHELL: Record<string, string> = {
   '操作失败：{error}': '실행하지 못했습니다: {error}',
   '未知': '알 수 없음',
   '已取消安装识别模块（{reason}）': '인식 모듈 설치를 취소했습니다({reason})',
-  '浏览器问权限时点「允许」': '브라우저가 권한을 물으면 「허용」을 누르세요',
   '停止录音': '녹음 중지',
   '取消启动': '시작 취소',
   '开始录音': '녹음 시작',
+  // The labels on the two status-bar pills, which sit side by side in a phone's
+  // width: the full sentences above are what a screen reader and the tooltip get.
+  '录音': '녹음',
+  '停止': '정지',
+  '取消': '취소',
+  '静音': '음소거',
   '跳到最新（落后 {sec} 秒）': '최신으로 건너뛰기 ({sec}초 뒤처짐)',
 
   // ── SubtitleBar.svelte ────────────────────────────────────────────────────

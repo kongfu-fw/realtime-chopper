@@ -176,6 +176,22 @@ export class Session {
   })
   readonly notice: Writable<string> = writable('')
   readonly rate: Writable<number> = writable(1)
+  /**
+   * The microphone's input level: the segmenter's rms of the last frame.
+   *
+   * Nothing draws this any more, by request. It reached the screen as the record
+   * button's halo, then as a fill inside the button, and the verdict on both was the
+   * same — a level readout is something to interpret, and interpreting it was a job
+   * the reader had to keep doing in the middle of a lesson, at a distance where the
+   * interpretation is unreliable anyway (the whole history is in the "电平" section
+   * of DOCS.md). "Is it recording?" is answered by the button, and "can it hear
+   * me?" by the transcript underneath.
+   *
+   * Kept because it costs a store write per 100 ms block and it is the one number
+   * that answers "was the input even there?" when a session recognises nothing at
+   * all: re-deriving it is the hard part, and the dB scale above it lives on this
+   * side of the UI. Nothing subscribes today.
+   */
   readonly level: Writable<number> = writable(0)
   readonly providerLabel: Writable<string> = writable('')
   /**

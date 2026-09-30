@@ -15,44 +15,45 @@
 
   // `state` is renamed on destructuring: a local called `state` would collide
   // with the `$state` rune.
-  const { state: sessionState, level, notice, queues, stage } = session
+  const { state: sessionState, lines, autoRead } = session
 
   let busy = $state(false)
 
   const recording = $derived($sessionState === 'recording')
   const preparing = $derived($sessionState === 'preparing' || $sessionState === 'stopping')
-  const lagging = $derived($queues.lagSeconds > 8)
+  /**
+   * Whether a sentence is being read out right now.
+   *
+   * Read off the lines rather than kept as a flag of its own: the reader marks the
+   * line it is speaking, and that mark is already what the translation panel draws
+   * its own mark from. Two sources for one fact is how a switch comes to say
+   * "reading" while nothing is being read.
+   */
+  const speaking = $derived($lines.some((line) => line.ttsState === 'speaking'))
 
   /**
-   * The live input level, as the fraction the ring on the button consumes.
+   * The button's own word, in the state it is in.
    *
-   * What arrives is the segmenter's `rms` of one 10 ms frame (see the vad worker
-   * for why that producer and only that one), and rms is the wrong thing to map
-   * linearly: a quiet room sits around 0.003 and a person talking at a normal
-   * distance around 0.02-0.1, which is a factor of thirty squeezed into the bottom
-   * tenth of the range. The linear version this replaced multiplied by 3.2 — the
-   * factor the old horizontal bar used, where the number was a peak — and so spent
-   * its life between 0.01 and 0.3: a halo under a pixel wide that never appeared to
-   * move.
-   *
-   * So the scale is in decibels, anchored on the segmenter's own two numbers: its
-   * absolute floor of 0.0035 rms (-49 dBFS) and the "real speech at RMS 0.08"
-   * (-22 dBFS) its tuning is written against. Floor at -60 dBFS and ceiling at
-   * -12 puts room tone at about a fifth of the ring and leaves the top half for
-   * someone talking.
+   * `取消启动` while preparing is deliberate: the microphone permission prompt is
+   * the one wait the user can actually get out of, and a disabled button in its
+   * place would leave a phone sitting behind a prompt with no way back.
    */
-  const METER_FLOOR_DB = -60
-  const METER_CEIL_DB = -12
+  const recordLabel = $derived(
+    preparing ? tr('取消启动') : recording ? tr('停止录音') : tr('开始录音'),
+  )
 
-  function meterFraction(level: number): string {
-    // Also the branch for `undefined` and NaN: the store is 0 before a session.
-    if (!(level > 0)) return '0.000'
-    const db = 20 * Math.log10(level)
-    const fraction = (db - METER_FLOOR_DB) / (METER_CEIL_DB - METER_FLOOR_DB)
-    return Math.min(1, Math.max(0, fraction)).toFixed(3)
-  }
+  /**
+   * The same state, in one word — what the pill actually shows.
+   *
+   * The full sentence above is the tooltip and the accessible name; the pill
+   * itself is a thumb target at the bottom of a phone with a second one beside it,
+   * so it says what the button *is* in the fewest characters that still read as
+   * words rather than as an icon (`录音` / `停止` / `取消`).
+   */
+  const pillLabel = $derived(preparing ? tr('取消') : recording ? tr('停止') : tr('录音'))
 
-  const meterLevel = $derived(meterFraction($level))
+  /** What the read-aloud switch currently is, in one word, for the same reason. */
+  const readLabel = $derived($autoRead ? tr('朗读') : tr('静音'))
 
   async function toggle() {
     // While we are waiting on the microphone permission prompt the button turns
@@ -102,109 +103,90 @@
   }
 </script>
 
-<div class="left">
-  {#if preparing}
-    <!-- The real phase, not a guess: loading the module, probing the translator
-         and warming up the microphone are three different waits. -->
-    <span class="hint">{$stage || tr('浏览器问权限时点「允许」')}</span>
-  {/if}
-  {#if $notice}
-    <span class="hint warn" title={$notice}>{$notice}</span>
-  {/if}
-</div>
-
 <!--
- * The input level is drawn *on* the button: a halo that grows with the voice,
- * inside a fixed ring that marks full scale. "It is recording" and "it can hear
- * me" are then one look at one place, instead of two readings on either side of
- * the bar.
+ * The two things the user reaches for, at the two bottom corners of the screen:
+ * recording on the left, and the read-aloud switch on the right. Both are pills,
+ * because a pill is a control you press with a thumb without aiming.
+ *
+ * And that is the whole bar. It used to hold a column of sentences between them
+ * as well — the start-up phase, the notices, the "skip to latest" escape hatch —
+ * and the argument for taking them out is the phone rather than the pixels: a bar
+ * whose length changes is a bar whose two ends move, and the ends are what a thumb
+ * is aimed at. Nothing is lost by it either, because every one of those sentences
+ * is written to the log as it happens (the notice mirror in `App.svelte`), and the
+ * log is where a classroom's worth of these is actually read.
+ *
+ * The one exception is the microphone level, which is not a sentence and is not
+ * drawn at all any more: "it can hear me" was a readout to interpret, and at the
+ * distance a phone sits from its owner it was being interpreted wrong (the whole
+ * history is in the "电平" section of DOCS.md). The button now says what it does
+ * and whether it is doing it; whether the microphone is loud enough is a question
+ * the transcript answers.
  -->
 <button
   class="record-btn"
   class:recording
-  style={`--level:${meterLevel}`}
   onclick={toggle}
-  aria-label={recording ? tr('停止录音') : preparing ? tr('取消启动') : tr('开始录音')}
-  title={recording ? tr('停止录音') : preparing ? tr('取消启动') : tr('开始录音')}
+  aria-label={recordLabel}
+  title={recordLabel}
   disabled={$sessionState === 'stopping'}
 >
-  {#if preparing}
-    <span class="spinner" aria-hidden="true"></span>
-  {:else if recording}
-    <span class="square" aria-hidden="true"></span>
-  {:else}
-    <span class="dot" aria-hidden="true"></span>
-  {/if}
+  <span class="glyph" aria-hidden="true">
+    {#if preparing}
+      <span class="spinner"></span>
+    {:else if recording}
+      <span class="square"></span>
+    {:else}
+      <span class="dot"></span>
+    {/if}
+  </span>
+  <span class="label">{pillLabel}</span>
 </button>
 
-<div class="right">
-  {#if lagging}
-    <!-- The only path in the app that discards queued speech, and it only
-         happens when the user asks for it. -->
-    <button class="rc-btn small accent" onclick={() => session.skipToLatest()}>
-      {tr('跳到最新（落后 {sec} 秒）', { sec: $queues.lagSeconds.toFixed(0) })}
-    </button>
-  {/if}
-</div>
+<!--
+ * The read-aloud switch, and the same three bars the speaking line wears in the
+ * translation panel — so "the app is talking" is legible from the corner of the
+ * screen, next to the button that says whether it will talk at all.
+ *
+ * The bars keep their space when nothing is being read (dimmed, not removed): a
+ * control whose width changes every sentence is a control that moves under the
+ * thumb that is about to press it.
+ -->
+<button
+  class="read-btn"
+  class:on={$autoRead}
+  class:reading={speaking}
+  aria-pressed={$autoRead}
+  aria-label={$autoRead ? tr('暂停自动朗读') : tr('恢复自动朗读')}
+  title={$autoRead ? tr('暂停自动朗读') : tr('恢复自动朗读')}
+  onclick={() => autoRead.set(!$autoRead)}
+>
+  <span class="label">{$autoRead ? '🔊' : '🔇'} {readLabel}</span>
+  <span class="playing-bars" aria-hidden="true"><i></i><i></i><i></i></span>
+</button>
 
 {#if $installLang}
   <ModelInstallModal want={$installLang} ondone={onInstallDone} oncancel={onInstallCancel} />
 {/if}
 
 <style>
-  .left,
-  .right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--rc-ink-soft);
-    min-width: 0;
-  }
-
-  /*
-   * The hints moved to the left column, which is the one the level meter used to
-   * occupy. `min-width: 0` on the containers is what lets a long notice ellipsise
-   * instead of pushing the button off centre: the footer is a `1fr auto 1fr` grid,
-   * and a grid item's automatic minimum size would otherwise be its full text.
-   */
-  .left {
-    justify-content: flex-start;
-  }
-
-  .right {
-    justify-content: flex-end;
-  }
-
-  .hint {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100%;
-  }
-
-  .hint.warn {
-    color: var(--rc-warn);
-    font-weight: 600;
-  }
-
   .dot {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     background: #fff;
   }
 
   .square {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     background: #fff;
     border-radius: 2px;
   }
 
   .spinner {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
     border: 2px solid rgb(255 255 255 / 45%);
     border-top-color: #fff;
@@ -214,6 +196,89 @@
   @keyframes rc-spin {
     to {
       transform: rotate(360deg);
+    }
+  }
+
+  /*
+   * The read-aloud switch.
+   *
+   * On is the ordinary state, so it is the quiet one: solid ink outline, ink text,
+   * the speaker emoji. Off has to be the one that looks different, because "why is
+   * nothing being read out?" is the question this switch answers — hence the
+   * dashed outline, the soft grey, and the crossed-out speaker in its label.
+   */
+  .read-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 40px;
+    padding: 0 14px;
+    border: 2px solid var(--rc-line-strong);
+    border-radius: var(--rc-radius-pill);
+    background: var(--rc-surface);
+    color: var(--rc-ink-soft);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: var(--rc-shadow-hard);
+  }
+
+  .read-btn.on {
+    border-color: var(--rc-ink);
+    color: var(--rc-ink);
+  }
+
+  .read-btn:not(.on) {
+    /* Off is the state that has to look different: the emoji says it, the darker
+       outline says it, and the word says it — three readings of one fact, because
+       "why is nothing being read out?" is the question this switch answers. */
+    border-style: dashed;
+  }
+
+  .read-btn .label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /*
+   * The bars keep their width whether or not anything is being read, and this is
+   * the whole of that decision: a footer control that grew and shrank once per
+   * sentence would move under the thumb reaching for it. Colour and motion are
+   * what change.
+   */
+  .read-btn .playing-bars {
+    color: var(--rc-line-strong);
+    opacity: 0.55;
+  }
+
+  .read-btn.reading .playing-bars {
+    color: var(--rc-ok);
+    opacity: 1;
+  }
+
+  .read-btn:not(.reading) .playing-bars i {
+    animation: none;
+    transform: scaleY(0.35);
+  }
+
+  @media (any-hover: hover) {
+    .read-btn:hover {
+      border-color: var(--rc-ink);
+      color: var(--rc-ink);
+    }
+  }
+
+  /*
+   * The narrowest phones (a 320 px screen, still plenty of them in a classroom).
+   * Two labelled pills plus the notices do not fit there, and the notice is the
+   * one piece of the three that cannot be guessed from a shape: the speaker emoji
+   * and the bars say what the switch is and which way it is set, and the full name
+   * is on the accessible label either way.
+   */
+  @media (max-width: 360px) {
+    .read-btn .label {
+      display: none;
     }
   }
 </style>

@@ -105,7 +105,10 @@
               </button>
             </div>
           {/if}
-          <div class="line-text">{line.text}</div>
+          <!-- The same fade the translation rows use: a row arrives with its text,
+               but it arrives *suddenly*, one sentence at a time, and this is the
+               panel the eye is not watching. -->
+          <div class="line-text"><span class="line-inner">{line.text}</span></div>
 
           {#if $settings.debugMode}
             <!-- Requirement 12: put the audio and the text side by side so the

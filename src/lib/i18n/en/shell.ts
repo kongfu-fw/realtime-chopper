@@ -309,10 +309,15 @@ export const EN_SHELL: Record<string, string> = {
   '操作失败：{error}': 'That did not work: {error}',
   '未知': 'unknown',
   '已取消安装识别模块（{reason}）': 'Cancelled installing the recognition module ({reason})',
-  '浏览器问权限时点「允许」': 'Tap “Allow” when the browser asks',
   '停止录音': 'Stop recording',
   '取消启动': 'Cancel starting',
   '开始录音': 'Start recording',
+  // The labels on the two status-bar pills, which sit side by side in a phone's
+  // width: the full sentences above are what a screen reader and the tooltip get.
+  '录音': 'Record',
+  '停止': 'Stop',
+  '取消': 'Cancel',
+  '静音': 'Muted',
   '跳到最新（落后 {sec} 秒）': 'Skip to newest ({sec}s behind)',
 
   // ── SubtitleBar.svelte ────────────────────────────────────────────────────

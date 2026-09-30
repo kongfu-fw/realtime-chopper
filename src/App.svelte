@@ -50,7 +50,7 @@
   // written once, and never re-rendered).
   const tr = $derived(translator($uiLang))
 
-  const { lines: linesStore, state: sessionState } = session
+  const { lines: linesStore, state: sessionState, notice } = session
   const lines = $derived($linesStore)
   const keepAudio = $derived($settings.keepAudio)
 
@@ -198,8 +198,10 @@
     if (!window.isSecureContext) {
       // On a phone this single fact explains almost everything that looks broken:
       // opened over a plain http:// LAN address, the browser withholds the
-      // microphone, Cache Storage and WebGPU at the same time. Say it where a
-      // phone can actually read it (the status bar), not just in the log.
+      // microphone, Cache Storage and WebGPU at the same time. Said twice on
+      // purpose: the line above is the fact, the notice below is the sentence for
+      // the person holding the phone — and the notice mirror further down is what
+      // puts that sentence in the log, now that no bar draws it.
       warn('session', t('当前不是安全上下文（https/localhost）：麦克风、模型缓存和显卡加速都会被浏览器禁用'))
       session.notice.set(t('这个地址不能用麦克风：请用 https 或电脑上的 localhost 打开'))
     }
@@ -386,6 +388,42 @@
     const updateTimer = setInterval(checkForUpdates, UPDATE_CHECK_MS)
     checkForUpdates()
 
+    /*
+     * Every notice the session produces, written to the log as it is produced.
+     *
+     * `session.notice` used to be the status bar's line: one sentence, on screen,
+     * explaining why nothing is being read out or why the microphone went quiet.
+     * The user asked for that bar to hold nothing but its two buttons, so the
+     * sentences need somewhere to go — and the log is the right place for them, not
+     * a second reason: a classroom's worth of notices is one line each, most of them
+     * arrive while nobody is looking at the phone, and the drawer can be read
+     * afterwards where a bar that changed width could only be noticed afterwards.
+     *
+     * One subscription rather than a log call beside each of the twenty-odd
+     * `notice.set`s: the invariant that matters is that *nothing lands here and is
+     * lost*, and a rule applied in one place is the only version of that rule a
+     * later change cannot forget. Most of those sites log the technical cause
+     * themselves; this line is the sentence the user would have read, which is
+     * exactly what a bug report needs and what the drawer previously could not show.
+     *
+     * Repeated while it stands writes one line, not one per sentence. The one
+     * notice that repeats by design is the read-aloud failure — a dead TTS proxy
+     * says the same thing once per sentence for the rest of the lesson — and a log
+     * whose drawer groups *by timestamp* is not helped by four thousand copies of
+     * it. Clearing the notice (`notice.set('')`, at the top of every start) is what
+     * makes the same sentence news again.
+     */
+    let lastNotice = ''
+    const stopNoticeMirror = notice.subscribe((text) => {
+      if (!text) {
+        lastNotice = ''
+        return
+      }
+      if (text === lastNotice) return
+      lastNotice = text
+      warn('ui', text)
+    })
+
     // The divider's axis has to follow the layout, and the layout is a media
     // query — so the query is watched rather than sampled once. Rotating the
     // phone is exactly when this changes.
@@ -402,6 +440,7 @@
     }
 
     return () => {
+      stopNoticeMirror()
       window.removeEventListener('pointerdown', armSpeech)
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('pagehide', onPageHide)
@@ -430,7 +469,7 @@
       <!-- The queue/lag strip (requirement 20) is a diagnostics readout: it is
            only rendered in debug mode. Nothing is lost by hiding it — a failed
            translation is marked on its own line in the translation panel, and
-           the "skip to latest" escape hatch lives in the status bar. -->
+           the "skip to latest" escape hatch lives in that panel's header. -->
       {#if $settings.debugMode}
         <SubtitleBar />
       {/if}

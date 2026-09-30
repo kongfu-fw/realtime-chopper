@@ -11,6 +11,7 @@ import type { Settings } from '../store/settings'
 import { getSettings, ttsVoiceFor } from '../store/settings'
 import { asrCrashCount, clearAsrAttempt, forgetAsrCrashes, markAsrAttempt } from '../boot-guard'
 import { startCapture, type CaptureHandle } from '../audio/capture'
+import { keepScreenAwake, wakeLockAdvice, type ScreenWakeKeeper } from '../app/wakelock'
 import {
   deleteRecordingFile,
   pcmSliceFromBlob,
@@ -191,6 +192,14 @@ export class Session {
   private readonly settings: Settings
 
   private capture: CaptureHandle | null = null
+  /**
+   * Keeps the screen on for as long as `capture` is open.
+   *
+   * Paired with the microphone rather than with `state`: both exist for exactly the
+   * span of a session, and the one thing that must never happen is a wake lock
+   * left behind by a session that ended (see `releaseScreenLock`).
+   */
+  private wake: ScreenWakeKeeper | null = null
   private vad: VadWorkerClient | null = null
   private asr: AsrWorkerClient | null = null
   private mt: MtWorkerClient | null = null
@@ -523,6 +532,10 @@ export class Session {
       // Speech is armed by the tap itself, not here — see `unlockSpeech`.
 
       this.stage.set(t('正在准备麦克风'))
+      // The screen lock goes on *before* the microphone is opened, and the order
+      // matters: on a phone the permission prompt is the longest wait in this
+      // method, and a screen that locks while it is up costs the whole start.
+      await this.keepScreenOn()
       this.capture = await startCapture({
         onChunk: (chunk, rate) => this.vad?.push(chunk, rate),
         signal: abort.signal,
@@ -603,6 +616,100 @@ export class Session {
   }
 
   /**
+   * Holds a screen wake lock for as long as the session runs, and re-takes it every
+   * time the page comes back to the foreground.
+   *
+   * A phone locks its screen a minute after the last touch, and on iOS that is the
+   * end of the recording: the page is frozen and the audio session underneath it is
+   * taken away. Nobody touches the screen during a lesson — being left alone is the
+   * point of the app — so this is the failure a classroom meets first. See
+   * `app/wakelock.ts` for what the API will and will not do.
+   *
+   * The `visibilitychange` listener is the second half of it: the browser drops the
+   * lock every time the page hides, so it has to be asked for again on the way back
+   * — and since the page is coming back anyway, that is also where the microphone is
+   * checked, because a page that went away may have lost it.
+   */
+  private async keepScreenOn(): Promise<void> {
+    const keeper = keepScreenAwake({
+      onIssue: (issue) => {
+        // The keeper can outlive the session by an event — a revocation can land
+        // while `stop` is still draining — and a sentence about screen locks for a
+        // recording that has already ended would be worse than silence.
+        // `this.wake` is what says a session is still running.
+        if (!this.wake) return
+        this.notice.set(wakeLockAdvice(issue))
+      },
+    })
+    this.wake = keeper
+    document.addEventListener('visibilitychange', this.onVisibility)
+    await keeper.acquire()
+  }
+
+  /**
+   * Gives the screen back.
+   *
+   * Every way out of a session goes through `teardown`, so this is called from
+   * there and nowhere else: a lock nobody released would keep a phone in a pocket
+   * awake until the page was closed, which is a worse favour than the one it does.
+   */
+  private async releaseScreenLock(): Promise<void> {
+    const keeper = this.wake
+    this.wake = null
+    document.removeEventListener('visibilitychange', this.onVisibility)
+    await keeper?.release()
+  }
+
+  /**
+   * The page came back.
+   *
+   * The wake lock is re-taken first, because the screen will lock again a minute
+   * from now and this is the only place the whole thing can be stopped from
+   * repeating. Then the microphone — the lock means this usually has nothing to do,
+   * but it is not the only way a page goes away: a manual lock, a phone call, Low
+   * Power Mode switching itself on.
+   */
+  private readonly onVisibility = (): void => {
+    if (document.visibilityState !== 'visible') return
+    void this.wake?.acquire()
+    if (get(this.state) === 'recording') void this.reviveCapture()
+  }
+
+  /**
+   * Checks that the microphone survived the page being away, and repairs it.
+   *
+   * The samples the page missed were never produced, so nothing can recover them:
+   * the only two answers are to carry on with a hole in the recording, or to stop.
+   * A session whose microphone is gone is *stopped*, not left running — pressing on
+   * would leave the button saying "recording" while the transcript quietly ended,
+   * which is the failure this whole app exists to avoid.
+   */
+  private async reviveCapture(): Promise<void> {
+    const capture = this.capture
+    if (!capture) return
+    const outcome = await capture.revive()
+    if (outcome === 'ok') {
+      debug('capture', t('回到前台：麦克风一直在工作'))
+      return
+    }
+    if (outcome !== 'failed') {
+      // The hole is real and unrecoverable, and saying so is the difference between
+      // a gap the user understands and one they find later as a missing sentence.
+      warn('capture', t('息屏期间没有录到声音，麦克风已恢复'), {
+        [t('恢复方式')]: outcome === 'resumed' ? t('继续用同一个音频通道') : t('重新打开麦克风'),
+      })
+      this.notice.set(t('刚才息屏了一小段，那一段没有录到；录音和识别已继续'))
+      return
+    }
+    warn('capture', t('息屏后麦克风没能恢复，这一场已停下'))
+    await this.stop()
+    // Set after `stop`, which clears the notice on its way out.
+    this.notice.set(
+      t('息屏后麦克风被系统收回了，这一场已经停下（录音和文字都保留着）；想继续就再点一次开始'),
+    )
+  }
+
+  /**
    * Finalises the recording before the worker that holds it is torn down: the
    * file's WAV header has to cover the last samples, and the main thread needs a
    * copy it can read once the worker is gone.
@@ -618,6 +725,9 @@ export class Session {
   /** Everything the session owns must go away on stop, including the model. */
   private async teardown(): Promise<void> {
     this.startAbort = null
+    // First, and outside any condition: this is the one thing that has to be given
+    // back even when everything below it fails.
+    await this.releaseScreenLock()
     this.stopLagLoop()
     this.segQ.close()
     this.mtQ.close()

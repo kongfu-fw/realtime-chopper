@@ -20,6 +20,23 @@ export const EN_CORE: Record<string, string> = {
   '注意 · {text}': 'Note · {text}',
   '失败 · {text}': 'Failed · {text}',
 
+  // ── app/wakelock.ts ───────────────────────────────────────────────────────
+  // The screen lock is the failure a classroom meets first — nobody touches the
+  // screen during a lesson — so these four sentences are the ones that have to be
+  // actionable: each names the setting that gives the screen back.
+  '屏幕常亮已开启：录音期间屏幕不会自动熄灭':
+    'Screen wake lock on: the screen will not go to sleep while recording',
+  '屏幕常亮没能生效': 'The screen wake lock did not take effect',
+  '怎么办': 'What to do',
+  '这个浏览器不支持屏幕常亮（Safari 要 16.4 或更新）：录音时请在「设置 → 显示与亮度 → 自动锁定」里选「永不」':
+    'This browser cannot keep the screen awake (Safari needs 16.4 or newer): while recording, choose “Never” under “Settings → Display & Brightness → Auto-Lock”',
+  '系统拒绝了屏幕常亮（低电量模式开着，或者页面当时不在前台）：把低电量模式关掉，或把「自动锁定」设成「永不」':
+    'The system refused to keep the screen awake (Low Power Mode is on, or the page was not in the foreground): switch Low Power Mode off, or set Auto-Lock to “Never”',
+  '屏幕常亮被系统收回了（多半是低电量模式刚打开）：屏幕可能还会自动熄灭':
+    'The system took the screen wake lock back (usually Low Power Mode being switched on): the screen may go dark again',
+  '屏幕常亮没能开启；录音时请在「设置 → 显示与亮度 → 自动锁定」里选「永不」':
+    'The screen wake lock could not be taken; while recording, choose “Never” under “Settings → Display & Brightness → Auto-Lock”',
+
   // ── asr/device.ts ─────────────────────────────────────────────────────────
   '显卡加速可用': 'GPU acceleration works',
   'iPhone / iPad 上开显卡加速会把整个页面带崩（实测：一启用就整页闪一下重开）':
@@ -112,6 +129,8 @@ export const EN_CORE: Record<string, string> = {
   '音频启动失败，换个浏览器或设备再试：{error}': 'Audio capture would not start — try another browser or device: {error}',
   '麦克风已开启': 'Microphone open',
   '麦克风已关闭': 'Microphone closed',
+  '麦克风已重新打开': 'Microphone reopened',
+  '麦克风没能重新打开：{error}': 'The microphone could not be reopened: {error}',
   // The pickup summary the vad worker reports every few seconds. "Input" is the raw
   // level the microphone delivered — the number that says whether the phone is too
   // far from the speaker; "gain" is how much the front-end added to it.
@@ -233,6 +252,22 @@ export const EN_CORE: Record<string, string> = {
   '正在准备麦克风': 'Preparing the microphone',
   '浏览器降低了录音质量，识别可能差一点': 'The browser lowered the recording quality, so recognition may be a little worse',
   '开麦后的语音输出状态': 'Speech output state once the microphone is open',
+  // Coming back to a page that was hidden, which on iOS is what a locked screen
+  // does. The two repairs differ only in what has to be rebuilt, and the sentence
+  // says which one happened because the hole in the recording is the same either
+  // way — the samples the page missed were never produced.
+  '回到前台：麦克风一直在工作': 'Back in the foreground: the microphone never stopped working',
+  '息屏期间没有录到声音，麦克风已恢复':
+    'Nothing was recorded while the screen was off; the microphone is back',
+  '恢复方式': 'How it was put back',
+  '继续用同一个音频通道': 'kept using the same audio path',
+  '重新打开麦克风': 'reopened the microphone',
+  '刚才息屏了一小段，那一段没有录到；录音和识别已继续':
+    'The screen was off for a moment and that stretch was not recorded; recording and recognition have continued',
+  '息屏后麦克风没能恢复，这一场已停下':
+    'The microphone did not come back after the screen was off, so this session has stopped',
+  '息屏后麦克风被系统收回了，这一场已经停下（录音和文字都保留着）；想继续就再点一次开始':
+    'The system took the microphone away while the screen was off, so this session has stopped (the recording and the transcript are kept) — tap start again to continue',
   '引擎': 'Engine',
   '开始录音了': 'Recording started',
   '源语言': 'Source language',

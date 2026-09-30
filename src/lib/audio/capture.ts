@@ -42,6 +42,12 @@ class RcTap extends AudioWorkletProcessor {
 registerProcessor('rc-tap', RcTap)
 `
 
+/** What the phone's own loudspeaker is assumed to deliver, for the one path with no context. */
+const FALLBACK_SAMPLE_RATE = 48_000
+
+/** How long `resume()` is given before the device is reopened instead; see `withDeadline`. */
+const RESUME_DEADLINE_MS = 1500
+
 export interface CaptureOptions {
   /** 100 ms of 16 kHz-bounded audio arrives here. */
   onChunk: (chunk: Float32Array, sampleRate: number) => void
@@ -59,12 +65,51 @@ export interface CaptureOptions {
   signal?: AbortSignal
 }
 
+/**
+ * How a repair after the page was hidden went.
+ *
+ * - `ok` — nothing had to be done (or the browser had already put itself back);
+ * - `resumed` — the same device and the same graph, resumed;
+ * - `reopened` — the device was opened again and the graph rebuilt;
+ * - `failed` — the microphone is gone, and the session has to decide what a
+ *   recording without one is (see the session's `reviveCapture`).
+ *
+ * The middle two are not the same as `ok` for one reason: the samples the page
+ * missed while it was away were never produced, so there is a hole in the audio
+ * that nothing can fill. Saying which repair happened is how the gap gets from
+ * here to the log and to the user.
+ */
+export type CaptureRevival = 'ok' | 'resumed' | 'reopened' | 'failed'
+
 export interface CaptureHandle {
   stop: () => Promise<void>
-  sampleRate: number
+  /**
+   * The rate the graph is running at **now**, not the one it started with: a
+   * reopened capture builds a fresh `AudioContext`, and a browser is free to give
+   * the second one a different rate.
+   */
+  readonly sampleRate: number
   /** False when the browser silently downgraded our constraints (iOS often does). */
-  constraintsHonoured: boolean
-  settings: MediaTrackSettings
+  readonly constraintsHonoured: boolean
+  readonly settings: MediaTrackSettings
+  /**
+   * Whether samples are flowing at this instant.
+   *
+   * Both halves are needed: iOS can end the track (the device is taken away) or
+   * leave it live while it suspends the audio context, and the two want different
+   * repairs — see `revive`.
+   */
+  alive: () => boolean
+  /**
+   * Brings the microphone back after the page was hidden.
+   *
+   * iOS suspends a whole page when the screen locks, and nothing about that
+   * survives unchanged: the context comes back `suspended` (Safari also has
+   * `interrupted`, its own extra state), and the track is often ended outright.
+   * The cheap repair is tried first because it is the common one and it keeps the
+   * same graph; only then is the device opened from scratch.
+   */
+  revive: () => Promise<CaptureRevival>
 }
 
 /**
@@ -110,7 +155,126 @@ export async function startCapture(options: CaptureOptions): Promise<CaptureHand
     video: false,
   }
 
-  let stream: MediaStream
+  // The live graph, in variables rather than in constants, because a revival
+  // replaces all of it: the device, the context and the three nodes together.
+  let stream: MediaStream | null = null
+  let track: MediaStreamTrack | null = null
+  let settings: MediaTrackSettings = {}
+  let honoured = true
+  let context: AudioContext | null = null
+  let source: MediaStreamAudioSourceNode | null = null
+  let node: AudioWorkletNode | null = null
+  let silence: GainNode | null = null
+  let closed = false
+
+  /**
+   * A fresh context with the tap processor installed.
+   *
+   * The processor is loaded from a Blob URL rather than served as a file: it is
+   * a few hundred bytes, and a separate module in `static/` would be one more
+   * request before the first sample as well as one more thing to keep in sync
+   * with this file. The URL is revoked as soon as the module is in.
+   */
+  async function makeContext(): Promise<AudioContext> {
+    const ctx = new AudioContext()
+    try {
+      // iOS keeps the context suspended until a user gesture resumes it.
+      if (ctx.state === 'suspended') await ctx.resume()
+      const blobUrl = URL.createObjectURL(
+        new Blob([WORKLET_SOURCE], { type: 'application/javascript' }),
+      )
+      try {
+        await ctx.audioWorklet.addModule(blobUrl)
+      } finally {
+        URL.revokeObjectURL(blobUrl)
+      }
+    } catch (err) {
+      // A context that never got its processor is still a context: left open it
+      // counts against the page's audio limit (and on iOS, against the number of
+      // contexts a single page may create at all).
+      await ctx.close().catch(() => undefined)
+      throw err
+    }
+    return ctx
+  }
+
+  /** What the browser actually applied, which is not always what we asked for. */
+  function applyTrack(input: MediaStream): void {
+    track = input.getAudioTracks()[0] ?? null
+    settings = track?.getSettings() ?? {}
+    honoured =
+      settings.echoCancellation !== true &&
+      settings.noiseSuppression !== true &&
+      settings.autoGainControl !== true
+    if (!honoured) {
+      warn('capture', t('浏览器没有完全遵守高保真拾音设置，识别质量可能受影响'), {
+        echoCancellation: settings.echoCancellation,
+        noiseSuppression: settings.noiseSuppression,
+        autoGainControl: settings.autoGainControl,
+        sampleRate: settings.sampleRate,
+      })
+    }
+  }
+
+  /** Connects the tap to `ctx` and starts delivering blocks to `options.onChunk`. */
+  function wire(input: MediaStream, ctx: AudioContext): void {
+    source = ctx.createMediaStreamSource(input)
+    // One output, not zero. A node with `numberOfOutputs: 0` cannot be connected
+    // at all (`connect` throws "output index (0) exceeds number of outputs (0)"),
+    // and without a downstream path the audio graph would never pull it, so
+    // `process()` would never run. The processor writes nothing into its output,
+    // so that output is silent by construction — the zero-gain node after it is
+    // belt and braces, and nothing is ever routed to the speakers.
+    node = new AudioWorkletNode(ctx, 'rc-tap', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      processorOptions: { chunkMs: 100 },
+    })
+    silence = ctx.createGain()
+    silence.gain.value = 0
+    source.connect(node)
+    node.connect(silence)
+    silence.connect(ctx.destination)
+    node.port.onmessage = (event: MessageEvent<Float32Array>) => {
+      options.onChunk(event.data, ctx.sampleRate)
+    }
+  }
+
+  /** Detaches the nodes of the current graph; the device is `detach`'s business. */
+  function unwire(): void {
+    if (node) node.port.onmessage = null
+    try {
+      node?.disconnect()
+      source?.disconnect()
+      silence?.disconnect()
+    } catch {
+      /* nothing was connected */
+    }
+    source = null
+    node = null
+    silence = null
+  }
+
+  /**
+   * Releases the device and the context of the current attempt.
+   *
+   * Called on a failed start, on stop, and at the beginning of a revival — so it
+   * has to be safe on a half-built graph, and it has to leave nothing open: a
+   * microphone that is still recording after an error is the one failure in this
+   * module the user cannot see.
+   */
+  async function detach(): Promise<void> {
+    unwire()
+    const input = stream
+    stream = null
+    track?.stop()
+    input?.getTracks().forEach((t) => t.stop())
+    track = null
+    const ctx = context
+    context = null
+    await ctx?.close().catch(() => undefined)
+  }
+
   try {
     stream = await getUserMediaAbortable(constraints, options.signal)
   } catch (err) {
@@ -120,78 +284,18 @@ export async function startCapture(options: CaptureOptions): Promise<CaptureHand
     if (err instanceof Error && err.name === 'AbortError') throw err
     throw new Error(describeCaptureError(err), { cause: err })
   }
-  const track = stream.getAudioTracks()[0]
-  const settings = track?.getSettings() ?? {}
-  const constraintsHonoured =
-    settings.echoCancellation !== true &&
-    settings.noiseSuppression !== true &&
-    settings.autoGainControl !== true
-  if (!constraintsHonoured) {
-    warn('capture', t('浏览器没有完全遵守高保真拾音设置，识别质量可能受影响'), {
-      echoCancellation: settings.echoCancellation,
-      noiseSuppression: settings.noiseSuppression,
-      autoGainControl: settings.autoGainControl,
-      sampleRate: settings.sampleRate,
-    })
-  }
+  applyTrack(stream)
 
-  let context: AudioContext
+  let started: AudioContext
   try {
-    context = new AudioContext()
-    // iOS keeps the context suspended until a user gesture resumes it.
-    if (context.state === 'suspended') await context.resume()
-
-    const blobUrl = URL.createObjectURL(
-      new Blob([WORKLET_SOURCE], { type: 'application/javascript' }),
-    )
-    await context.audioWorklet.addModule(blobUrl)
-    URL.revokeObjectURL(blobUrl)
-  } catch (err) {
-    track?.stop()
-    stream.getTracks().forEach((t) => t.stop())
-    throw new Error(
-      t('音频启动失败，换个浏览器或设备再试：{error}', {
-        error: err instanceof Error ? err.message : String(err),
-      }),
-      { cause: err },
-    )
-  }
-
-  let source: MediaStreamAudioSourceNode | null = null
-  let node: AudioWorkletNode | null = null
-  let silence: GainNode | null = null
-  try {
-    source = context.createMediaStreamSource(stream)
-    // One output, not zero. A node with `numberOfOutputs: 0` cannot be connected
-    // at all (`connect` throws "output index (0) exceeds number of outputs (0)"),
-    // and without a downstream path the audio graph would never pull it, so
-    // `process()` would never run. The processor writes nothing into its output,
-    // so that output is silent by construction — the zero-gain node after it is
-    // belt and braces, and nothing is ever routed to the speakers.
-    node = new AudioWorkletNode(context, 'rc-tap', {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      processorOptions: { chunkMs: 100 },
-    })
-    silence = context.createGain()
-    silence.gain.value = 0
-    source.connect(node)
-    node.connect(silence)
-    silence.connect(context.destination)
+    started = await makeContext()
+    context = started
+    wire(stream, started)
   } catch (err) {
     // Before this, a failure here left the microphone open and the audio context
     // running with nothing holding them: the user saw an error, and their mic
     // stayed hot.
-    try {
-      node?.disconnect()
-      source?.disconnect()
-      silence?.disconnect()
-    } catch {
-      /* nothing was connected */
-    }
-    track?.stop()
-    stream.getTracks().forEach((t) => t.stop())
-    await context.close().catch(() => undefined)
+    await detach()
     throw new Error(
       t('音频启动失败，换个浏览器或设备再试：{error}', {
         error: err instanceof Error ? err.message : String(err),
@@ -200,36 +304,85 @@ export async function startCapture(options: CaptureOptions): Promise<CaptureHand
     )
   }
 
-  node.port.onmessage = (event: MessageEvent<Float32Array>) => {
-    const chunk = event.data
-    options.onChunk(chunk, context.sampleRate)
-  }
-
   info('capture', t('麦克风已开启'), {
-    sampleRate: context.sampleRate,
+    sampleRate: started.sampleRate,
     channelCount: settings.channelCount,
-    constraintsHonoured,
+    constraintsHonoured: honoured,
   })
 
-  return {
-    sampleRate: context.sampleRate,
-    constraintsHonoured,
-    settings,
-    stop: async () => {
-      if (node) node.port.onmessage = null
-      try {
-        node?.disconnect()
-        source?.disconnect()
-        silence?.disconnect()
-      } catch {
-        /* already torn down */
+  const handle: CaptureHandle = {
+    get sampleRate() {
+      return context?.sampleRate ?? FALLBACK_SAMPLE_RATE
+    },
+    get constraintsHonoured() {
+      return honoured
+    },
+    get settings() {
+      return settings
+    },
+    alive: () =>
+      !closed &&
+      track !== null &&
+      track.readyState === 'live' &&
+      !track.muted &&
+      context !== null &&
+      context.state === 'running',
+    revive: async (): Promise<CaptureRevival> => {
+      // A stopped session has no microphone to bring back, and opening one after
+      // stop is exactly the hot-microphone bug `detach` exists to prevent.
+      if (closed) return 'failed'
+      if (handle.alive()) return 'ok'
+
+      // The cheap repair: the device is still ours and only the context went to
+      // sleep, which is the common shape — iOS leaves the track live across a
+      // screen lock. A track that reports itself `muted` is tried here too rather
+      // than sent straight to the expensive path: that flag is how a browser says
+      // "no data right now", which a resumed context is allowed to undo, and
+      // reopening a device that was never lost is the more disruptive repair of
+      // the two. It is raced against a deadline because resume() is not promised
+      // to settle while the context is `interrupted`.
+      if (track && track.readyState === 'live' && context) {
+        try {
+          await withDeadline(context.resume(), RESUME_DEADLINE_MS)
+          if (handle.alive()) return 'resumed'
+        } catch {
+          /* the device has to be opened again; see below */
+        }
       }
-      track?.stop()
-      stream.getTracks().forEach((t) => t.stop())
-      await context.close().catch(() => undefined)
+
+      // The expensive repair: iOS ended the track, so the device is opened from
+      // scratch. The whole graph goes with it — an `AudioContext` cannot be handed
+      // another stream, and rebuilding around a dead track is not worth keeping.
+      try {
+        await detach()
+        if (closed) return 'failed'
+        const input = await getUserMediaAbortable(constraints)
+        if (closed) {
+          input.getTracks().forEach((t) => t.stop())
+          return 'failed'
+        }
+        stream = input
+        applyTrack(input)
+        context = await makeContext()
+        wire(input, context)
+        info('capture', t('麦克风已重新打开'), { sampleRate: context.sampleRate })
+        return handle.alive() ? 'reopened' : 'failed'
+      } catch (err) {
+        // Half-built counts as open: whatever did get as far as the device is
+        // released here rather than handed to a session that is about to stop.
+        await detach()
+        warn('capture', t('麦克风没能重新打开：{error}', { error: describeCaptureError(err) }))
+        return 'failed'
+      }
+    },
+    stop: async () => {
+      if (closed) return
+      closed = true
+      await detach()
       info('capture', t('麦克风已关闭'))
     },
   }
+  return handle
 }
 
 /**
@@ -268,3 +421,29 @@ function getUserMediaAbortable(
   })
 }
 
+/**
+ * Races a promise the browser is allowed to leave unsettled.
+ *
+ * Only `resume()` needs this. Safari has a state of its own — `interrupted`,
+ * entered for phone calls and screen locks — in which the promise may not settle
+ * until the interruption ends, and "until the user picks the phone up again" is
+ * indistinguishable from "never" for a caller that has to decide what to do next.
+ *
+ * The rejection reason is never shown to anyone: the one caller treats it purely
+ * as "the cheap repair did not work", and its own message follows from there.
+ */
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('audio context resume timed out')), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err instanceof Error ? err : new Error(String(err)))
+      },
+    )
+  })
+}

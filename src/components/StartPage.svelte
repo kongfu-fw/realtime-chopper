@@ -53,23 +53,23 @@
    * What the reserved area is saying.
    *
    * Ordered by what the user should hear first: a failure, then the work that is
-   * happening (which is two sources — this component's own install, and the
-   * session's `stage`, and the install is the part with a percentage), then the
-   * resting sentence.
+   * happening (two sources — this component's own install, and the session's
+   * `stage`, and the install is the part with a percentage), and then *nothing*.
+   *
+   * It used to rest on 「戴上耳机，点下面开始」, and that sentence is gone. A line
+   * that is always there is a line that stops being read, and the headphone check
+   * is not this line's job anyway: it is the dialog a first run has to answer
+   * before the microphone opens (`App.svelte`), and it says the same thing with a
+   * button under it. What is left is the reserved height — which is the part with a
+   * job: the button below stays exactly where the thumb left it while this area
+   * fills up during a start.
    */
   const status = $derived.by(() => {
     if (error) return error
     if (installing) return tr('正在准备识别模块，第一次会慢一些')
     if ($stage) return $stage
     if ($sessionState === 'error') return $failure?.message ?? tr('启动失败，再试一次')
-    // No full stop on the resting sentence, and that is a centring decision rather
-    // than a punctuation one: the line is centred, and a Chinese full stop is a
-    // full-width glyph whose ink sits in the left of its em box, so a sentence
-    // ending in one has ~9 px of blank space on the right — the words themselves
-    // read as shifted left of centre by half of that. Every other sentence this
-    // area can show is a fragment without punctuation, so this is the only one that
-    // had to lose it.
-    return tr('戴上耳机，点下面开始')
+    return ''
   })
 
   /**

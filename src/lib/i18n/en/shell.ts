@@ -394,7 +394,6 @@ export const EN_SHELL: Record<string, string> = {
 
   // ── StartPage.svelte ──────────────────────────────────────────────────────
   '正在准备识别模块，第一次会慢一些': 'Getting the recognition module ready — the first time takes a while',
-  '戴上耳机，点下面开始': 'Put your headphones on, then start below',
   '启动失败，再试一次': 'That did not start; try again',
   '再试一次': 'Try again',
 }

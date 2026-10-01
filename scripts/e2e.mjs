@@ -350,6 +350,7 @@ async function scenario(cdp) {
       brand: box(brand), stage: box(stage), button: box(button),
       viewport: window.innerWidth / 2,
       label: button.textContent.trim(),
+      line: stage.querySelector('.line')?.textContent.trim() ?? null,
       hasSettings: !!start.querySelector('.settings'),
       hasHeader: !!document.querySelector('.titlebar'),
       hasFooter: !!document.querySelector('.record-btn'),
@@ -377,30 +378,10 @@ async function scenario(cdp) {
       `${Math.round(stack.stage.h)} px`,
     )
     record('the button says what it starts', stack.label === '开始录音', stack.label)
-    // Centred by *ink*, not by box. The line was always centred as a box, but a
-    // Chinese full stop is a full-width glyph whose ink sits in the left of its em
-    // box: a sentence ending in one carries ~9 px of blank space on the right, so
-    // the words read as shifted left of centre by half of that. Measured from the
-    // glyphs with a canvas rather than from the element, because this is a question
-    // about what the eye sees.
-    const centred = await cdp.eval(`
-      const line = document.querySelector('.stage .line')
-      const box = line.getBoundingClientRect()
-      const style = getComputedStyle(line)
-      const canvas = document.createElement('canvas').getContext('2d')
-      canvas.font = style.fontStyle + ' ' + style.fontWeight + ' ' + style.fontSize + ' ' + style.fontFamily
-      const metrics = canvas.measureText(line.textContent)
-      const start = box.left + (box.width - metrics.width) / 2
-      const ink = start + (-metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight) / 2
-      return { shift: ink - (box.left + box.width / 2), text: line.textContent.trim() }
-    `)
     record(
-      'the hint is centred by what the eye sees, not only by its box',
-      // 2 px, and not 0: the tolerance is a font's side bearings, which differ by a
-      // fraction of a pixel between platforms. The bug this holds down moved the
-      // words by 4.5 px, which is what "有点偏左" was about.
-      centred.text !== '' && Math.abs(centred.shift) <= 2,
-      `${centred.shift.toFixed(1)} px off centre · “${centred.text}”`,
+      'the reserved area says nothing at rest — the resting hint is gone',
+      stack.line === '',
+      `“${stack.line}”`,
     )
 
     // The reason the area is reserved: text appears in it during a start, and the
@@ -491,6 +472,9 @@ async function scenario(cdp) {
   note('starting a session — this downloads and loads the recognition module')
   let sawError = ''
   let lastLine = ''
+  /** The first real sentence this area showed, and how far its ink sits off centre. */
+  let hintShift = null
+  let hintText = ''
   let acknowledged = false
   const deadline = Date.now() + START_TIMEOUT_MS
   let running = false
@@ -498,11 +482,29 @@ async function scenario(cdp) {
     const state = await cdp.eval(`
       const line = document.querySelector('.stage .line')
       const confirm = [...document.querySelectorAll('.modal button')].find((b) => b.textContent.includes('戴好了'))
+      // Centred by *ink*, not by box. The area is centred as a box, and a Chinese
+      // full stop is a full-width glyph whose ink sits in the left of its em box:
+      // a sentence ending in one carries ~9 px of blank space on the right, so the
+      // words read as shifted left of centre by half of that. Measured from the
+      // glyphs with a canvas rather than from the element, because this is a
+      // question about what the eye sees. Nothing is said at rest any more, so the
+      // sentence this runs on is the real one a start produces.
+      const shift = (() => {
+        if (!line || !line.textContent.trim()) return null
+        const box = line.getBoundingClientRect()
+        const style = getComputedStyle(line)
+        const canvas = document.createElement('canvas').getContext('2d')
+        canvas.font = style.fontStyle + ' ' + style.fontWeight + ' ' + style.fontSize + ' ' + style.fontFamily
+        const metrics = canvas.measureText(line.textContent)
+        const start = box.left + (box.width - metrics.width) / 2
+        return start + (-metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight) / 2 - (box.left + box.width / 2)
+      })()
       return {
         recording: !!document.querySelector('.record-btn.recording'),
         line: line ? line.textContent.trim() : '',
         bad: line ? line.classList.contains('bad') : false,
         confirm: !!confirm,
+        shift,
       }
     `)
     if (state.recording) {
@@ -524,12 +526,23 @@ async function scenario(cdp) {
       `)
       note('answered the headphone prompt')
     }
+    if (state.shift !== null && hintShift === null) {
+      hintShift = state.shift
+      hintText = state.line
+    }
     if (state.line && state.line !== lastLine) {
       lastLine = state.line
       note(`  page says: ${state.line}`)
     }
     await sleep(1000)
   }
+  record(
+    'a sentence in that area is centred by what the eye sees while it is up',
+    hintShift !== null && Math.abs(hintShift) <= 2,
+    // 2 px, and not 0: the tolerance is a font's side bearings, which differ by a
+    // fraction of a pixel between platforms.
+    hintShift === null ? 'no sentence was ever shown in it' : `${hintShift.toFixed(1)} px off centre · “${hintText}”`,
+  )
   if (acknowledged) record('the headphone reminder can be answered and the start carries on', running, sawError)
   record(
     'a session starts (module, provider, microphone, and the view change)',

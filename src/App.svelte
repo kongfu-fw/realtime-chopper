@@ -10,6 +10,9 @@
   import StatusBar from './components/StatusBar.svelte'
   import LogDrawer from './components/LogDrawer.svelte'
   import SettingsView from './components/SettingsView.svelte'
+  import HistoryView from './components/HistoryView.svelte'
+  import NavDrawer from './components/NavDrawer.svelte'
+  import PausePanel from './components/PausePanel.svelte'
   import Modal from './components/Modal.svelte'
   import {
     session,
@@ -22,6 +25,7 @@
     acknowledgeHeadphones,
   } from './lib/app/state'
   import { getSettings, forgetModel, settings } from './lib/store/settings'
+  import { loadHistory } from './lib/history/store'
   import { applyAppIcon } from './lib/brand/apply'
   import { appTitle } from './lib/brand/logo'
   import {
@@ -56,6 +60,16 @@
   const { lines: linesStore, state: sessionState, notice } = session
   const lines = $derived($linesStore)
   const keepAudio = $derived($settings.keepAudio)
+  /**
+   * A paused session is a session waiting to be told what it is.
+   *
+   * The panel is keyed on the state rather than on a flag of its own, so that
+   * every way into a pause — the footer's button, a future gesture, a resumed
+   * session paused again — arrives at the same screen, and so that no path out of
+   * one can leave the panel behind: whatever ends the pause changes the state,
+   * and the panel is gone with it.
+   */
+  const paused = $derived($sessionState === 'paused')
 
   // The crash note exists to explain a failure the user has just lived through,
   // and it stops being true the moment a recording actually starts. Left up, it
@@ -203,6 +217,11 @@
     // A Moonshine-era record needs no help anyway: its `version` no longer
     // matches the registry, so it already reads as not installed, and the retired
     // cache prefix clears its bytes.
+    // The notes on this device, read once at startup: the start page's card shows
+    // how many there are, and the drawer's 历史记录 opens a list that is already
+    // there rather than an empty screen that fills in a moment later.
+    void loadHistory()
+
     if (getSettings().installedModels['en-nemo']) forgetModel('en-nemo')
     void purgeRetiredModuleCaches().then((gone) => {
       if (gone.length) info('storage', t('已清理不再使用的识别模块：{list}', { list: gone.join(t('、')) }))
@@ -510,6 +529,8 @@
   <main>
     {#if $view === 'settings'}
       <SettingsView />
+    {:else if $view === 'history'}
+      <HistoryView />
     {:else}
       <!-- The queue/lag strip (requirement 20) is a diagnostics readout: it is
            only rendered in debug mode. Nothing is lost by hiding it — a failed
@@ -553,15 +574,28 @@
     {/if}
   </main>
 
-  <footer>
-    <StatusBar />
-  </footer>
+  <!--
+   * No footer on the history screen: the recording button and the read-aloud
+   * switch are both about a session, and a phone's thumb corners are the last
+   * place a button that does nothing belongs. The way out is the screen's own
+   * 返回, at the top, where lists put it.
+   -->
+  {#if $view !== 'history'}
+    <footer>
+      <StatusBar />
+    </footer>
+  {/if}
 </div>
   </div>
 {/if}
 </div>
 
 <LogDrawer />
+<NavDrawer />
+
+{#if paused}
+  <PausePanel />
+{/if}
 
 {#if $headphonePrompt}
   <!-- Headphone check (requirement 13): a soft confirmation, deliberately not a

@@ -261,6 +261,12 @@ export class Session {
    * that happens this is what replay, re-recognition and export read from.
    */
   private recordingFile: File | Blob | null = null
+  /** When this session started; the date a filed note is titled with. */
+  private startedAt = 0
+  /** Recording time banked by the pauses that have already happened, in ms. */
+  private elapsedMs = 0
+  /** When the stretch of recording now running began; 0 when nothing is running. */
+  private runningSince = 0
   /** Ids for re-recognition requests; negative so they never collide with segment ids. */
   private nextRetryId = -1
 
@@ -514,6 +520,10 @@ export class Session {
     // A start answers the "come back after the system took the microphone" state
     // whether the user asked for it or the app did.
     this.resumeAfterLoss = false
+    // The moment the note is *about*, stamped here rather than when it is filed:
+    // a session can be paused, resumed and ended twenty minutes later, and the
+    // title of the note must say when the lecture started.
+    this.startedAt = Date.now()
     this.state.set('preparing')
     this.stopping = false
     // A failure from the previous attempt must not linger above the button.
@@ -610,6 +620,10 @@ export class Session {
       info('tts', t('开麦后的语音输出状态'), { [t('引擎')]: this.speech.label, ...speechSnapshot() })
 
       this.stage.set('')
+      // The clock starts with the microphone, not with the button: a session that
+      // spent a minute downloading a module was not recording for that minute.
+      this.elapsedMs = 0
+      this.runningSince = Date.now()
       this.state.set('recording')
       this.startLagLoop()
       // The microphone is alive *now*; this is what notices when it stops being so
@@ -640,6 +654,109 @@ export class Session {
       this.notice.set(message)
       throw err
     }
+  }
+
+  /**
+   * Stops listening without ending the session.
+   *
+   * The microphone is released and the recording keeps its shape: the segmenter
+   * stays where it is, the open utterance is closed and recognised, and the file
+   * the sink is writing stays open. Resuming reopens the microphone and the next
+   * samples land after the ones already written, so a note recorded across a pause
+   * is one recording with a stretch of silence in it — which is what actually
+   * happened: the room went quiet for a while.
+   *
+   * The state is set *before* the capture is torn down, and that order is the
+   * point: `checkCapture`'s once-a-second watch reads it, and a pause that looked
+   * like a microphone that had died would be "repaired" by reopening the device
+   * the user just asked to close.
+   */
+  async pause(): Promise<void> {
+    if (get(this.state) !== 'recording') return
+    // Bank the stretch that just ended, before anything can change the state:
+    // this is the number the pause panel's clock is about to draw.
+    this.elapsedMs += this.runningSince ? Date.now() - this.runningSince : 0
+    this.runningSince = 0
+    this.state.set('paused')
+    this.stopCaptureWatch()
+    await this.releaseScreenLock()
+    // Close the utterance that is open, so the last thing said before the pause is
+    // recognised now rather than waiting for a resume that may never come (the
+    // panel behind this pause offers to file the note instead).
+    this.vad?.flush()
+    await this.stopCapture()
+    info('session', t('已暂停录音'), { lines: get(this.lines).length })
+  }
+
+  /**
+   * Opens the microphone again, in the same session.
+   *
+   * A failed reopen leaves the session paused rather than stopped: the transcript,
+   * the recording and the note are all still there, the panel that offers to file
+   * them is still on screen, and the one thing the user cannot do is carry on
+   * listening — which is exactly what the state says.
+   */
+  async resume(): Promise<void> {
+    if (get(this.state) !== 'paused') return
+    this.runningSince = Date.now()
+    this.state.set('recording')
+    try {
+      await this.keepScreenOn()
+      const abort = this.startAbort ?? (this.startAbort = new AbortController())
+      this.capture = await startCapture({
+        onChunk: (chunk, rate) => this.vad?.push(chunk, rate),
+        signal: abort.signal,
+      })
+      if (!this.capture.constraintsHonoured) {
+        this.notice.set(t('浏览器降低了录音质量，识别可能差一点'))
+      }
+      this.startCaptureWatch()
+      info('session', t('已继续录音'))
+    } catch (err) {
+      this.state.set('paused')
+      const message = err instanceof Error ? err.message : String(err)
+      this.notice.set(message)
+      warn('capture', t('继续录音失败：{message}', { message }))
+      throw err
+    }
+  }
+
+  /**
+   * Throws the transcript away, for the start of a note that is not this one.
+   *
+   * Called by 开启新录音 and by nothing else: every other start *continues* the
+   * transcript, because a stop and a start in the same lesson is one lesson. What
+   * makes this different is that the note it belonged to has just been filed —
+   * the text is in the history, and leaving it on screen would make the next
+   * note look like it had been recorded at the same time as the last one.
+   */
+  resetTranscript(): void {
+    this.lines.set([])
+    this.linesById.clear()
+    this.nextLineId = 1
+    this.readPointer = 1
+    this.recordingFile = null
+    this.recording.set({ mode: 'off', seconds: 0, bytes: 0, stopped: null })
+    this.updateQueues()
+  }
+
+  /** When this session started, epoch ms; 0 before the first start. */
+  get startedAtMs(): number {
+    return this.startedAt
+  }
+
+  /**
+   * How long this session has been recording, in seconds.
+   *
+   * Owned here rather than counted inside the clock that draws it, because a
+   * session can now be paused: the header's clock and the pause panel's are the
+   * same number on two screens, and a clock that counted from the moment its own
+   * component was built would say 00:00 on the panel it was just mounted in, and
+   * would start over from zero after 继续录音.
+   */
+  elapsedSeconds(): number {
+    const running = this.runningSince ? Date.now() - this.runningSince : 0
+    return (this.elapsedMs + running) / 1000
   }
 
   async stop(): Promise<void> {
@@ -1552,9 +1669,19 @@ export class Session {
     this.updateQueues()
   }
 
+  /**
+   * The session's audio as a blob, wherever it currently lives.
+   *
+   * From the worker while a session is running, and from the copy the main thread
+   * took when it stopped — the worker is gone by then, and the recording is not.
+   */
+  async recordingBlob(): Promise<Blob | null> {
+    return this.vad ? await this.vad.recordingFile() : this.recordingFile
+  }
+
   /** Downloads the session recording as a WAV, wherever it currently lives. */
   async exportRecording(): Promise<void> {
-    const file = this.vad ? await this.vad.recordingFile() : this.recordingFile
+    const file = await this.recordingBlob()
     if (!file) {
       this.notice.set(t('还没有录音可以导出'))
       return

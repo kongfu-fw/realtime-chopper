@@ -6,6 +6,23 @@
 
   const tr = $derived(translator($uiLang))
 
+  /**
+   * How much larger than the header's copy this one is drawn.
+   *
+   * A scale rather than a second set of sizes, because the pause panel asks for
+   * "the same clock, bigger" and building a second clock would be two things to
+   * keep in step — every later change to the voiceprint or the mosaic digits
+   * would have to be made twice, and the copy that nobody was looking at is the
+   * one that would drift. The panel passes ~2 and animates it: the clock grows
+   * out of its own size as the panel arrives, which is what makes it read as the
+   * header's clock come forward rather than as a new widget appearing.
+   */
+  interface Props {
+    zoom?: number
+  }
+
+  let { zoom = 1 }: Props = $props()
+
   const { state: sessionState, level, recording } = session
 
   /**
@@ -16,11 +33,16 @@
    * lecture raises every few minutes, and it was the one thing the old language
    * pair in that spot could not answer.
    *
-   * Counted here rather than read off `session.recording.seconds`, and that is a
-   * deliberate duplication: those are the seconds *saved to the file*, and with
-   * 「保存整场录音」 switched off there is no file at all — the clock would sit at
-   * 00:00 for a whole lesson. The clock measures the session, the export measures
-   * the file, and the two are allowed to disagree.
+   * The number itself belongs to the session (`Session.elapsedSeconds`), and only
+   * the ticking belongs here: a pause mounts this component a second time, and a
+   * clock that counted from its own construction would open the pause panel on
+   * 00:00 and start over after 继续录音.
+   *
+   * It is deliberately *not* `session.recording.seconds` either: those are the
+   * seconds saved to the file, and with 「保存整场录音」 switched off there is no
+   * file at all — the clock would sit at 00:00 for a whole lesson. The clock
+   * measures the session, the export measures the file, and the two are allowed to
+   * disagree.
    *
    * One interval per session, 2 Hz, and the number is an integer: a tenth of a
    * second is not information a person reads, and re-rendering twice a second for
@@ -30,14 +52,14 @@
   let seconds = $state(0)
 
   $effect(() => {
-    // Only a running session counts. Leaving it: the cleanup clears the interval
-    // and the number stays where it stopped, which is what the export button
-    // beside it is about to refer to.
-    if ($sessionState !== 'recording') return
-    const startedAt = Date.now()
-    seconds = 0
+    // Read the state first so that entering it or leaving it re-runs this: a paused
+    // session stops ticking and the number stays where it stopped, which is what
+    // the panel it is drawn on and the export button beside it both refer to.
+    const state = $sessionState
+    seconds = Math.floor(session.elapsedSeconds())
+    if (state !== 'recording') return
     const timer = setInterval(() => {
-      seconds = Math.floor((Date.now() - startedAt) / 1000)
+      seconds = Math.floor(session.elapsedSeconds())
     }, TICK_MS)
     return () => clearInterval(timer)
   })
@@ -96,6 +118,27 @@
   const glyphs = $derived(
     value.split('').map((char) => ({ colon: char === ':', rows: FONT[char] ?? FONT['0'] })),
   )
+
+  /**
+   * The growth itself: one frame at the small size, then the one it was asked
+   * for, so the transition has two states to move between.
+   *
+   * A frame rather than a `tick`, and it matters: the browser has to have laid
+   * the element out at scale 1 for a later change to be animated at all, and a
+   * microtask is not enough for that.
+   */
+  let grown = $state(false)
+
+  $effect(() => {
+    if (zoom === 1) {
+      grown = true
+      return
+    }
+    const raf = requestAnimationFrame(() => (grown = true))
+    return () => cancelAnimationFrame(raf)
+  })
+
+  const scale = $derived(grown ? zoom : 1)
 </script>
 
 <!--
@@ -112,7 +155,7 @@
  * moment a recording ends, and a button that appears takes its space from whatever
  * is next to it — which is the clock, and the clock is a number being watched.
 -->
-<div class="clock">
+<div class="clock" style={`--zoom:${scale}`}>
   <!--
     * The voiceprint: five bars, rising with the microphone.
     *
@@ -181,6 +224,14 @@
     gap: 7px;
     /* Nothing in here is a text input: the header's own padding is the margin. */
     line-height: 1;
+    /*
+     * The whole row scales as one drawing, `transform-origin` at its centre so a
+     * grown clock stays centred on the axis the small one is on — the pause panel
+     * centres this box, and a scale from a corner would make the panel look off.
+     */
+    transform: scale(var(--zoom, 1));
+    transform-origin: center center;
+    transition: transform 320ms cubic-bezier(0.2, 0.9, 0.2, 1);
   }
 
   /*
@@ -327,6 +378,10 @@
     }
 
     .vp {
+      transition: none;
+    }
+
+    .clock {
       transition: none;
     }
   }

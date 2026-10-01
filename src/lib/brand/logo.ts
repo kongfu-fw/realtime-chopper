@@ -23,8 +23,11 @@ import { t } from '../i18n/index.ts'
 // A proper noun, and the one string in the app that is never translated: 乔巴 is
 // the character this project is named after.
 export const APP_NAME = '乔巴'
-/** The tagline's Chinese source text; `appDesc()` is what surfaces read. */
-export const APP_DESC = '实时语音翻译：本地识别 + 多来源翻译 + 浏览器朗读'
+/**
+ * The long description, for the places that want a sentence rather than a name:
+ * the installed app's description, and the diagnostic report's header.
+ */
+export const APP_DESC = '录音笔记：本地识别 + 多来源翻译 + 浏览器朗读'
 
 /** The tagline in the interface language, for the manifest and the document title. */
 export function appDesc(): string {
@@ -36,9 +39,14 @@ export function appDesc(): string {
  *
  * The name is a proper noun and stays 乔巴; the tagline after it follows the
  * interface language, so an English install does not read as half Chinese.
+ *
+ * The tagline read 实时翻译 until the app grew a history. What it does has not
+ * changed — it still recognises and translates — but what it *leaves behind* has,
+ * and a name for the artifact (a note, with the words in it) is what a person
+ * opening a list of yesterday's lessons is looking for.
  */
 export function appTitle(): string {
-  return `${APP_NAME} · ${t('实时翻译')}`
+  return `${APP_NAME} · ${t('录音笔记')}`
 }
 
 const mirror = (x: number) => 64 - x

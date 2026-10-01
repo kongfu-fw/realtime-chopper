@@ -1,12 +1,5 @@
 <script lang="ts">
-  import {
-    session,
-    installLang,
-    showToast,
-    headphoneAck,
-    headphonePrompt,
-  } from '../lib/app/state'
-  import { isLangInstalled, settings } from '../lib/store/settings'
+  import { session, beginSession, installLang, showToast } from '../lib/app/state'
   import { info, warn } from '../lib/log/store'
   import { levelFraction } from '../lib/ui/level.ts'
   import { t, translator, uiLang } from '../lib/i18n/index.ts'
@@ -24,6 +17,7 @@
   let readSettings = $state(false)
 
   const recording = $derived($sessionState === 'recording')
+  const paused = $derived($sessionState === 'paused')
   const preparing = $derived($sessionState === 'preparing' || $sessionState === 'stopping')
   /**
    * Whether a sentence is being read out right now.
@@ -41,9 +35,22 @@
    * `取消启动` while preparing is deliberate: the microphone permission prompt is
    * the one wait the user can actually get out of, and a disabled button in its
    * place would leave a phone sitting behind a prompt with no way back.
+   *
+   * And it says 暂停 rather than 停止 while recording, which is the change the
+   * history brought: a session no longer ends by being stopped, it ends by being
+   * *filed* — so the button stops the microphone and the panel that appears asks
+   * what the note is for. 继续录音 is here as well as on that panel because the
+   * panel is a screen and this button is a thumb at the bottom of it: two doors,
+   * one of them where the hand already is.
    */
   const recordLabel = $derived(
-    preparing ? tr('取消启动') : recording ? tr('停止录音') : tr('开始录音'),
+    preparing
+      ? tr('取消启动')
+      : recording
+        ? tr('暂停录音')
+        : paused
+          ? tr('继续录音')
+          : tr('开始录音'),
   )
 
   /**
@@ -54,32 +61,24 @@
    * so it says what the button *is* in the fewest characters that still read as
    * words rather than as an icon (`录音` / `停止` / `取消`).
    */
-  const pillLabel = $derived(preparing ? tr('取消') : recording ? tr('停止') : tr('录音'))
+  const pillLabel = $derived(
+    preparing ? tr('取消') : recording ? tr('暂停') : paused ? tr('继续') : tr('录音'),
+  )
 
   /** What the read-aloud switch currently is, in one word, for the same reason. */
   const readLabel = $derived($autoRead ? tr('朗读') : tr('静音'))
 
   async function toggle() {
-    // While we are waiting on the microphone permission prompt the button turns
-    // into a way out, instead of being disabled with a spinner and no escape.
-    if ($sessionState === 'preparing') {
-      session.abortStart()
-      return
-    }
     if (busy) return
     busy = true
     try {
-      if (recording) {
-        await session.stop()
-      } else if (!isLangInstalled($settings.sourceLang, $settings.installedModels)) {
-        // Requirement 11: prompt on first use, and only for the language the
-        // user actually selected — never pre-download every model.
-        installLang.set($settings.sourceLang)
-      } else if (!$headphoneAck) {
-        headphonePrompt.set(true)
-      } else {
-        await session.start()
-      }
+      if (recording) await session.pause()
+      else if (paused) await session.resume()
+      else
+        // Requirement 11 (a module is downloaded on first use, for the language
+        // the user actually chose) and the headphone question both live behind
+        // this call, which is also what the drawer's 开始翻译 uses.
+        await beginSession()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       warn('ui', t('操作失败：{error}', { error: message }))

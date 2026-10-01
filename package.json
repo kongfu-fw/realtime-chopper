@@ -1,7 +1,7 @@
 {
   "name": "realtime-chopper",
   "version": "1.0.0",
-  "description": "实时语音翻译单页应用：本地识别 + 多提供方翻译 + 浏览器朗读",
+  "description": "录音笔记单页应用：本地识别 + 多提供方翻译 + 浏览器朗读",
   "private": true,
   "scripts": {
     "dev": "vite",

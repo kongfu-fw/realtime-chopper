@@ -1,8 +1,7 @@
 <script lang="ts">
   import Logo from './Logo.svelte'
-  import AboutChopper from './AboutChopper.svelte'
   import SessionClock from './SessionClock.svelte'
-  import { closeSettings, logOpen, openSettings, view } from '../lib/app/state'
+  import { closeSettings, logOpen, navOpen, openSettings, view } from '../lib/app/state'
   import { APP_NAME } from '../lib/brand/logo'
   import { settings } from '../lib/store/settings'
   import { translator, uiLang } from '../lib/i18n/index.ts'
@@ -12,20 +11,19 @@
   const tr = $derived(translator($uiLang))
 
   /**
-   * The mascot: one tap is a pat, three quick taps open the easter egg.
+   * The mascot opens the navigation drawer, and answers the tap with a wobble on
+   * the way.
    *
-   * It used to open on any click, which is the wrong door for something that sits
-   * in the corner of the window a person touches all day: one stray tap and the app
-   * leaves the screen. Now a tap is answered with a wobble and nothing else, and
-   * the egg costs the three taps a phone game would ask for.
+   * What it used to be: one tap was a pat and *nothing else*, and the easter egg
+   * cost three quick taps — which was right while the egg was the only thing
+   * behind the mark, and wrong the moment the mark became a door. A logo in the
+   * corner of an app means "this app", and pressing it means "take me to the
+   * front of it" on almost every piece of software there is; the three taps are
+   * gone, the whole egg moved into the drawer's 版本号 row, and what is left here
+   * is one tap that opens one list.
    */
-  const TAP_WINDOW_MS = 600
   const SHAKE_MS = 420
-  const TAPS_FOR_EGG = 3
-  let about = $state(false)
   let shake = $state(false)
-  let taps = 0
-  let tapTimer: ReturnType<typeof setTimeout> | undefined
   let shakeTimer: ReturnType<typeof setTimeout> | undefined
 
   /** Answers a tap with the wobble, restarting it if the previous one is still running. */
@@ -36,26 +34,14 @@
   }
 
   function onBrand(event: MouseEvent): void {
-    // A keyboard activation arrives with `detail === 0`, and it cannot come three
-    // times in a row — the egg is the only thing behind this button, so Enter (or
-    // Space) opens it directly rather than leaving the keyboard without a door.
-    if (event.detail === 0) {
-      about = true
-      return
-    }
-    pat()
-    taps += 1
-    if (tapTimer) clearTimeout(tapTimer)
-    if (taps >= TAPS_FOR_EGG) {
-      taps = 0
-      about = true
-      return
-    }
-    // Each tap restarts the window, so "three quick taps" is measured between
-    // taps rather than from the first one.
-    tapTimer = setTimeout(() => (taps = 0), TAP_WINDOW_MS)
+    // A keyboard activation arrives with `detail === 0` and has no wobble to
+    // answer: Enter and Space open the list the same way a tap does.
+    if (event.detail !== 0) pat()
+    navOpen.set(!$navOpen)
   }
-</script>  <div class="titlebar">
+</script>
+
+<div class="titlebar">
     <!-- The middle cell is the clock, and it is sized by the grid rather than by
          whatever happens to sit beside it: the brand on the left and the buttons
          on the right can each grow or shrink without moving it. -->
@@ -64,8 +50,9 @@
       class="brand"
       class:shake
       onclick={onBrand}
-      title={tr('关于{name}', { name: APP_NAME })}
-      aria-label={tr('关于{name}', { name: APP_NAME })}
+      aria-expanded={$navOpen}
+      title={tr('打开导航')}
+      aria-label={tr('打开导航')}
     >
       <Logo size={24} />
       <span class="name">{APP_NAME}</span>
@@ -115,12 +102,6 @@
   </div>
 </div>
 
-<!-- Rendered outside the header's grid so the panel can never be squeezed by
-     it; the backdrop is fixed, so it sits over the app either way. -->
-{#if about}
-  <AboutChopper onclose={() => (about = false)} />
-{/if}
-
 <style>
   /*
    * Three cells, so the language pair is centred on the window rather than on
@@ -137,7 +118,9 @@
   }
 
   /* A button so it is reachable by keyboard and announced as clickable, but
-     styled as plain text — an easter egg should not look like a control. */
+     styled as plain text: the mark is the app's own name in the corner of its
+     own window, and a boxed button there would read as one of the controls
+     beside it rather than as the app itself. */
   .brand {
     display: flex;
     align-items: center;

@@ -2,7 +2,7 @@ import { get, writable } from 'svelte/store'
 import { Session } from '../pipeline/session'
 import type { Lang } from '../types'
 import { runSelfCheck, type SelfCheckReport } from '../selfcheck'
-import { getSettings } from '../store/settings'
+import { getSettings, isLangInstalled } from '../store/settings'
 import { ttsConfigFrom } from '../tts/engine'
 import { info } from '../log/store'
 import { t } from '../i18n/index.ts'
@@ -23,7 +23,7 @@ export const session = new Session()
  * because everything else — the footer's buttons, the transcript, the timer in the
  * header — is about a *session*, and on the start page there is not one yet.
  */
-export type View = 'start' | 'translate' | 'settings'
+export type View = 'start' | 'translate' | 'settings' | 'history'
 
 export const view = writable<View>('start')
 
@@ -47,6 +47,34 @@ export function openSettings(): void {
 export function closeSettings(): void {
   view.set(get(viewBeforeSettings))
 }
+
+/**
+ * Where 历史记录 was opened from, for the same reason as `viewBeforeSettings`.
+ *
+ * It is reachable from both ends of the app — the start page's own card and the
+ * logo's drawer, which is drawn over the transcript — and "back" has to mean the
+ * screen the user was looking at, not the one the app finds easiest to rebuild.
+ */
+export const viewBeforeHistory = writable<View>('start')
+
+export function openHistory(): void {
+  viewBeforeHistory.set(get(view))
+  view.set('history')
+}
+
+export function closeHistory(): void {
+  view.set(get(viewBeforeHistory))
+}
+
+/**
+ * The list that slides out of the left edge behind the logo.
+ *
+ * A store rather than component state because two things outside the drawer open
+ * and close it: the logo in the title bar, and the rows inside it (each row is a
+ * destination, and a drawer that stays open behind the screen it just opened is a
+ * drawer the user has to close by hand every time).
+ */
+export const navOpen = writable(false)
 
 export const logOpen = writable(false)
 /**
@@ -83,6 +111,44 @@ export const toast = writable<string | null>(null)
  */
 export const headphoneAck = writable(localStorage.getItem('rc.headphoneAck') === '1')
 export const headphonePrompt = writable(false)
+
+/**
+ * The one way a session is started from a button.
+ *
+ * Three states a session can be in when somebody presses "start", and only the
+ * third of them starts anything: the module for the source language is not on the
+ * device (the install dialog takes over and starts the session when it is done),
+ * the headphone question has not been answered (a first run answers it through
+the prompt `App.svelte` draws), or it is time to open the microphone. The order
+ * matters and is the order of cost: the download is the only wait measured in
+ * minutes, and the headphone question is asked while it runs.
+ *
+ * Written once because it used to exist twice — the footer's button and the start
+ * page's — with the same three cases spelled out in each, which is how the two
+ * came to answer the headphone question differently.
+ */
+export type BeginOutcome = 'started' | 'installing' | 'headphones' | 'cancelled'
+
+export async function beginSession(): Promise<BeginOutcome> {
+  const state = get(session.state)
+  if (state === 'preparing' || state === 'stopping') {
+    // Already on its way — and a press during the permission prompt is the one
+    // wait a user can get out of.
+    session.abortStart()
+    return 'cancelled'
+  }
+  const settings = getSettings()
+  if (!isLangInstalled(settings.sourceLang, settings.installedModels)) {
+    installLang.set(settings.sourceLang)
+    return 'installing'
+  }
+  if (!get(headphoneAck)) {
+    headphonePrompt.set(true)
+    return 'headphones'
+  }
+  await session.start()
+  return 'started'
+}
 
 export function acknowledgeHeadphones(): void {
   headphoneAck.set(true)

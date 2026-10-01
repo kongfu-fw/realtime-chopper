@@ -81,13 +81,18 @@ function note(text) {
 
 /** The screenshots a run leaves, in the order a person would read them. */
 const SHOTS = [
-  ['01-start-page', '起始页：logo、一块预留的加载位置、一颗开始按钮'],
+  ['01-start-page', '起始页：logo、一块预留的加载位置、两颗方块卡片'],
   ['02-settings-debug-off', '设置页，调试关闭'],
   ['03-settings-debug-on', '设置页，调试打开'],
   ['04-transcript', '转录页：声纹 → 下载位 → 方块时钟，两栏都没有标题'],
-  ['05-stopped', '停止后：时长冻住，下载钮出现在声纹和时钟之间'],
+  ['05-paused', '暂停面板：放大居中的声纹 / 下载钮 / 时钟，下面三个按钮'],
   ['06-exported', '导出之后'],
   ['07-read-settings', '朗读设置：音色打开时已经是满的，底下没有提示语'],
+  ['08-drawer', '左上角 logo 拉出的列表：logo / 名字 / 开始翻译 / 历史记录 / 设置 / 版本号'],
+  ['09-save-dialog', '保存对话框：名称可以改，日期和定位是保留字段'],
+  ['10-history', '历史记录：最新的那条挂着 新 标签'],
+  ['11-history-detail', '一条历史记录：录音回放、下载、原文与译文'],
+  ['12-history-select', '批量选择：勾选一条，底部出现删除栏'],
 ]
 
 /** Escapes text for the HTML report; the app's own strings are trusted, paths are not. */
@@ -343,29 +348,33 @@ async function scenario(cdp) {
     const start = document.querySelector('.start')
     const brand = start.querySelector('.brand')
     const stage = start.querySelector('.stage')
+    const cards = start.querySelector('.cards')
     const button = start.querySelector('.begin')
-    if (!brand || !stage || !button) return null
-    const box = (el) => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, x: r.left + r.width / 2, h: r.height } }
+    const history = start.querySelector('.card.history')
+    if (!brand || !stage || !cards || !button || !history) return null
+    const box = (el) => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, x: r.left + r.width / 2, h: r.height, w: r.width } }
     return {
-      brand: box(brand), stage: box(stage), button: box(button),
+      brand: box(brand), stage: box(stage), cards: box(cards), button: box(button), history: box(history),
       viewport: window.innerWidth / 2,
       label: button.textContent.trim(),
+      historyLabel: history.textContent.trim(),
+      tagline: start.querySelector('.tagline')?.textContent.trim() ?? '',
       line: stage.querySelector('.line')?.textContent.trim() ?? null,
       hasSettings: !!start.querySelector('.settings'),
       hasHeader: !!document.querySelector('.titlebar'),
       hasFooter: !!document.querySelector('.record-btn'),
     }
   `)
-  record('the start page shows a logo, a loading area and one button', !!stack)
+  record('the start page shows a logo, a loading area and two cards', !!stack)
   if (stack) {
     record(
       'the three are stacked in that order, centred on the window',
       stack.brand.bottom <= stack.stage.top &&
-        stack.stage.bottom <= stack.button.top &&
+        stack.stage.bottom <= stack.cards.top &&
         Math.abs(stack.brand.x - stack.viewport) < 2 &&
         Math.abs(stack.stage.x - stack.viewport) < 2 &&
-        Math.abs(stack.button.x - stack.viewport) < 2,
-      `brand ${Math.round(stack.brand.x)} / stage ${Math.round(stack.stage.x)} / button ${Math.round(stack.button.x)} · centre ${stack.viewport}`,
+        Math.abs(stack.cards.x - stack.viewport) < 2,
+      `brand ${Math.round(stack.brand.x)} / stage ${Math.round(stack.stage.x)} / cards ${Math.round(stack.cards.x)} · centre ${stack.viewport}`,
     )
     record(
       'nothing else is on it: no header, no footer',
@@ -377,7 +386,27 @@ async function scenario(cdp) {
       stack.stage.h >= 80,
       `${Math.round(stack.stage.h)} px`,
     )
-    record('the button says what it starts', stack.label === '开始录音', stack.label)
+    record('one card starts a recording', stack.label === '开始录音', stack.label)
+    record(
+      'and the other opens the history',
+      stack.historyLabel.startsWith('历史记录'),
+      stack.historyLabel,
+    )
+    // Square, and both of them: the shape is the page's whole argument for the
+    // change (a thumb finds a square without aiming), and one square beside an
+    // oblong is what a half-applied stylesheet looks like.
+    record(
+      'both cards are squares, and the same square',
+      Math.abs(stack.button.w - stack.button.h) < 1 &&
+        Math.abs(stack.history.w - stack.history.h) < 1 &&
+        Math.abs(stack.button.w - stack.history.w) < 1,
+      `${Math.round(stack.button.w)}×${Math.round(stack.button.h)} and ${Math.round(stack.history.w)}×${Math.round(stack.history.h)}`,
+    )
+    record(
+      'the tagline says what the app is now: a recording, not a live translation',
+      stack.tagline === '录音笔记',
+      stack.tagline,
+    )
     record(
       'the reserved area says nothing at rest — the resting hint is gone',
       stack.line === '',
@@ -705,25 +734,55 @@ async function scenario(cdp) {
   `)
   record('the clock counts the recording', clockRan.moved, `${clockRan.first} → ${clockRan.second}`)
 
-  // ------------------------------------------------------------------- stop
-  await cdp.eval(`document.querySelector('.record-btn').click(); return true`)
-  await cdp.waitFor(`return !document.querySelector('.record-btn.recording')`, {
-    timeoutMs: 30_000,
-    label: 'the recording to stop',
+  // ------------------------------------------------------------------ pause
+  // The button says 暂停 now, not 停止: a session ends by being *filed*, and the
+  // panel that comes up is where that decision is made. It arrives with a
+  // transition, so the clock is watched *growing* rather than measured once.
+  //
+  // Headless Chrome reports `prefers-reduced-motion: reduce`, and this app honours
+  // it by dropping every transition — which would hide the one thing this round is
+  // about. A phone on a desk is in the default mode, so that is what is emulated.
+  await cdp.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
   })
-  await sleep(1500)
+  await cdp.eval(`document.querySelector('.record-btn').click(); return true`)
+  /** `mm:ss` / `h:mm:ss` as seconds, for comparing one clock with another. */
+  const asSeconds = (value) =>
+    String(value)
+      .split(':')
+      .reduce((total, part) => total * 60 + Number(part), 0)
+  const growth = await cdp.eval(`
+    const widths = []
+    const started = performance.now()
+    while (performance.now() - started < 1400) {
+      const clock = document.querySelector('.pause-panel .clock')
+      if (clock) widths.push(Math.round(clock.getBoundingClientRect().width))
+      await new Promise((r) => setTimeout(r, 25))
+    }
+    const clock = document.querySelector('.pause-panel .clock')
+    return {
+      samples: widths.length,
+      min: widths.length ? Math.min(...widths) : 0,
+      max: widths.length ? Math.max(...widths) : 0,
+      duration: clock ? getComputedStyle(clock).transitionDuration : '',
+      zoom: clock ? getComputedStyle(clock).getPropertyValue('--zoom').trim() : '',
+    }
+  `)
+  await sleep(900)
   const after = await cdp.eval(`
-    const time = document.querySelector('.clock .time')
+    const time = document.querySelector('.pause-panel .clock .time')
+    const header = document.querySelector('.titlebar .clock .time')
     const stopped = time.dataset.value
     await new Promise((r) => setTimeout(r, 1500))
     return {
       time: stopped,
       still: time.dataset.value === stopped,
-      left: time.getBoundingClientRect().left,
-      download: !!document.querySelector('.clock .dl'),
+      headerLeft: header.getBoundingClientRect().left,
+      header: header.dataset.value,
+      download: !!document.querySelector('.pause-panel .clock .dl'),
       between: (() => {
-        const dl = document.querySelector('.clock .dl')
-        const vp = document.querySelector('.clock .vp')
+        const dl = document.querySelector('.pause-panel .clock .dl')
+        const vp = document.querySelector('.pause-panel .clock .vp')
         if (!dl || !vp) return null
         const button = dl.getBoundingClientRect()
         return vp.getBoundingClientRect().right <= button.left + 0.5 && button.right <= time.getBoundingClientRect().left + 0.5
@@ -731,18 +790,99 @@ async function scenario(cdp) {
       rows: document.querySelectorAll('.panel-body .line').length,
     }
   `)
-  record('the clock stops with the recording', after.still, `${after.time}`)
+  record('the clock freezes when the recording pauses', after.still, `${after.time}`)
+  record(
+    'and it freezes at the length of the session, not at zero',
+    after.time !== '00:00' && Math.abs(asSeconds(after.time) - asSeconds(after.header)) <= 1,
+    `panel ${after.time} · header ${after.header}`,
+  )
   record('a download button appears once there is something to save', after.download === true)
   record('and it sits between the voiceprint and the clock', after.between === true)
   // The button appearing is the moment the reserved slot exists for: the clock is a
   // number being watched, and taking the button's width out of it would move it.
   record(
-    'and the clock does not move when the button appears',
-    Math.abs(after.left - clockRan.left) < 0.5,
-    `${clockRan.left.toFixed(1)} → ${after.left.toFixed(1)} px`,
+    'and the header clock it was copied from did not move',
+    Math.abs(after.headerLeft - clockRan.left) < 0.5,
+    `${clockRan.left.toFixed(1)} → ${after.headerLeft.toFixed(1)} px`,
   )
   note(`transcript rows after the fake microphone: ${after.rows}`)
-  await cdp.shot('05-stopped')
+
+  // The panel itself: what it is, and the three ways out of it.
+  const panel = await cdp.eval(`
+    const heading = document.querySelector('.pause-panel .heading')?.textContent.trim() ?? ''
+    const buttons = [...document.querySelectorAll('.pause-panel .actions button')].map((b) => b.textContent.trim())
+    const time = document.querySelector('.pause-panel .clock .time')
+    const clock = document.querySelector('.pause-panel .clock')
+    const rect = clock.getBoundingClientRect()
+    const header = document.querySelector('.titlebar .clock').getBoundingClientRect()
+    const box = document.querySelector('.pause-panel').getBoundingClientRect()
+    return {
+      heading,
+      buttons,
+      centreOff: Math.abs(rect.left + rect.width / 2 - window.innerWidth / 2),
+      ratio: rect.width / header.width,
+      duration: getComputedStyle(clock).transitionDuration,
+      covers: box.height >= window.innerHeight - 1,
+      scrim: !!document.querySelector('.scrim'),
+    }
+  `)
+  record('pausing brings up a panel that says so', panel.heading === '录音已暂停', panel.heading)
+  record(
+    'with the three ways out of it: carry on, start again, or file it',
+    panel.buttons.length === 3 &&
+      panel.buttons[0] === '继续录音' &&
+      panel.buttons[1] === '开启新录音' &&
+      panel.buttons[2] === '保存',
+    panel.buttons.join(' / '),
+  )
+  record(
+    'the header\u2019s clock is drawn again, enlarged and centred on the window',
+    panel.ratio > 1.9 && panel.centreOff <= 4,
+    `${panel.ratio.toFixed(2)}× the header\u2019s clock · ${panel.centreOff.toFixed(1)} px off centre`,
+  )
+  record(
+    'and it grows into place rather than appearing at its size',
+    growth.samples >= 3 && growth.min < growth.max * 0.95 && panel.duration === '0.32s',
+    `${growth.samples} frames, ${growth.min} → ${growth.max} px, transition ${panel.duration}, zoom ${growth.zoom}`,
+  )
+  record('the panel is the screen, not a card on one', panel.covers === true && panel.scrim === true)
+  await cdp.shot('05-paused')
+
+  // The recording itself, from the panel's own download button: the one artifact a
+  // classroom can take away.
+  const wavBefore = readdirSync(DOWNLOADS).length
+  await cdp.eval(`document.querySelector('.pause-panel .clock .dl').click(); return true`)
+  await sleep(1500)
+  const pausedWav = readdirSync(DOWNLOADS).find((name) => name.endsWith('.wav'))
+  record('the download button on that panel saves the recording to the device', !!pausedWav, pausedWav ?? `nothing in ${DOWNLOADS}`)
+  if (pausedWav) {
+    const bytes = readFileSync(join(DOWNLOADS, pausedWav))
+    const declared = bytes.length >= 44 ? bytes.readUInt32LE(4) + 8 : 0
+    record(
+      'and the file is a WAV whose header covers the audio in it',
+      bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WAVE' && declared === bytes.length,
+      `${bytes.length} bytes, header says ${declared}`,
+    )
+  }
+  note(`downloads before filing anything: ${wavBefore}`)
+
+  // 继续录音: the same session, the microphone reopened, the panel gone.
+  const resumed = await cdp.eval(`
+    const button = [...document.querySelectorAll('.pause-panel .actions button')].find((b) => b.textContent.trim() === '继续录音')
+    button.click()
+    await new Promise((r) => setTimeout(r, 1800))
+    return {
+      recording: !!document.querySelector('.record-btn.recording'),
+      panel: !!document.querySelector('.pause-panel'),
+      label: document.querySelector('.record-btn').textContent.trim(),
+      rows: document.querySelectorAll('.panel-body .line').length,
+    }
+  `)
+  record(
+    '继续录音 reopens the microphone and takes the panel away',
+    resumed.recording === true && resumed.panel === false,
+    `button now says “${resumed.label}”, ${resumed.rows} rows kept`,
+  )
 
   // The export buttons, with whatever the transcript holds: either a file or the
   // sentence that says there is nothing yet. Both are correct; silence is not.
@@ -770,21 +910,335 @@ async function scenario(cdp) {
     translated,
   )
 
-  // The recording itself: the one artifact a classroom can take away.
-  await cdp.eval(`document.querySelector('.clock .dl').click(); return true`)
-  await sleep(1500)
-  const wav = readdirSync(DOWNLOADS).find((name) => name.endsWith('.wav'))
-  record('the download button saves the recording to the device', !!wav, wav ?? `nothing in ${DOWNLOADS}`)
-  if (wav) {
-    const bytes = readFileSync(join(DOWNLOADS, wav))
-    const declared = bytes.length >= 44 ? bytes.readUInt32LE(4) + 8 : 0
-    record(
-      'and the file is a WAV whose header covers the audio in it',
-      bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WAVE' && declared === bytes.length,
-      `${bytes.length} bytes, header says ${declared}`,
-    )
-  }
   await cdp.shot('06-exported')
+
+  // ------------------------------------------------------------------- file it
+  // The place lookup is stubbed, and only here: a real one wants a permission
+  // prompt and a gazetteer on the network, and what is under test is the title,
+  // the dialog around it and the note that comes out the other end.
+  await cdp.eval(`
+    const realFetch = window.fetch.bind(window)
+    window.fetch = (input, init) => {
+      const url = String(input?.url ?? input)
+      if (url.includes('reverse-geocode') || url.includes('nominatim')) {
+        return Promise.resolve(new Response(
+          JSON.stringify({ city: '上海', locality: '上海', principalSubdivision: 'Shanghai', countryName: 'China' }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ))
+      }
+      return realFetch(input, init)
+    }
+    navigator.geolocation.getCurrentPosition = (ok) => {
+      ok({ coords: { latitude: 31.23, longitude: 121.47, accuracy: 20 }, timestamp: Date.now() })
+      return 1
+    }
+    return true
+  `)
+
+  const naming = await cdp.eval(`
+    document.querySelector('.record-btn').click()
+    await new Promise((r) => setTimeout(r, 900))
+    const save = [...document.querySelectorAll('.pause-panel .actions button')].find((b) => b.textContent.trim() === '保存')
+    save.click()
+    // Long enough for the position fix and the lookup behind the dialog.
+    await new Promise((r) => setTimeout(r, 1600))
+    const modal = document.querySelector('.modal')
+    return {
+      open: !!modal,
+      heading: modal?.querySelector('h2')?.textContent.trim() ?? '',
+      keys: [...(modal?.querySelectorAll('.field .key') ?? [])].map((k) => k.textContent.trim()),
+      values: [...(modal?.querySelectorAll('.field .value') ?? [])].map((v) => v.textContent.trim()),
+      name: modal?.querySelector('input')?.value ?? '',
+    }
+  `)
+  record(
+    '保存 asks for a name before it files anything',
+    naming.open === true && naming.heading === '保存到历史记录',
+    naming.heading || 'no dialog',
+  )
+  record(
+    'opening with the generated title: the date, the time, and where this is',
+    naming.name.includes('·') && naming.name.includes('上海'),
+    naming.name,
+  )
+  record(
+    'and showing the date and the place as fields of their own',
+    naming.keys.join('/') === '名称/日期/定位' && (naming.values[1] ?? '').includes('上海'),
+    `${naming.keys.join(' / ')} · ${naming.values.join(' · ')}`,
+  )
+  await cdp.shot('09-save-dialog')
+
+  const filed = await cdp.eval(`
+    const input = document.querySelector('.modal input')
+    input.value = '第三节课'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    const save = [...document.querySelectorAll('.modal .footer button')].find((b) => b.textContent.trim() === '保存')
+    save.click()
+    await new Promise((r) => setTimeout(r, 3000))
+    return {
+      history: !!document.querySelector('.history'),
+      footer: !!document.querySelector('.record-btn'),
+      rows: [...document.querySelectorAll('.history .row')].map((r) => r.textContent.trim()),
+      badge: document.querySelector('.history .badge')?.textContent.trim() ?? '',
+      summary: document.querySelector('.history .summary')?.textContent.trim() ?? '',
+      paused: !!document.querySelector('.pause-panel'),
+    }
+  `)
+  record(
+    'saving lands straight on the history screen, with the note at the top',
+    filed.history === true && filed.rows.length === 1,
+    filed.rows.join(' / ') || 'no rows',
+  )
+  record('named what was typed, not what was generated', filed.rows[0]?.startsWith('第三节课') === true, filed.rows[0] ?? '')
+  record('and badged as the new one', filed.badge === '新', filed.badge || 'no badge')
+  record(
+    'with the date and the place still on the row, because a rename keeps them',
+    (filed.rows[0] ?? '').includes('上海'),
+    filed.rows[0] ?? '',
+  )
+  record(
+    'the recording screen is gone: no footer, no pause panel',
+    filed.footer === false && filed.paused === false,
+    filed.summary,
+  )
+  await cdp.shot('10-history')
+
+  // The artifact: the note is on the device, not in the page.
+  const stored = await cdp.eval(`
+    const root = await navigator.storage.getDirectory()
+    const dir = await root.getDirectoryHandle('rc-history')
+    const names = []
+    for await (const [name] of dir.entries()) names.push(name)
+    names.sort()
+    const index = JSON.parse(await (await (await dir.getFileHandle('index.json')).getFile()).text())
+    const id = index[0]?.id ?? ''
+    let head = ''
+    let bytes = 0
+    if (id) {
+      const wav = await (await dir.getFileHandle(id + '.wav')).getFile()
+      bytes = wav.size
+      head = new TextDecoder().decode(await wav.slice(0, 12).arrayBuffer())
+    }
+    return { names, id, meta: index[0] ?? null, head, bytes }
+  `)
+  record(
+    'the note is on the device: one index, one transcript, one recording',
+    stored.names.length === 3 && stored.names.includes('index.json'),
+    stored.names.join(', '),
+  )
+  record(
+    'and the WAV beside it is a real WAV',
+    stored.head.startsWith('RIFF') && stored.head.slice(8, 12) === 'WAVE' && stored.bytes > 44,
+    `${stored.bytes} bytes, header “${stored.head.slice(0, 4)}/${stored.head.slice(8, 12)}”`,
+  )
+  record(
+    'the index carries the fields a rename has to keep',
+    stored.meta?.title === '第三节课' && stored.meta?.place === '上海' && typeof stored.meta?.at === 'number',
+    JSON.stringify({ title: stored.meta?.title, place: stored.meta?.place, lines: stored.meta?.lines }),
+  )
+
+  // Opening it: the transcript, the audio, and the note's own file.
+  const detail = await cdp.eval(`
+    document.querySelector('.history .row').click()
+    await new Promise((r) => setTimeout(r, 1200))
+    const audio = document.querySelector('.history audio')
+    let duration = null
+    for (let i = 0; i < 40 && duration === null; i += 1) {
+      if (audio && audio.readyState >= 1 && Number.isFinite(audio.duration)) duration = audio.duration
+      else await new Promise((r) => setTimeout(r, 100))
+    }
+    return {
+      title: document.querySelector('.history h2')?.textContent.trim() ?? '',
+      facts: document.querySelector('.history .facts')?.textContent.trim() ?? '',
+      audio: !!audio,
+      kind: (audio?.src ?? '').split(':')[0],
+      duration,
+      download: !!document.querySelector('.history a[download]'),
+      pairs: document.querySelectorAll('.history .pair').length,
+      empty: document.querySelector('.history .transcript')?.textContent.trim() ?? '',
+    }
+  `)
+  record(
+    'opening a note plays its recording back',
+    detail.audio === true && detail.kind === 'blob' && (detail.duration ?? 0) > 0,
+    `src ${detail.kind}:…, ${detail.duration === null ? 'no duration' : `${detail.duration.toFixed(1)} s`}`,
+  )
+  record(
+    'and its transcript is readable there — the sentences with their translations',
+    detail.pairs > 0 || detail.empty.includes('没有识别到文字'),
+    detail.pairs ? `${detail.pairs} sentences` : detail.empty,
+  )
+  record('with a link that hands out the note\u2019s own file', detail.download === true)
+  await cdp.shot('11-history-detail')
+
+  const grabbed = readdirSync(DOWNLOADS).length
+  await cdp.eval(`document.querySelector('.history a[download]').click(); return true`)
+  await sleep(1200)
+  const noteFile = readdirSync(DOWNLOADS).filter((name) => name.startsWith(stored.id))
+  record('and that link downloads the recording the note holds', noteFile.length === 1, noteFile.join(', ') || `nothing matching ${stored.id} (had ${grabbed})`)
+
+  // ------------------------------------------------------------------ rename
+  const renamed = await cdp.eval(`
+    const rename = [...document.querySelectorAll('.history .row-actions button')].find((b) => b.textContent.trim() === '重命名')
+    rename.click()
+    await new Promise((r) => setTimeout(r, 350))
+    const input = document.querySelector('.modal input')
+    const before = input.value
+    input.value = '第三节课（改）'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    const save = [...document.querySelectorAll('.modal .footer button')].find((b) => b.textContent.trim() === '重命名')
+    save.click()
+    await new Promise((r) => setTimeout(r, 700))
+    const afterTitle = document.querySelector('.history h2')?.textContent.trim() ?? ''
+    const back = [...document.querySelectorAll('.history .bar button')].find((b) => b.textContent.trim().includes('返回列表'))
+    back.click()
+    await new Promise((r) => setTimeout(r, 500))
+    return { before, afterTitle, row: document.querySelector('.history .row')?.textContent.trim() ?? '' }
+  `)
+  record('重命名 asks with the name the note already has', renamed.before === '第三节课', renamed.before)
+  record('and the new name is what it answers to', renamed.afterTitle === '第三节课（改）', renamed.afterTitle)
+  record(
+    'while the date and the place stay on the row, which is what a rename keeps',
+    renamed.row.startsWith('第三节课（改）') && renamed.row.includes('上海'),
+    renamed.row,
+  )
+
+  // --------------------------------------------------------- batch delete
+  const selection = await cdp.eval(`
+    const pick = [...document.querySelectorAll('.history .bar button')].find((b) => b.textContent.trim() === '选择')
+    pick.click()
+    await new Promise((r) => setTimeout(r, 350))
+    const before = document.querySelectorAll('.selectbar .picked').length
+    document.querySelector('.history .check').click()
+    await new Promise((r) => setTimeout(r, 250))
+    return {
+      barWasUp: before === 1,
+      picked: document.querySelector('.selectbar .picked')?.textContent.trim() ?? '',
+      ticked: document.querySelector('.history .check').classList.contains('on'),
+      label: [...document.querySelectorAll('.history .bar button')].map((b) => b.textContent.trim()).join('/'),
+    }
+  `)
+  record(
+    '选择 turns the list into a selection, one tick at a time',
+    selection.barWasUp && selection.ticked === true && selection.picked === '已选 1 条',
+    `${selection.picked} · buttons: ${selection.label}`,
+  )
+  await cdp.shot('12-history-select')
+
+  const deleted = await cdp.eval(`
+    const remove = [...document.querySelectorAll('.selectbar button')].find((b) => b.textContent.trim() === '删除')
+    remove.click()
+    await new Promise((r) => setTimeout(r, 350))
+    const confirm = document.querySelector('.modal')
+    const heading = confirm?.querySelector('h2')?.textContent.trim() ?? ''
+    const body = confirm?.querySelector('.body')?.textContent.trim() ?? ''
+    const go = [...document.querySelectorAll('.modal .footer button')].find((b) => b.textContent.trim() === '删除')
+    go.click()
+    await new Promise((r) => setTimeout(r, 900))
+    const root = await navigator.storage.getDirectory()
+    const dir = await root.getDirectoryHandle('rc-history')
+    const names = []
+    for await (const [name] of dir.entries()) names.push(name)
+    const index = JSON.parse(await (await (await dir.getFileHandle('index.json')).getFile()).text())
+    return {
+      heading,
+      body,
+      rows: document.querySelectorAll('.history .row').length,
+      bar: !!document.querySelector('.selectbar'),
+      empty: document.querySelector('.history .list .facts')?.textContent.trim() ?? '',
+      left: names.filter((name) => name !== 'index.json').length,
+      indexed: index.length,
+    }
+  `)
+  record(
+    '删除 asks first, and says what goes with it',
+    deleted.heading === '删除历史记录' && deleted.body.includes('录音和文字'),
+    `${deleted.heading}: ${deleted.body}`,
+  )
+  record('and the note is gone from the list', deleted.rows === 0 && deleted.bar === false, deleted.empty)
+  record(
+    'and gone from the device, recording included',
+    deleted.left === 0 && deleted.indexed === 0,
+    `${deleted.left} files left, index holds ${deleted.indexed}`,
+  )
+
+  // ------------------------------------------------------------------ drawer
+  // The logo in the title bar opens the list, and the top row of that list is the
+  // way home. It runs here because this is the first screen in the walk that has a
+  // title bar at all — the start page does not have one.
+  const drawer = await cdp.eval(`
+    document.querySelector('.titlebar .brand').click()
+    await new Promise((r) => setTimeout(r, 380))
+    const nav = document.querySelector('.drawer')
+    if (!nav) return { open: false }
+    const rows = [...nav.querySelectorAll('.row')].map((b) => b.textContent.trim())
+    const rect = nav.getBoundingClientRect()
+    return {
+      open: true,
+      rows,
+      left: Math.round(rect.left),
+      onScreen: rect.left >= 0 && rect.right <= window.innerWidth + 1,
+      scrim: !!document.querySelector('.scrim'),
+      expanded: document.querySelector('.titlebar .brand').getAttribute('aria-expanded'),
+    }
+  `)
+  await cdp.shot('08-drawer')
+  record('the logo opens a drawer out of the left edge', drawer.open === true && drawer.scrim === true, `left ${drawer.left}`)
+  record(
+    'holding the app itself, then the three destinations',
+    ['乔巴', '开始翻译', '历史记录', '设置'].every((name, index) => (drawer.rows?.[index] ?? '').includes(name)),
+    (drawer.rows ?? []).join(' / '),
+  )
+  record(
+    'and the version at the bottom',
+    /版本 \d{8}(\.\d+)?/.test(drawer.rows?.[drawer.rows.length - 1] ?? ''),
+    drawer.rows?.[drawer.rows.length - 1] ?? '',
+  )
+  record('the logo says whether the list is open', drawer.expanded === 'true', `aria-expanded=${drawer.expanded}`)
+  const about = await cdp.eval(`
+    const version = [...document.querySelectorAll('.drawer .row')].pop()
+    version.click()
+    await new Promise((r) => setTimeout(r, 320))
+    const modal = document.querySelector('.modal')
+    return {
+      open: !!modal,
+      title: modal?.querySelector('h2')?.textContent.trim() ?? '',
+      hint: modal?.querySelector('.hint')?.textContent.trim() ?? '',
+      drawer: !!document.querySelector('.drawer'),
+    }
+  `)
+  record(
+    'and 版本号 opens the mascot\u2019s own panel, which the logo used to hide',
+    about.open === true && about.title.includes('乔巴') && about.drawer === false,
+    `${about.title} · drawer still open: ${about.drawer}`,
+  )
+  record('which now says where to find it again', about.hint.includes('版本号'), about.hint)
+  const closed = await cdp.eval(`
+    document.querySelector('.modal .footer .rc-btn.accent')?.click()
+    await new Promise((r) => setTimeout(r, 350))
+    return { modal: !!document.querySelector('.modal'), drawer: !!document.querySelector('.drawer') }
+  `)
+  record('closing it leaves nothing open but the app', closed.modal === false && closed.drawer === false)
+  const away = await cdp.eval(`
+    document.querySelector('.titlebar .brand').click()
+    await new Promise((r) => setTimeout(r, 380))
+    const row = [...document.querySelectorAll('.drawer .row')].find((b) => b.textContent.trim() === '开始翻译')
+    row.click()
+    await new Promise((r) => setTimeout(r, 700))
+    return {
+      panels: !!document.querySelector('.panels'),
+      footer: !!document.querySelector('.record-btn'),
+      drawer: !!document.querySelector('.drawer'),
+      label: document.querySelector('.record-btn')?.textContent.trim() ?? '',
+      rows: document.querySelectorAll('.panel-body .line').length,
+    }
+  `)
+  record(
+    'and 开始翻译 goes back to the transcript rather than starting the microphone',
+    away.panels === true && away.footer === true && away.drawer === false && away.label === '录音',
+    `button says “${away.label}”, ${away.rows} rows kept`,
+  )
+
 
   // The read-aloud settings dialog: the three settings that belong together.
   const readDialog = await cdp.eval(`
@@ -851,6 +1305,78 @@ async function scenario(cdp) {
     JSON.stringify(llmGate),
   )
   await cdp.shot('07-read-settings')
+
+  // ------------------------------------------------------------------- home
+  // Last, because it leaves the app on the start page: the drawer's own row is the
+  // way there, and the card that opened this whole walk is what it lands on.
+  const home = await cdp.eval(`
+    const done = [...document.querySelectorAll('.modal .footer button')].find((b) => b.textContent.trim() === '完成')
+    done?.click()
+    await new Promise((r) => setTimeout(r, 350))
+    document.querySelector('.titlebar .brand').click()
+    await new Promise((r) => setTimeout(r, 380))
+    document.querySelector('.drawer .row').click()
+    await new Promise((r) => setTimeout(r, 500))
+    return {
+      start: !!document.querySelector('.start'),
+      card: document.querySelector('.card.history')?.textContent.trim() ?? '',
+      drawer: !!document.querySelector('.drawer'),
+    }
+  `)
+  record(
+    'the drawer\u2019s top row goes home, where the card counts what is left',
+    home.start === true && home.drawer === false && home.card.includes('还没有'),
+    home.card,
+  )
+
+  // ------------------------------------------------------------ 开启新录音
+  // The third way out of a pause: file what was just recorded, forget its words,
+  // and open the microphone on the next one. Started from the start page's own
+  // card, which is the door this whole walk came in by.
+  const second = await cdp.eval(`
+    document.querySelector('.card.begin').click()
+    const deadline = Date.now() + 90_000
+    while (Date.now() < deadline && !document.querySelector('.record-btn.recording')) {
+      await new Promise((r) => setTimeout(r, 500))
+    }
+    return { recording: !!document.querySelector('.record-btn.recording') }
+  `)
+  note('started a second session from the start page')
+  const fresh = await cdp.eval(`
+    document.querySelector('.record-btn').click()
+    for (let i = 0; i < 40 && !document.querySelector('.pause-panel'); i += 1) await new Promise((r) => setTimeout(r, 200))
+    const button = [...document.querySelectorAll('.pause-panel .actions button')].find((b) => b.textContent.trim() === '开启新录音')
+    button.click()
+    for (let i = 0; i < 90 && !document.querySelector('.record-btn.recording'); i += 1) await new Promise((r) => setTimeout(r, 500))
+    return {
+      recording: !!document.querySelector('.record-btn.recording'),
+      panel: !!document.querySelector('.pause-panel'),
+      rows: document.querySelectorAll('.panel-body .line').length,
+      editor: !!document.querySelector('.panels'),
+      label: document.querySelector('.record-btn')?.textContent.trim() ?? '',
+    }
+  `)
+  record(
+    '开启新录音 files the old session and opens the microphone on a blank one',
+    second.recording === true && fresh.recording === true && fresh.panel === false && fresh.editor === true && fresh.rows === 0,
+    `button says “${fresh.label}”, ${fresh.rows} rows carried over`,
+  )
+  const replaced = await cdp.eval(`
+    document.querySelector('.titlebar .brand').click()
+    await new Promise((r) => setTimeout(r, 380))
+    const row = [...document.querySelectorAll('.drawer .row')].find((b) => b.textContent.trim() === '历史记录')
+    row.click()
+    await new Promise((r) => setTimeout(r, 800))
+    return {
+      rows: [...document.querySelectorAll('.history .row')].map((r) => r.textContent.trim()),
+      badge: document.querySelector('.history .badge')?.textContent.trim() ?? '',
+    }
+  `)
+  record(
+    'and what it replaced is in the history, titled from the date, the time and the place',
+    replaced.rows.length === 1 && replaced.rows[0].includes('·') && replaced.badge === '新',
+    `${replaced.rows[0] ?? 'no rows'} · badge “${replaced.badge}”`,
+  )
 }
 
 // ---------------------------------------------------------------------- main

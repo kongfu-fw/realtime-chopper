@@ -1,6 +1,13 @@
 <script lang="ts">
   import Logo from './Logo.svelte'
-  import { headphoneAck, headphonePrompt, openSettings, session } from '../lib/app/state'
+  import {
+    headphoneAck,
+    headphonePrompt,
+    openHistory,
+    openSettings,
+    session,
+  } from '../lib/app/state'
+  import { historyList } from '../lib/history/store'
   import { settings, isLangInstalled, markModelInstalled } from '../lib/store/settings'
   import { ASR_MODULES, moduleIdFor } from '../lib/asr/models'
   import { warn } from '../lib/log/store'
@@ -129,7 +136,7 @@
     <div class="brand">
       <Logo size={76} />
       <h1>{APP_NAME}</h1>
-      <p class="tagline">{tr('实时翻译')}</p>
+      <p class="tagline">{tr('录音笔记')}</p>
     </div>
 
     <div class="stage" role="status">
@@ -140,13 +147,37 @@
       {/if}
     </div>
 
-    <button
-      class="rc-btn accent begin"
-      disabled={$sessionState === 'stopping'}
-      onclick={() => void begin()}
-    >
-      {preparing ? tr('取消启动') : error ? tr('再试一次') : tr('开始录音')}
-    </button>
+    <!--
+     * Two squares, not one pill: the app has two things to offer from a cold
+     * start, and they are equals — record something, or read what was recorded
+     * before. A second pill beside the first would have made 历史记录 look like a
+     * lesser button, and this page only has room for two of anything.
+     *
+     * 开始录音 keeps its old behaviour in every state (a preparing session can be
+     * cancelled here, a failure can be retried) — what changed is the shape
+     * around it, and the fact that the words sit under a mark rather than in a
+     * line of text.
+     -->
+    <div class="cards">
+      <button
+        class="card begin"
+        disabled={$sessionState === 'stopping'}
+        onclick={() => void begin()}
+      >
+        <span class="dot" aria-hidden="true"></span>
+        <span class="card-label">
+          {preparing ? tr('取消启动') : error ? tr('再试一次') : tr('开始录音')}
+        </span>
+      </button>
+
+      <button class="card history" onclick={openHistory}>
+        <span class="lines" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="card-label">{tr('历史记录')}</span>
+        <span class="count">
+          {$historyList.length ? tr('{n} 条记录', { n: $historyList.length }) : tr('还没有')}
+        </span>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -254,11 +285,99 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* The thumb target this whole page exists for. */
-  .begin {
-    min-width: 180px;
-    padding: 12px 26px;
-    font-size: 16px;
+  /*
+   * Two squares. Square rather than a row of courses, because the page is read
+   * top to bottom and a square is the shape a thumb finds without aiming — and
+   * because two of them side by side fill the width the stack already has.
+   *
+   * `aspect-ratio` rather than a height, so the shape survives a narrow phone and
+   * a wide desktop: 42vw of a 320 px screen is a square 134 px across, which is
+   * still a comfortable target with one hand.
+   */
+  .cards {
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    width: 100%;
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: min(150px, 42vw);
+    aspect-ratio: 1 / 1;
+    padding: 10px;
+    border: 2px solid var(--rc-ink);
+    border-radius: var(--rc-radius-l);
+    background: var(--rc-surface);
+    color: var(--rc-ink);
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--rc-shadow-hard);
+    transition: transform 80ms ease;
+  }
+
+  .card:hover {
+    transform: translateY(-1px);
+  }
+
+  .card:active {
+    transform: translateY(1px);
+  }
+
+  .card:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  /* The recording mark: the same filled dot the footer's button wears at rest. */
+  .card.begin {
+    background: var(--rc-accent);
+  }
+
+  .dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--rc-danger);
+  }
+
+  /* 历史记录 reads as a list: three rules of different widths, which is what a
+     transcript is — a stack of lines, not a picture. */
+  .lines {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 26px;
+  }
+
+  .lines i {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--rc-ink-soft);
+  }
+
+  .lines i:nth-child(2) {
+    width: 74%;
+  }
+
+  .lines i:nth-child(3) {
+    width: 52%;
+  }
+
+  .card-label {
+    font-size: 15px;
+  }
+
+  .count {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--rc-ink-soft);
   }
 
   .settings {
@@ -279,6 +398,10 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .card {
+      transition: none;
+    }
+
     .bar i {
       transition: none;
     }

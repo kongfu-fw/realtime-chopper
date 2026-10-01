@@ -17,11 +17,12 @@ export const EN_SHELL: Record<string, string> = {
   '已清理不再使用的识别模块：{list}': 'Cleaned up recognition modules that are no longer used: {list}',
   '、': ', ',
   '应用已启动': 'App started',
-  // The tagline, which is also the window title and the manifest description.
-  '实时翻译': 'Realtime translation',
+  // The tagline, which is also the window title. The manifest description below
+  // is the longer sentence and stays about what the app does.
+  '录音笔记': 'Recording notes',
   // The manifest description, through `appDesc()` rather than a call site.
-  '实时语音翻译：本地识别 + 多来源翻译 + 浏览器朗读':
-    'Realtime speech translation: on-device recognition + multi-source translation + browser read-aloud',
+  '录音笔记：本地识别 + 多来源翻译 + 浏览器朗读':
+    'Recording notes: on-device recognition + multi-source translation + browser read-aloud',
   '版本': 'Version',
   '默认语向': 'Default language pair',
   '识别模块': 'Recognition module',
@@ -80,8 +81,8 @@ export const EN_SHELL: Record<string, string> = {
   '我是一只驯鹿，也有一半是人。': 'I am a reindeer, and half human.',
   '动物说的话、人说的话，我都能听懂。': 'I understand what animals say, and what people say.',
   '所以在这儿当翻译，正合适 —— 希望我帮得上你。': 'So translating here suits me. I hope I can help.',
-  '想再见到我，就在标题栏的小鹿上连点三下；点一下只是挠痒痒。':
-    'To see me again, tap the little deer in the title bar three times — one tap just tickles.',
+  '想再见到我：点左上角的图标，列表最下面是「版本号」，点它。':
+    'To see me again: tap the icon at the top left, then tap the version number at the bottom of the list.',
   '好，翻译去': 'Right — off to translate',
 
   // ── AsrPanel.svelte ───────────────────────────────────────────────────────
@@ -315,13 +316,15 @@ export const EN_SHELL: Record<string, string> = {
   '操作失败：{error}': 'That did not work: {error}',
   '未知': 'unknown',
   '已取消安装识别模块（{reason}）': 'Cancelled installing the recognition module ({reason})',
-  '停止录音': 'Stop recording',
+  '暂停录音': 'Pause recording',
+  '继续录音': 'Resume recording',
   '取消启动': 'Cancel starting',
   '开始录音': 'Start recording',
   // The labels on the two status-bar pills, which sit side by side in a phone's
   // width: the full sentences above are what a screen reader and the tooltip get.
   '录音': 'Record',
-  '停止': 'Stop',
+  '暂停': 'Pause',
+  '继续': 'Resume',
   '取消': 'Cancel',
   '静音': 'Muted',
   '跳到最新（落后 {sec} 秒）': 'Skip to newest ({sec}s behind)',
@@ -342,7 +345,7 @@ export const EN_SHELL: Record<string, string> = {
   '识别语言切换为{lang}': 'Recognition language switched to {lang}',
   '下次开始录音时会加载对应模块': 'the matching module loads the next time recording starts',
   '译文语言切换为{lang}': 'Translation language switched to {lang}',
-  '关于{name}': 'About {name}',
+  '打开导航': 'Open the menu',
   '语言选择': 'Language pair',
   '说': 'Speak',
   '源语言': 'Source language',
@@ -396,4 +399,61 @@ export const EN_SHELL: Record<string, string> = {
   '正在准备识别模块，第一次会慢一些': 'Getting the recognition module ready — the first time takes a while',
   '启动失败，再试一次': 'That did not start; try again',
   '再试一次': 'Try again',
+  '历史记录': 'History',
+  '{n} 条记录': '{n} note|{n} notes',
+
+  // ── NavDrawer.svelte ──────────────────────────────────────────────────────
+  '导航': 'Menu',
+  '开始翻译': 'Start translating',
+  '版本 {version}': 'Version {version}',
+  '关于': 'About',
+
+  // ── PausePanel.svelte ─────────────────────────────────────────────────────
+  '录音已暂停': 'Recording paused',
+  '开启新录音': 'Start a new recording',
+  '保存': 'Save',
+  '保存中…': 'Saving…',
+  '保存到历史记录': 'Save to the notes',
+  '保存失败：{message}': 'Could not save it: {message}',
+  '已暂停录音': 'Recording paused',
+  '已继续录音': 'Recording resumed',
+  '继续录音失败：{message}': 'Could not open the microphone again: {message}',
+
+  // ── SaveNoteDialog.svelte ────────────────────────────────────────────────
+  '名称': 'Name',
+  '日期': 'Date',
+  '定位': 'Place',
+  '正在获取定位…': 'Finding where this is…',
+  '记录定位：{place}': 'Place for this note: {place}',
+  '来源': 'Source',
+
+  // ── HistoryView.svelte, and the notes behind it ──────────────────────────
+  '← 返回列表': '← Back to the list',
+  '共 {n} 条 · {size}': '{n} note · {size}|{n} notes · {size}',
+  '选择': 'Select',
+  '新': 'New',
+  '重命名': 'Rename',
+  '已重命名': 'Renamed',
+  '读取中…': 'Loading…',
+  '已选 {n} 条': '{n} selected',
+  '全选': 'Select all',
+  '取消全选': 'Clear the selection',
+  '删除历史记录': 'Delete notes',
+  '删除 {n} 条记录？录音和文字都会一起删掉，删了找不回来。':
+    'Delete {n} note? Its audio and its text go with it, and it cannot be undone.|Delete {n} notes? Their audio and their text go with them, and it cannot be undone.',
+  '还没有历史记录：录完一场，在暂停面板里点「保存」。':
+    'No notes yet: record a session and tap “Save” on the pause panel.',
+  '没有录音（记录时关闭了「保存整场录音」）':
+    'No audio (the recording was not being kept when this was recorded)',
+  '这一场没有识别到文字': 'Nothing was recognised in this session',
+  '这个浏览器不能长期保存：这些记录关掉页面就没了。':
+    'This browser cannot keep anything long term: these notes go when the page does.',
+  '这条历史记录读不出来了（可能已被删除）': 'That note could not be read (it may have been deleted)',
+  '已存为历史记录：{title}': 'Saved as a note: {title}',
+  '已重命名历史记录：{title}': 'Note renamed: {title}',
+  '已删除 {n} 条历史记录': 'Deleted {n} note|Deleted {n} notes',
+  '这条录音没能存下来：{reason}': 'This recording could not be stored: {reason}',
+  '时长': 'Length',
+  '句子': 'Sentences',
+  '录音文件': 'Audio file',
 }

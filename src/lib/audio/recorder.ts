@@ -30,8 +30,13 @@ export const RECORDING_RATE = 16000
 export const WAV_HEADER_BYTES = 44
 const BYTES_PER_SAMPLE = 2
 
-/** One file per origin; a new recording truncates it. */
-const FILE_NAME = 'rc-recording.wav'
+/**
+ * One file per origin; a new recording truncates it.
+ *
+ * Exported because filing a note *moves* this file rather than copying it (see
+ * `history/store.ts`), and the name it is moved from is this one.
+ */
+export const RECORDING_FILE_NAME = 'rc-recording.wav'
 
 export type RecordingMode = 'off' | 'opfs' | 'memory'
 export type RecordingStopReason = 'limit' | 'error' | null
@@ -217,7 +222,7 @@ export class RecordingSink {
     if (this.mode === 'opfs') {
       try {
         const root = await navigator.storage.getDirectory()
-        const handle = await root.getFileHandle(FILE_NAME)
+        const handle = await root.getFileHandle(RECORDING_FILE_NAME)
         return await handle.getFile()
       } catch {
         return null
@@ -337,7 +342,7 @@ export class RecordingSink {
   private async openFile(truncate: boolean): Promise<void> {
     try {
       const root = await navigator.storage.getDirectory()
-      const fileHandle = await root.getFileHandle(FILE_NAME, { create: true })
+      const fileHandle = await root.getFileHandle(RECORDING_FILE_NAME, { create: true })
       const create = (
         fileHandle as unknown as { createSyncAccessHandle?: () => Promise<SyncAccessHandle> }
       ).createSyncAccessHandle
@@ -437,7 +442,7 @@ export async function pcmSliceFromBlob(
 export async function deleteRecordingFile(): Promise<void> {
   try {
     const root = await navigator.storage.getDirectory()
-    await root.removeEntry(FILE_NAME)
+    await root.removeEntry(RECORDING_FILE_NAME)
   } catch {
     /* nothing stored, or no OPFS at all */
   }

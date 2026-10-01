@@ -286,16 +286,17 @@ input {
  *
  * It has carried the microphone level in one form or another for most of this
  * project's life — a horizontal bar beside it, then a halo of rings around it,
- * then a green wash filling the pill itself — and none of those are here any more,
- * by request: at the distance a phone actually sits from the person it is listening
- * to, a level readout is something to interpret, and interpreting it was a job the
- * reader had to keep doing mid-lecture. "It is recording" and "it is stopped" are
- * the two facts the button has to carry, and the transcript underneath answers the
- * rest (see the "电平" section of DOCS.md for the whole history).
+ * then a green wash filling the pill itself, then nothing at all — and each of
+ * those was a *readout*: at the distance a phone actually sits from the person it
+ * is listening to, a scale is something to interpret, and interpreting it was a job
+ * the reader had to keep doing mid-lecture (see the "电平" section of DOCS.md).
  *
- * What is left is the state in two places at once — the pill's colour and word,
- * and the glyph's own shape — because this is the one control whose state has to be
- * readable from across a desk.
+ * What is back now is not a readout. Recording hollows the pill out and the sound
+ * rises inside it — a shape at the edge of vision rather than a number to read, and
+ * it cannot be mistaken for "how loud should I be" because there is nothing to
+ * compare it against except the seconds before it. The two facts the button had on
+ * its own — the pill's word and the glyph's shape — are both still here too: this is
+ * the one control whose state has to be readable from across a desk.
  */
 .record-btn {
   position: relative;
@@ -314,6 +315,8 @@ input {
   cursor: pointer;
   box-shadow: var(--rc-shadow-hard);
   transition: background-color 200ms ease;
+  /* The level rises inside the pill and stops at the curve. */
+  overflow: hidden;
 }
 
 .record-btn[disabled] {
@@ -321,16 +324,60 @@ input {
   cursor: not-allowed;
 }
 
-/* Recording: the pill darkens and the glyph becomes a stop square. */
+/*
+ * Recording: the pill empties out, and what fills it is the microphone.
+ *
+ * The inside of the button is the one place on this bar where something may move
+ * without moving the button: the effect is clipped by the pill's own outline, so
+ * its height is never the control's size. The glyph and the word sit above the
+ * fill (`z-index` below) and keep the ink colour the white-on-red state cannot
+ * use.
+ */
 .record-btn.recording {
-  background: var(--rc-ink);
+  background: transparent;
+  color: var(--rc-ink);
+}
+
+/*
+ * The level itself.
+ *
+ * One element, one custom property set by the component, one `transform` — the
+ * only way to move something at 10 Hz without laying anything out. It is drawn as
+ * a gradient from the record red at the bottom to the app's mustard at the top, at
+ * a bit over half opacity, so it reads as liquid inside glass rather than as a
+ * second, competing state colour.
+ *
+ * `scaleY` from the bottom edge: a bar that grows upwards, which is what a level
+ * is. The `transition` bridges the store's 10 Hz into movement the eye reads as
+ * continuous instead of as steps.
+ */
+.record-btn .level {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(to top, var(--rc-danger), var(--rc-accent));
+  opacity: 0.55;
+  transform-origin: bottom;
+  transform: scaleY(var(--level, 0));
+  transition: transform 120ms linear;
+  pointer-events: none;
 }
 
 .record-btn .glyph {
   position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/*
+ * The stop square follows the text into ink. It was white on a dark pill, and on a
+ * hollow one it would be white on paper — the same colour as the fill it is meant
+ * to be legible against.
+ */
+.record-btn.recording .square {
+  background: var(--rc-ink);
 }
 
 /*
@@ -361,6 +408,8 @@ input {
 
 .record-btn .label {
   position: relative;
+  /* Above the level fill, with the glyph. */
+  z-index: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -373,6 +422,12 @@ input {
 
   .record-btn.recording .glyph {
     animation: none;
+  }
+
+  /* The level stops smoothing and steps with the store instead. It is still the
+   * only thing on the button that says the microphone is live, so it stays. */
+  .record-btn .level {
+    transition: none;
   }
 }
 

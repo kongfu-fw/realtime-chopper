@@ -1,41 +1,15 @@
 <script lang="ts">
   import Logo from './Logo.svelte'
   import AboutChopper from './AboutChopper.svelte'
-  import { session, logOpen, view } from '../lib/app/state'
+  import SessionClock from './SessionClock.svelte'
+  import { closeSettings, logOpen, openSettings, view } from '../lib/app/state'
   import { APP_NAME } from '../lib/brand/logo'
-  import { settings, setSetting, SOURCE_ORDER, TARGET_ORDER, langLabel } from '../lib/store/settings'
-  import { info } from '../lib/log/store'
-  import { t, translator, uiLang } from '../lib/i18n/index.ts'
-  import type { SourceLang, TargetLang } from '../lib/types'
+  import { settings } from '../lib/store/settings'
+  import { translator, uiLang } from '../lib/i18n/index.ts'
 
   // Markup uses `tr`, so that changing the language re-renders it; script code
   // below uses `t`, which reads the language as it is at that moment.
   const tr = $derived(translator($uiLang))
-
-  async function changeSource(lang: SourceLang) {
-    if (lang === $settings.sourceLang) return
-    // Every language has its own module now, so a language switch is always a
-    // module switch — and one model at a time is the memory budget: drop the old
-    // engine before the new language's module is requested.
-    //
-    // This used to be conditional. Korean rode on the Chinese module, so zh → ko
-    // had to leave the engine alone rather than throw away the very bytes that
-    // answer Korean. With a Korean module of its own that reasoning is gone, and
-    // leaving the deleted condition behind would have kept a model that can no
-    // longer answer the chosen language.
-    setSetting('sourceLang', lang)
-    await session.releaseModel()
-    info('ui', t('识别语言切换为{lang}', { lang: langLabel(lang) }), {
-      note: t('下次开始录音时会加载对应模块'),
-    })
-  }
-
-  function changeTarget(lang: TargetLang) {
-    if (lang === $settings.targetLang) return
-    setSetting('targetLang', lang)
-    setSetting('voiceURI', '')
-    info('ui', t('译文语言切换为{lang}', { lang: langLabel(lang) }))
-  }
 
   /**
    * The mascot: one tap is a pat, three quick taps open the easter egg.
@@ -82,9 +56,9 @@
     tapTimer = setTimeout(() => (taps = 0), TAP_WINDOW_MS)
   }
 </script>  <div class="titlebar">
-    <!-- The language pair is centred by the grid, not by whatever happens to sit
-         beside it, so this cell is sized by the grid and clipped if the window
-         gets too narrow. -->
+    <!-- The middle cell is the clock, and it is sized by the grid rather than by
+         whatever happens to sit beside it: the brand on the left and the buttons
+         on the right can each grow or shrink without moving it. -->
     <button
       type="button"
       class="brand"
@@ -97,41 +71,27 @@
       <span class="name">{APP_NAME}</span>
     </button>
 
-  <div class="langs" role="group" aria-label={tr('语言选择')}>
-    <label class="lang">
-      <span class="lang-label">{tr('说')}</span>
-      <select
-        class="rc-select"
-        value={$settings.sourceLang}
-        onchange={(e) => changeSource((e.currentTarget as HTMLSelectElement).value as SourceLang)}
-        aria-label={tr('源语言')}
-      >
-        {#each SOURCE_ORDER as lang (lang)}
-          <option value={lang}>{langLabel(lang, $uiLang)}</option>
-        {/each}
-      </select>
-    </label>
-    <span class="arrow" aria-hidden="true">→</span>
-    <label class="lang">
-      <span class="lang-label">{tr('译')}</span>
-      <select
-        class="rc-select"
-        value={$settings.targetLang}
-        onchange={(e) => changeTarget((e.currentTarget as HTMLSelectElement).value as TargetLang)}
-        aria-label={tr('译文语言')}
-      >
-        {#each TARGET_ORDER as lang (lang)}
-          <option value={lang}>{langLabel(lang, $uiLang)}</option>
-        {/each}
-      </select>
-    </label>
-  </div>
+  <!--
+    * The clock takes the middle of the header, and the language pair has moved
+    * out of it — each half onto the panel it belongs to (`LangPicker`).
+    *
+    * A header is for the state of the whole app, and "what am I recording" and
+    * "how long have I been recording" are that; "what goes in" and "what comes
+    * out" are each one panel's business, and putting them here meant both panels
+    * had a control that was nowhere near the text it governed.
+    *
+    * Only on the translate view: the timer is about a session, and the settings
+    * screen is not part of one.
+  -->
+  {#if $view === 'translate'}
+    <SessionClock />
+  {/if}
 
   <div class="actions">
     <button
       class="rc-btn ghost small"
-      onclick={() => view.set($view === 'settings' ? 'translate' : 'settings')}
-      aria-label={$view === 'settings' ? tr('返回翻译') : tr('打开设置')}
+      onclick={() => ($view === 'settings' ? closeSettings() : openSettings())}
+      aria-label={$view === 'settings' ? tr('返回') : tr('打开设置')}
     >
       {$view === 'settings' ? tr('← 返回') : tr('设置')}
     </button>
@@ -248,27 +208,6 @@
     white-space: nowrap;
   }
 
-  .langs {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .lang {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .lang-label {
-    font-size: 12px;
-    color: var(--rc-ink-soft);
-  }
-
-  .arrow {
-    color: var(--rc-ink-soft);
-  }
-
   .actions {
     display: flex;
     align-items: center;
@@ -278,14 +217,7 @@
     white-space: nowrap;
   }
 
-  /* Narrow window: "说 英文 → 译 中文" is self-explanatory without the verbs. */
-  @media (max-width: 560px) {
-    .lang-label {
-      display: none;
-    }
-  }
-
-  /* Narrower still: the name would be clipped to a stub, so keep the deer and
+  /* Narrow window: the name would be clipped to a stub, so keep the deer and
      drop the word — the app is on screen, nobody needs to be told its name. */
   @media (max-width: 480px) {
     .name {

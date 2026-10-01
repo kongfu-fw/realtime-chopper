@@ -88,6 +88,9 @@ export const EN_SHELL: Record<string, string> = {
   '这句没有录音': 'No recording for this line',
   '原文': 'Original',
   '回到最新': 'Back to newest',
+  '导出原文': 'Export the original text',
+  '已导出原文（{n} 句）': 'Exported the original text ({n} sentences)',
+  '还没有内容可以导出': 'Nothing to export yet',
   '点下面的按钮开始说话。': 'Tap the button below and start talking.',
   '识别引擎': 'Recognition engine',
   '推理耗时': 'Inference time',
@@ -267,15 +270,12 @@ export const EN_SHELL: Record<string, string> = {
   'OpenAI 兼容': 'OpenAI-compatible',
   'AI 模型地址': 'AI model base URL',
   'AI 模型名称': 'AI model name',
-  '结果读到哪一段': 'Read translations into which language',
   '朗读引擎': 'Read-aloud engine',
-  '默认用系统自带的朗读：不需要网络，句子之间几乎没有间隙，手机上还能在「设置 → 辅助功能 → 朗读内容」里装更好的音色。换成「Edge TTS 代理」则读的是微软的在线神经音色（你自己的代理，见下），各平台听起来一样好，代价是每句一次网络请求、断网时读不出来。':
-    'The system voice by default: no network, almost no gap between sentences, and on a phone better voices can be installed under Settings → Accessibility → Spoken Content. “Edge TTS proxy” reads Microsoft’s online neural voices instead (through your own proxy, below): just as good on every platform, at the cost of one request per sentence and silence without a network.',
   '系统朗读（默认）': 'System voice (default)',
   'Edge TTS 代理': 'Edge TTS proxy',
   'TTS 代理地址': 'TTS proxy address',
-  '你自己的 Edge TTS 代理（这个项目配的是 cloudflare-edge-tts）。音色表就是从它读的：改完地址、离开这一格，译文栏的音色下拉会重新读取。想确认通不通，去下面跑一次自检，看「朗读试读」那一行。':
-    'Your own Edge TTS proxy (this project ships with cloudflare-edge-tts). The voice list is read from it: change the address, leave the field, and the voice picker in the translation panel reads it again. To check reachability, run the self-check below and look at the “read-aloud test” line.',
+  '你自己的 Edge TTS 代理（这个项目配的是 cloudflare-edge-tts）。音色表就是从它读的：改完地址、离开这一格，朗读设置里的音色下拉会重新读取。想确认通不通，去下面跑一次自检，看「朗读试读」那一行。':
+    'Your own Edge TTS proxy (this project ships with cloudflare-edge-tts). The voice list is read from it: change the address, leave the field, and the voice picker in the read-aloud settings reads it again. To check reachability, run the self-check below and look at the “read-aloud test” line.',
   '朗读基础语速': 'Base read-aloud rate',
   '忙时自动加速': 'Speed up when busy',
   '译文堆积时自动读快一点。': 'Read a little faster when translations pile up.',
@@ -290,11 +290,17 @@ export const EN_SHELL: Record<string, string> = {
   '{n} 分钟': '{n} minute|{n} minutes',
   '当前录音': 'Current recording',
   '删除': 'Delete',
-  '诊断': 'Diagnostics',
   '按日期编号，每改一次手动加一位：20260926 就是 2026-09-26 这一版；同一天发第二次写成 20260926.2。反馈问题时把这个号一起说，就知道是哪一版了。':
     'A date, bumped by hand once per change: 20260926 is the build from 2026-09-26, and a second release the same day becomes 20260926.2. Quote it in a bug report and everyone knows which build you are on.',
   '调试模式': 'Debug mode',
-  '显示识别细节，用来排查问题。': 'Shows recognition details, for working out what went wrong.',
+  '打开后，识别、翻译、朗读和日志的高级设置会出现在下面，识别过程也会在原文栏里展开细节。':
+    'Once on, the advanced settings for recognition, translation, read-aloud and the log appear below, and recognition details unfold in the original-text panel.',
+  '打开调试模式后，识别、翻译、朗读和日志的高级设置会出现在这里。':
+    'Turn on debug mode and the advanced settings for recognition, translation, read-aloud and the log appear here.',
+  '诊断工具': 'Diagnostics tools',
+  '朗读引擎和音色在底栏的朗读设置里。': 'The read-aloud engine and voice are in the read-aloud settings at the bottom of the screen.',
+  '「翻译用哪家」在底栏的朗读设置里，音色和朗读引擎也在那里。':
+    '“Which translator” is in the read-aloud settings at the bottom of the screen, along with the voice and the read-aloud engine.',
   '记录详细程度': 'How much to log',
   '调试会记录每次识别和翻译的细节。': 'Debug records the details of every recognition and translation.',
   '普通': 'Normal',
@@ -342,7 +348,7 @@ export const EN_SHELL: Record<string, string> = {
   '源语言': 'Source language',
   '译': 'Into',
   '译文语言': 'Translation language',
-  '返回翻译': 'Back to translating',
+  '返回': 'Back',
   '打开设置': 'Open settings',
   '← 返回': '← Back',
   '打开日志与自检': 'Open the log and self-check',
@@ -351,6 +357,8 @@ export const EN_SHELL: Record<string, string> = {
   '翻译失败': 'Translation failed',
   '翻译结果': 'Translation result',
   '译文': 'Translation',
+  '导出译文': 'Export the translation',
+  '已导出译文（{n} 句）': 'Exported the translation ({n} sentences)',
   '朗读音色': 'Read-aloud voice',
   '正在读取音色…': 'Reading the voice list…',
   '音色读取失败（见日志）': 'Could not read the voice list (see the log)',
@@ -365,4 +373,28 @@ export const EN_SHELL: Record<string, string> = {
   ' · 缓存': ' · cached',
   '正在朗读…': 'Reading aloud…',
   '重试': 'Retry',
+
+  // ── ReadSettings.svelte ───────────────────────────────────────────────────
+  '朗读设置': 'Read-aloud settings',
+  '完成': 'Done',
+  '点完成': 'tapped Done',
+  '翻译引擎换为{name}': 'Translator switched to {name}',
+  '默认谷歌；谷歌用不了会自动换微软。AI 模型要先在调试设置里填好密钥，才能选这一项。':
+    'Google by default; if Google is unreachable the app switches to Microsoft. The AI model needs its key filled in under the debug settings before it can be chosen here.',
+  '（需要先填密钥）': ' (needs a key first)',
+  '默认用系统自带的朗读：不需要网络，句子之间几乎没有间隙，手机上还能在「设置 → 辅助功能 → 朗读内容」里装更好的音色。换成「Edge TTS 代理」则读的是微软的在线神经音色（你自己的代理，见调试设置），各平台听起来一样好，代价是每句一次网络请求、断网时读不出来。':
+    'The system’s own speech by default: it needs no network, leaves almost no gap between sentences, and on a phone you can install better voices under Settings → Accessibility → Spoken Content. “Edge TTS proxy” reads Microsoft’s online neural voices through your own proxy (see the debug settings) — the same quality everywhere, at the cost of one network request per sentence and nothing at all when offline.',
+  '没填 TTS 代理地址（在调试设置里）': 'No TTS proxy address set (see the debug settings)',
+  '这个浏览器不支持语音朗读': 'This browser cannot speak',
+  '语速、自动加速和 TTS 代理地址在调试设置里。': 'Speed, automatic speed-up and the TTS proxy address are in the debug settings.',
+
+  // ── SessionClock.svelte ───────────────────────────────────────────────────
+  '录音时长': 'How long this recording has been running',
+  '下载录音': 'Save the recording to this device',
+
+  // ── StartPage.svelte ──────────────────────────────────────────────────────
+  '正在准备识别模块，第一次会慢一些': 'Getting the recognition module ready — the first time takes a while',
+  '戴上耳机，点下面开始。': 'Put your headphones on, then start below.',
+  '启动失败，再试一次': 'That did not start; try again',
+  '再试一次': 'Try again',
 }

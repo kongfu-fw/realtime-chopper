@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store'
+import { get, writable } from 'svelte/store'
 import { Session } from '../pipeline/session'
 import type { Lang } from '../types'
 import { runSelfCheck, type SelfCheckReport } from '../selfcheck'
@@ -15,8 +15,39 @@ import { t } from '../i18n/index.ts'
  */
 export const session = new Session()
 
-export type View = 'translate' | 'settings'
-export const view = writable<View>('translate')
+/**
+ * Which screen the app is on.
+ *
+ * `start` is the page a cold launch opens on: the logo, where a session's loading
+ * is reported, and one button. It is a view rather than a modal or an overlay
+ * because everything else — the footer's buttons, the transcript, the timer in the
+ * header — is about a *session*, and on the start page there is not one yet.
+ */
+export type View = 'start' | 'translate' | 'settings'
+
+export const view = writable<View>('start')
+
+/**
+ * Where 设置 was opened from, so 返回 goes back there rather than guessing.
+ *
+ * Opened from the start page, "back" has to mean the start page: it is the only
+ * place the loading state and the one button that starts a session exist, and
+ * sending a user to an empty transcript instead would look like the app had lost
+ * the thing they were about to press.
+ */
+export const viewBeforeSettings = writable<View>('translate')
+
+export function openSettings(): void {
+  // Read first, write second: an `update` whose callback sets a second store is a
+  // side effect inside an expression, and Svelte is free to run it more than once.
+  viewBeforeSettings.set(get(view))
+  view.set('settings')
+}
+
+export function closeSettings(): void {
+  view.set(get(viewBeforeSettings))
+}
+
 export const logOpen = writable(false)
 /**
  * The headline shown at the top of the log drawer when something needs saying.

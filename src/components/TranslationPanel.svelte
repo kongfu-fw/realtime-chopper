@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { session } from '../lib/app/state'
-  import { settings, setSetting, ttsVoiceFor } from '../lib/store/settings'
-  import { createTtsEngine, ttsConfigFrom, ttsEngineLabel, type TtsEngine, type VoiceOption } from '../lib/tts/engine'
-  import { translator, uiLang } from '../lib/i18n/index.ts'
+  import { session, showToast } from '../lib/app/state'
+  import { settings } from '../lib/store/settings'
+  import { info } from '../lib/log/store'
+  import { t, translator, uiLang } from '../lib/i18n/index.ts'
+  import { exportFileName, saveText, transcriptRows, transcriptText } from '../lib/ui/export.ts'
   import { reservedLines, tierOf } from '../lib/ui/tiers.ts'
+  import Glyph from './Glyph.svelte'
+  import LangPicker from './LangPicker.svelte'
   import type { Line } from '../lib/types'
 
   const tr = $derived(translator($uiLang))
@@ -17,53 +20,8 @@
   const { provider, providerLabel, queues } = session
   /** The reader is far enough behind that dropping the backlog is worth offering. */
   const lagging = $derived($queues.lagSeconds > 8)
-  let voices = $state<VoiceOption[]>([])
-  let loadingVoices = $state(false)
-  /** Why the list is empty, when it is empty for a reason worth naming. */
-  let voiceError = $state('')
   let bodyEl: HTMLElement | undefined = $state()
   let pinned = $state(true)
-
-  const ttsEngine = $derived<TtsEngine>(createTtsEngine(ttsConfigFrom($settings)))
-  const chosenVoice = $derived(ttsVoiceFor($settings))
-
-  /**
-   * Voice lists are per-*engine* as much as per-platform: the system engine lists
-   * what the OS has (iOS exposes only pre-installed voices, and nothing at all
-   * until it feels like it), while the Edge engine lists what the proxy reports.
-   * Any of those inputs changing means re-reading, so all of them are watched.
-   */
-  $effect(() => {
-    const lang = $settings.targetLang
-    // Reading the derived registers both the choice and the proxy address as
-    // dependencies of this effect, which is what makes re-listing automatic.
-    const engine = ttsEngine
-    voiceError = ''
-    voices = []
-    if (!engine.available) {
-      loadingVoices = false
-      return
-    }
-    let cancelled = false
-    loadingVoices = true
-    void engine
-      .voicesFor(lang, 2500)
-      .then((list) => {
-        if (cancelled) return
-        voices = list
-        loadingVoices = false
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        // A failing proxy used to surface here as "没有可用音色", which reads as
-        // "your phone has no voices" — the opposite of what just happened.
-        voiceError = err instanceof Error ? err.message : String(err)
-        loadingVoices = false
-      })
-    return () => {
-      cancelled = true
-    }
-  })
 
   $effect(() => {
     if (!pinned || !bodyEl) return
@@ -81,6 +39,25 @@
     pinned = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 40
   }
 
+  /**
+   * Writes the translations to a file, in the order they were read out.
+   *
+   * The other half of the pair in the original-text panel: each button exports
+   * its own column, so the two artifacts a lesson leaves behind — what was said
+   * and what it was translated into — are taken separately. Rows whose
+   * translation has not arrived (or failed) are left out rather than saved as
+   * blanks.
+   */
+  function exportTranslation() {
+    const rows = transcriptRows(lines, 'translation')
+    if (rows.length === 0) {
+      showToast(t('还没有内容可以导出'))
+      return
+    }
+    saveText(exportFileName('translation', new Date()), transcriptText(lines, 'translation'))
+    info('ui', t('已导出译文（{n} 句）', { n: rows.length }))
+  }
+
   /*
    * The ladder itself lives in `lib/ui/tiers.ts`, with its tests: three sizes by
    * recency, and the reserved room that keeps a row from resizing as it ages.
@@ -90,6 +67,10 @@
 <section class="panel" aria-label={tr('翻译结果')}>
   <div class="panel-head">
     <span class="panel-title">{tr('译文')}</span>
+    <!-- What comes *out* is this panel's question. The picker sits beside the
+         title it belongs to rather than in the title bar, where it would be
+         equally far from both panels. -->
+    <LangPicker which="target" />
 
     <!--
      * The only path in the app that discards queued speech, and it only happens
@@ -101,44 +82,23 @@
      * at. It is also the right panel — what it drops is translations waiting to be
      * read, and this is the panel that shows them being read.
      *
-     * Placed before the voice picker, and `flex: none`, so it takes its room from
-     * the empty space between the title and the right-hand controls rather than from
-     * the voice picker: a control that appears only when the reader is behind must
-     * not move the control that is always there.
+     * Placed before the provider mark, and `flex: none`, so it takes its room from
+     * the empty space between the controls and the right-hand corner rather than
+     * from them: a control that appears only when the reader is behind must not
+     * move the controls that are always there.
+     *
+     * The voice picker used to live here as well. It moved into the read-aloud
+     * settings dialog beside the read-aloud switch (`StatusBar`), because the
+     * *voice* is one setting among three that belong together — which engine
+     * speaks, which translation it reads, and which voice it uses — and a picker
+     * that changes the engine's namespace on its own, in a header, was the one
+     * place those three could be set apart from each other.
      -->
     {#if lagging}
       <button class="rc-btn small accent lag" onclick={() => session.skipToLatest()}>
         {tr('跳到最新（落后 {sec} 秒）', { sec: $queues.lagSeconds.toFixed(0) })}
       </button>
     {/if}
-
-    <!-- Requirement 19: the voice picker lives in the translation header. -->
-    <select
-      class="rc-select voice"
-      aria-label={tr('朗读音色')}
-      title={`${tr('朗读音色')} · ${ttsEngineLabel($settings.ttsEngine, $uiLang)}${voiceError ? ` · ${voiceError}` : ''}`}
-      value={chosenVoice}
-      disabled={loadingVoices || voices.length === 0}
-      onchange={(e) => {
-        const value = (e.currentTarget as HTMLSelectElement).value
-        setSetting($settings.ttsEngine === 'edge' ? 'edgeVoice' : 'voiceURI', value)
-      }}
-    >
-      {#if voices.length === 0}
-        <option value="">
-          {loadingVoices
-            ? tr('正在读取音色…')
-            : voiceError
-              ? tr('音色读取失败（见日志）')
-              : tr('没有可用音色')}
-        </option>
-      {:else}
-        <option value="">{tr('默认音色')}</option>
-        {#each voices as voice (voice.voiceURI)}
-          <option value={voice.voiceURI}>{voice.name}{voice.localService ? '' : tr('（网络）')}</option>
-        {/each}
-      {/if}
-    </select>
 
     <span class="spacer"></span>
 
@@ -168,6 +128,16 @@
         {/if}
       </span>
     {/if}
+
+    <button
+      class="rc-btn ghost small export"
+      title={tr('导出译文')}
+      aria-label={tr('导出译文')}
+      onclick={exportTranslation}
+    >
+      <Glyph name="download" size={15} />
+      <span class="export-text">{tr('导出')}</span>
+    </button>
   </div>
 
   <div class="panel-body" bind:this={bodyEl} onscroll={onScroll}>
@@ -255,20 +225,19 @@
 </section>
 
 <style>
-  /*
-   * A native <select> sizes itself to its widest option, so a list containing
-   * "Microsoft Huihui - Chinese (Simplified, PRC)" would stretch the control
-   * across the whole header. Fixed bounds keep the two panel headers balanced.
-   */
-  .voice {
-    width: 40%;
-    min-width: 92px;
-    max-width: 180px;
-    font-size: 13px;
-  }
-
   .spacer {
     flex: 1 1 auto;
+  }
+
+  .export {
+    flex: 0 0 auto;
+    gap: 5px;
+  }
+
+  @media (max-width: 560px) {
+    .export-text {
+      display: none;
+    }
   }
 
   /* A sentence, so it must not be squeezed by the picker beside it. */
@@ -304,14 +273,16 @@
   }
 
   /*
-   * Phone widths: this header holds a title, the voice picker and the provider
-   * mark in roughly 175 px. The picker's 92 px floor made it the one item that
-   * refused to give, which pushed the provider mark past the panel edge — 3 px of
-   * horizontal page scroll on a 393 px iPhone.
+   * Phone widths: this header holds a title, a language picker, the provider mark
+   * and an export button in roughly 175 px once the filler is gone. Each of them
+   * is allowed to shrink (`min-width: 0`), and the filler is what gives way first
+   * — 3 px of horizontal page scroll on a 393 px iPhone is what the old 92 px
+   * floor on the voice picker produced, and nothing here gets to do that again.
    */
   @media (max-width: 560px) {
-    .voice {
-      min-width: 0;
+    .lag {
+      font-size: 12px;
+      padding: 0 8px;
     }
   }
 </style>

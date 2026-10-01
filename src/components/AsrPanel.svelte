@@ -1,7 +1,11 @@
 <script lang="ts">
   import { settings } from '../lib/store/settings'
   import { session, showToast } from '../lib/app/state'
+  import { info } from '../lib/log/store'
   import { t, translator, uiLang } from '../lib/i18n/index.ts'
+  import { exportFileName, saveText, transcriptRows, transcriptText } from '../lib/ui/export.ts'
+  import Glyph from './Glyph.svelte'
+  import LangPicker from './LangPicker.svelte'
   import LineAudio from './LineAudio.svelte'
 
   const tr = $derived(translator($uiLang))
@@ -47,6 +51,23 @@
     void audio.play().catch(() => URL.revokeObjectURL(url))
   }
 
+  /**
+   * Writes the recognised sentences to a file the phone can keep.
+   *
+   * The panel exports its *own* column: what is on this side of the divider is
+   * what the button hands over. Nothing is written when there is nothing — an
+   * empty file named for a lesson is worse than a sentence saying so.
+   */
+  function exportOriginal() {
+    const rows = transcriptRows(lines, 'original')
+    if (rows.length === 0) {
+      showToast(t('还没有内容可以导出'))
+      return
+    }
+    saveText(exportFileName('original', new Date()), transcriptText(lines, 'original'))
+    info('ui', t('已导出原文（{n} 句）', { n: rows.length }))
+  }
+
   function time(ms: number, endMs: number): string {
     const s = Math.floor(ms / 1000)
     const stamp = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
@@ -57,6 +78,9 @@
 <section class="panel" aria-label={tr('原文')}>
   <div class="panel-head">
     <span class="panel-title">{tr('原文')}</span>
+    <!-- What goes *in* is this panel's question, so its picker is in its header
+         (the 译 half is beside the 译文 title, on the other panel). -->
+    <LangPicker which="source" />
     <span class="spacer"></span>
     {#if !pinned}
       <button
@@ -69,6 +93,17 @@
         {tr('回到最新')}
       </button>
     {/if}
+    <!-- The word goes, the arrow stays, on a phone: an icon is a thumb target,
+         and "导出" in this header would be the widest thing in it. -->
+    <button
+      class="rc-btn ghost small export"
+      title={tr('导出原文')}
+      aria-label={tr('导出原文')}
+      onclick={exportOriginal}
+    >
+      <Glyph name="download" size={15} />
+      <span class="export-text">{tr('导出')}</span>
+    </button>
   </div>
 
   <div class="panel-body" bind:this={bodyEl} onscroll={onScroll}>
@@ -139,5 +174,16 @@
 <style>
   .spacer {
     flex: 1 1 auto;
+  }
+
+  .export {
+    flex: 0 0 auto;
+    gap: 5px;
+  }
+
+  @media (max-width: 560px) {
+    .export-text {
+      display: none;
+    }
   }
 </style>

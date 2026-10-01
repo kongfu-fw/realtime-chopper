@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { fade } from 'svelte/transition'
   import { get } from 'svelte/store'
   import TitleBar from './components/TitleBar.svelte'
+  import StartPage from './components/StartPage.svelte'
   import SubtitleBar from './components/SubtitleBar.svelte'
   import AsrPanel from './components/AsrPanel.svelte'
   import TranslationPanel from './components/TranslationPanel.svelte'
@@ -61,6 +63,29 @@
   $effect(() => {
     if ($sessionState === 'recording' && $logNotice) logNotice.set(null)
   })
+
+  // The start page hands over the moment there is a session to look at.
+  //
+  // Keyed on the recording rather than on the button: a start can take a minute
+  // (a module download, a permission prompt), and the page that reports that is
+  // exactly the page the user is watching — the transition is what says "that is
+  // done, this is the transcript", and it must not fire a second before the
+  // microphone is actually open.
+  $effect(() => {
+    if ($sessionState === 'recording' && $view === 'start') view.set('translate')
+  })
+
+  /**
+   * The cross-fade duration, and why it is zero on some phones.
+   *
+   * `prefers-reduced-motion` is the one accessibility setting this app can read,
+   * and the transition from the start page to the transcript is the largest
+   * movement in it — a full screen in, a full screen out.
+   */
+  const reducedMotion = $derived(
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  )
+  const swap = $derived({ duration: reducedMotion ? 0 : 260 })
 
   // The interface language follows the setting, and `auto` follows the browser.
   //
@@ -457,6 +482,18 @@
   }}
 />
 
+<!--
+  Two views, absolutely placed on top of each other, because that is what a
+  cross-fade needs: with both in flow, the incoming view lands below the outgoing
+  one for the length of the transition and the app appears to jump.
+-->
+<div class="views">
+{#if $view === 'start'}
+  <div class="view" transition:fade={swap}>
+    <StartPage />
+  </div>
+{:else}
+  <div class="view" in:fade={swap}>
 <div class="sandwich">
   <header>
     <TitleBar />
@@ -512,6 +549,9 @@
     <StatusBar />
   </footer>
 </div>
+  </div>
+{/if}
+</div>
 
 <LogDrawer />
 
@@ -544,3 +584,22 @@
 {#if $toast}
   <div class="clone-toast">{$toast}</div>
 {/if}
+
+<style>
+  /*
+   * The app is one screen at a time and each screen is the whole window, so the
+   * wrapper is exactly the window and the views are pinned to it. Absolute
+   * rather than a grid with two rows: an `{#if}` renders one child, not two, so
+   * the second row would only exist during a transition.
+   */
+  .views {
+    position: relative;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .view {
+    position: absolute;
+    inset: 0;
+  }
+</style>

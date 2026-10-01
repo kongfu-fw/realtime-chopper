@@ -8,7 +8,6 @@
     formatBytes,
     forgetModel,
     isModuleCurrent,
-    TARGET_ORDER,
     langLabel,
   } from '../lib/store/settings'
   import {
@@ -31,8 +30,6 @@
     uiLang,
     type UiLangSetting,
   } from '../lib/i18n/index.ts'
-  import { ttsEngineLabel, type TtsEngineId } from '../lib/tts/engine'
-  import { providerLabel } from '../lib/mt/probe'
   import { APP_VERSION } from '../lib/app/version'
   import { APP_ICONS, iconFor, iconPreviewUrl, type AppIconId } from '../lib/brand/logo'
   import { info } from '../lib/log/store'
@@ -41,10 +38,9 @@
     AsrBackend,
     LlmFormat,
     LogLevelSetting,
-    MtProviderId,
     Precision,
   } from '../lib/store/settings'
-  import type { Lang, ModuleId } from '../lib/types'
+  import type { ModuleId } from '../lib/types'
 
   // Markup reads `tr`, so a language change redraws the page; the handlers below
   // use `t`, which is the language as it is at that moment.
@@ -62,28 +58,12 @@
   const autoLang = $derived(LANG_NAMES[detectLang()])
 
   /**
-   * Switching engines swaps a whole voice namespace, so the engine is rebuilt and
-   * the picker in the translation panel re-reads its list — the two engines have
-   * no voice names in common.
-   */
-  function pickTtsEngine(id: TtsEngineId) {
-    if (id === $settings.ttsEngine) return
-    setSetting('ttsEngine', id)
-    info('ui', t('朗读引擎换为{engine}', { engine: ttsEngineLabel(id) }), {
-      [t('说明')]:
-        id === 'edge'
-          ? t('走代理 {url}', { url: $settings.ttsProxyUrl })
-          : t('用系统音色，不需网络'),
-    })
-  }
-
-  /**
    * Changing where recognition happens has to drop the resident recogniser.
    *
    * The two backends are different modules, and a module is what a client is bound
    * to: leaving the old one loaded would keep answering with the engine the user
    * just turned off, while the picker said otherwise. Same reasoning — and the same
-   * call — as the language picker in `TitleBar`.
+   * call — as the language picker in `LangPicker`.
    */
   async function pickAsrBackend(id: AsrBackend) {
     if (id === $settings.asrBackend) return
@@ -240,6 +220,20 @@
     </SettingRow>
   </section>
 
+  <!--
+    * Everything from here to the end of the read-aloud section is debug-only.
+    *
+    * The reason is the same for all of it: these are controls a user sets once — or
+    * ones whose effect they cannot judge without the log. The microphone has one
+    * setting anyone changes mid-lesson (which language), and that moved onto the
+    * panel it belongs to; what is left here is the workshop.
+    *
+    * Kept as separate sections in the pipeline's own order rather than flattened
+    * into one list, because that order is how the app itself is built, and a person
+    * reading the log line "识别模块加载失败" should find the module settings in the
+    * section that carries that name.
+  -->
+  {#if $settings.debugMode}
   <section>
     <h2>{tr('识别')}</h2>
     <SettingRow label={tr('说话停顿多久算一句')} help={tr('停顿超过这么久，就算一句说完了。')}>
@@ -369,20 +363,10 @@
 
   <section>
     <h2>{tr('翻译')}</h2>
-    <SettingRow label={tr('翻译用哪家')} help={tr('默认谷歌；谷歌用不了会自动换微软。')}>
-      <select
-        class="rc-select"
-        value={$settings.mtProvider}
-        onchange={(e) => {
-          setSetting('mtProvider', (e.currentTarget as HTMLSelectElement).value as MtProviderId)
-          session.applySettings()
-        }}
-      >
-        <option value="google">{providerLabel('google', $uiLang)}</option>
-        <option value="microsoft">{providerLabel('microsoft', $uiLang)}</option>
-        <option value="llm">{providerLabel('llm', $uiLang)}</option>
-      </select>
-    </SettingRow>
+    <!-- Where the picker went, so that someone who remembers it being here is not
+         left hunting: it is a mid-lesson decision, and mid-lesson the settings
+         screen is not reachable at all (it replaces the transcript). -->
+    <p class="note">{tr('「翻译用哪家」在底栏的朗读设置里，音色和朗读引擎也在那里。')}</p>
 
     <SettingRow label={tr('翻译攒几句一起发')} help={tr('攒多几句一起发：省流量，但更慢。')}>
       <input
@@ -454,40 +438,29 @@
       />
     </SettingRow>
 
-    <SettingRow label={tr('结果读到哪一段')}>
-      <select
-        class="rc-select"
-        value={$settings.targetLang}
-        onchange={(e) => setSetting('targetLang', (e.currentTarget as HTMLSelectElement).value as Lang)}
-      >
-        {#each TARGET_ORDER as lang (lang)}
-          <option value={lang}>{langLabel(lang, $uiLang)}</option>
-        {/each}
-      </select>
-    </SettingRow>
+    <!--
+     * 「结果读到哪一段」 used to sit here as well, and it is gone rather than moved:
+     * the translation panel's own header now carries the 译 picker, and two selects
+     * writing the same key is how a settings screen comes to disagree with the
+     * screen behind it.
+     -->
   </section>
 
   <section>
     <h2>{tr('朗读')}</h2>
 
-    <SettingRow
-      label={tr('朗读引擎')}
-      help={tr('默认用系统自带的朗读：不需要网络，句子之间几乎没有间隙，手机上还能在「设置 → 辅助功能 → 朗读内容」里装更好的音色。换成「Edge TTS 代理」则读的是微软的在线神经音色（你自己的代理，见下），各平台听起来一样好，代价是每句一次网络请求、断网时读不出来。')}
-    >
-      <select
-        class="rc-select"
-        value={$settings.ttsEngine}
-        onchange={(e) => pickTtsEngine((e.currentTarget as HTMLSelectElement).value as TtsEngineId)}
-      >
-        <option value="system">{tr('系统朗读（默认）')}</option>
-        <option value="edge">{tr('Edge TTS 代理')}</option>
-      </select>
-    </SettingRow>
+    <!--
+     * The engine picker is not here any more; it is in the read-aloud settings
+     * dialog, because choosing an engine is choosing where the voice comes from and
+     * the voice is picked right beside it there. What stays here is the half that
+     * belongs to a person setting the app up: the proxy address an engine needs, and
+     * the three numbers that tune how it reads.
+     -->
+    <p class="note">{tr('朗读引擎和音色在底栏的朗读设置里。')}</p>
 
     {#if $settings.ttsEngine === 'edge'}
       <SettingRow
-        label={tr('TTS 代理地址')}
-        help={tr('你自己的 Edge TTS 代理（这个项目配的是 cloudflare-edge-tts）。音色表就是从它读的：改完地址、离开这一格，译文栏的音色下拉会重新读取。想确认通不通，去下面跑一次自检，看「朗读试读」那一行。')}
+        label={tr('TTS 代理地址')}          help={tr('你自己的 Edge TTS 代理（这个项目配的是 cloudflare-edge-tts）。音色表就是从它读的：改完地址、离开这一格，朗读设置里的音色下拉会重新读取。想确认通不通，去下面跑一次自检，看「朗读试读」那一行。')}
       >
         <input
           class="rc-input"
@@ -534,6 +507,8 @@
     </SettingRow>
   </section>
 
+  {/if}
+
   <section>
     <h2>{tr('录音与存储')}</h2>
     <SettingRow
@@ -573,16 +548,18 @@
     </div>
   </section>
 
+  <!--
+    * The switch that decides whether the sections above exist at all, so it is never
+    * behind itself.
+    *
+    * The version sits at the top of it rather than in a section of its own: it is
+    * here to be read out to someone else, and this is where a person about to report
+    * a problem is already looking. The help text carries the convention, because the
+    * number is a date and a date nobody can decode is just a number.
+  -->
   <section>
-    <h2>{tr('诊断')}</h2>
+    <h2>{tr('调试')}</h2>
 
-    <!--
-      The version sits at the top of the diagnostic section rather than in a
-      section of its own: it is here to be read out to someone else, and this is
-      where a person who is about to report a problem is already looking. The
-      help text carries the convention, because the number is a date and a date
-      nobody can decode is just a number.
-    -->
     <SettingRow
       label={tr('版本')}
       help={tr('按日期编号，每改一次手动加一位：20260926 就是 2026-09-26 这一版；同一天发第二次写成 20260926.2。反馈问题时把这个号一起说，就知道是哪一版了。')}
@@ -590,7 +567,10 @@
       <span class="value version">{APP_VERSION}</span>
     </SettingRow>
 
-    <SettingRow label={tr('调试模式')} help={tr('显示识别细节，用来排查问题。')}>
+    <SettingRow
+      label={tr('调试模式')}
+      help={tr('打开后，识别、翻译、朗读和日志的高级设置会出现在下面，识别过程也会在原文栏里展开细节。')}
+    >
       <input
         type="checkbox"
         checked={$settings.debugMode}
@@ -598,38 +578,58 @@
       />
     </SettingRow>
 
-    <SettingRow label={tr('记录详细程度')} help={tr('调试会记录每次识别和翻译的细节。')}>
-      <select
-        class="rc-select"
-        value={$settings.logLevel}
-        onchange={(e) => setSetting('logLevel', (e.currentTarget as HTMLSelectElement).value as LogLevelSetting)}
-      >
-        <option value="debug">{tr('调试')}</option>
-        <option value="info">{tr('普通')}</option>
-        <option value="warn">{tr('只看警告')}</option>
-        <option value="error">{tr('只看错误')}</option>
-      </select>
-    </SettingRow>
-
-    <SettingRow label={tr('日志保留条数')}>
-      <input
-        type="range"
-        min="100"
-        max="5000"
-        step="100"
-        value={$settings.logRing}
-        oninput={(e) => setSetting('logRing', Number((e.currentTarget as HTMLInputElement).value))}
-      />
-      <span class="value">{$settings.logRing}</span>
-    </SettingRow>
-
-    <div class="buttons">
-      <button class="rc-btn" disabled={$selfCheckRunning} onclick={() => void runDiagnostics(false)}>
-        {$selfCheckRunning ? tr('自检中…') : tr('运行自检')}
-      </button>
-      <button class="rc-btn ghost" onclick={() => resetSettings()}>{tr('恢复默认设置')}</button>
-    </div>
+    <!--
+     * Says both halves of the arrangement: what is hidden and where to get it. A page
+     * that silently has fewer settings on it is worse than one that says "there is
+     * more, and here is the switch" — the alternative is a user concluding the
+     * feature is gone.
+     *
+     * Nothing is lost by hiding them either: every one of those settings keeps its
+     * stored value while it is not on screen, and the ones that matter mid-lesson
+     * (language, translation provider, voice) are on the screen the lesson is on.
+     -->
+    {#if !$settings.debugMode}
+      <p class="note">{tr('打开调试模式后，识别、翻译、朗读和日志的高级设置会出现在这里。')}</p>
+    {/if}
   </section>
+
+  {#if $settings.debugMode}
+    <section>
+      <h2>{tr('诊断工具')}</h2>
+
+      <SettingRow label={tr('记录详细程度')} help={tr('调试会记录每次识别和翻译的细节。')}>
+        <select
+          class="rc-select"
+          value={$settings.logLevel}
+          onchange={(e) => setSetting('logLevel', (e.currentTarget as HTMLSelectElement).value as LogLevelSetting)}
+        >
+          <option value="debug">{tr('调试')}</option>
+          <option value="info">{tr('普通')}</option>
+          <option value="warn">{tr('只看警告')}</option>
+          <option value="error">{tr('只看错误')}</option>
+        </select>
+      </SettingRow>
+
+      <SettingRow label={tr('日志保留条数')}>
+        <input
+          type="range"
+          min="100"
+          max="5000"
+          step="100"
+          value={$settings.logRing}
+          oninput={(e) => setSetting('logRing', Number((e.currentTarget as HTMLInputElement).value))}
+        />
+        <span class="value">{$settings.logRing}</span>
+      </SettingRow>
+
+      <div class="buttons">
+        <button class="rc-btn" disabled={$selfCheckRunning} onclick={() => void runDiagnostics(false)}>
+          {$selfCheckRunning ? tr('自检中…') : tr('运行自检')}
+        </button>
+        <button class="rc-btn ghost" onclick={() => resetSettings()}>{tr('恢复默认设置')}</button>
+      </div>
+    </section>
+  {/if}
 
   <p class="footnote">
     {tr('当前语向：{from} → {to}。语音在手机里识别，只有译文文字会上网。', {

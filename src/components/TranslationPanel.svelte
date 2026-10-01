@@ -66,10 +66,9 @@
 
 <section class="panel" aria-label={tr('翻译结果')}>
   <div class="panel-head">
-    <span class="panel-title">{tr('译文')}</span>
-    <!-- What comes *out* is this panel's question. The picker sits beside the
-         title it belongs to rather than in the title bar, where it would be
-         equally far from both panels. -->
+    <!-- No column title: the picker names this half of the screen (译 中文), and
+         a heading above it was one more line the eye had to pass on the way to the
+         sentence. The section keeps its accessible name (翻译结果). -->
     <LangPicker which="target" />
 
     <!--
@@ -110,22 +109,14 @@
      -->
 
     <!--
-     * Which engine is translating is worth one glance, not a sentence. The
-     * Google mark is drawn from two glyphs rather than shipping a logo file;
-     * anything else (Microsoft, the local AI model) is named in plain text so
-     * a silent fallback can never look like Google.
+     * Which engine is translating — but only when it is *not* the one that
+     * ships. Google is the default, so a mark for it was a badge that never
+     * carried news; what is worth a glance is a fallback, which is named in plain
+     * text so a silent switch can never look like the usual path.
      -->
-    {#if $providerLabel}
-      <span
-        class="provider"
-        class:fallback={$provider !== 'google'}
-        title={tr('翻译来源：{source}', { source: $providerLabel })}
-      >
-        {#if $provider === 'google'}
-          <span class="brand-zh">文</span><span class="brand-en">A</span>
-        {:else}
-          {$providerLabel}
-        {/if}
+    {#if $provider !== 'google' && $providerLabel}
+      <span class="provider" title={tr('翻译来源：{source}', { source: $providerLabel })}>
+        {$providerLabel}
       </span>
     {/if}
 
@@ -246,36 +237,18 @@
     white-space: nowrap;
   }
 
-  /* Brand colours: this is the Google Translate mark, not a UI accent. */
+  /* The name of the provider the app fell back to, in the words the translator
+     itself uses. Plain text rather than a mark: see the note in the markup. */
   .provider {
-    display: inline-flex;
-    align-items: baseline;
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1;
-    font-family: var(--rc-mono);
-  }
-
-  .provider .brand-zh {
-    color: #4285f4;
-  }
-
-  .provider .brand-en {
-    color: #34a853;
-    margin-left: 1px;
-  }
-
-  .provider.fallback {
-    font-family: inherit;
     font-size: 11px;
     font-weight: 500;
     color: var(--rc-ink-soft);
   }
 
   /*
-   * Phone widths: this header holds a title, a language picker, the provider mark
-   * and an export button in roughly 175 px once the filler is gone. Each of them
-   * is allowed to shrink (`min-width: 0`), and the filler is what gives way first
+   * Phone widths: this header holds a language picker, the name of a fallback
+   * provider and an export button in roughly 175 px once the filler is gone. Each
+   * of them is allowed to shrink (`min-width: 0`), and the filler gives way first
    * — 3 px of horizontal page scroll on a 393 px iPhone is what the old 92 px
    * floor on the voice picker produced, and nothing here gets to do that again.
    */

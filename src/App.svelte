@@ -34,6 +34,7 @@
     warn,
   } from './lib/log/store'
   import { createTtsEngine, ttsConfigFrom } from './lib/tts/engine'
+  import { ensureVoices } from './lib/tts/voices.ts'
   import { moduleFor, moduleLabel, moduleName, purgeRetiredModuleCaches } from './lib/asr/models'
   import { rememberGpuFailure } from './lib/asr/device'
   import { takeAsrCrashReport } from './lib/boot-guard'
@@ -330,6 +331,13 @@
     const armSpeech = () => {
       window.removeEventListener('pointerdown', armSpeech)
       session.unlockSpeech()
+      // And the voice list is asked for again, for the same reason it is armed
+      // here at all: iOS publishes no voices until the page has spoken, so the
+      // list that came back empty at startup — before any tap existed to arm
+      // speech with — is out of date the moment this line has run. Asking is
+      // cheap (a cached, non-empty list is not asked again) and it is what makes
+      // the read-aloud dialog open on a full list rather than on a placeholder.
+      ensureVoices(getSettings())
     }
     window.addEventListener('pointerdown', armSpeech)
 

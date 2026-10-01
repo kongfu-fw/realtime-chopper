@@ -3,13 +3,8 @@
   import SettingRow from './SettingRow.svelte'
   import { session } from '../lib/app/state'
   import { settings, setSetting, ttsVoiceFor } from '../lib/store/settings'
-  import {
-    createTtsEngine,
-    ttsConfigFrom,
-    ttsEngineLabel,
-    type TtsEngine,
-    type VoiceOption,
-  } from '../lib/tts/engine'
+  import { createTtsEngine, ttsConfigFrom, ttsEngineLabel, type TtsEngine } from '../lib/tts/engine'
+  import { ensureVoices, voiceList, voiceListFor } from '../lib/tts/voices.ts'
   import { providerLabel } from '../lib/mt/probe'
   import { info } from '../lib/log/store'
   import { t, translator, uiLang } from '../lib/i18n/index.ts'
@@ -43,50 +38,24 @@
   const chosenVoice = $derived(ttsVoiceFor($settings))
   const hasLlmKey = $derived($settings.llmApiKey.trim() !== '')
 
-  let voices = $state<VoiceOption[]>([])
-  let loadingVoices = $state(false)
-  /** Why the list is empty, when it is empty for a reason worth naming. */
-  let voiceError = $state('')
-
   const ttsEngine = $derived<TtsEngine>(createTtsEngine(ttsConfigFrom($settings)))
 
   /**
-   * Voice lists are per-*engine* as much as per-platform: the system engine lists
-   * what the OS has (iOS exposes only pre-installed voices, and nothing at all
-   * until it feels like it), while the Edge engine lists what the proxy reports.
-   * Any of those inputs changing means re-reading, so all of them are watched.
+   * The voice list — loaded before this dialog was opened, not while it is on
+   * screen.
+   *
+   * It used to be fetched right here, in an effect, which is what made the picker
+   * render its placeholder (`正在读取音色…`) and then grow a list of options a
+   * moment later: the rows under it moved, and so did whatever the finger was
+   * already reaching for. `lib/tts/voices.ts` now keeps the list for the current
+   * settings loaded and cached, so the picker draws its options on the first frame.
+   *
+   * This effect is the one case that module cannot cover for itself: a dialog
+   * opened for a key nothing has asked about yet — a proxy address typed into
+   * another screen, opened here before that write came back.
    */
-  $effect(() => {
-    const lang = $settings.targetLang
-    // Reading the derived registers both the choice and the proxy address as
-    // dependencies of this effect, which is what makes re-listing automatic.
-    const engine = ttsEngine
-    voiceError = ''
-    voices = []
-    if (!engine.available) {
-      loadingVoices = false
-      return
-    }
-    let cancelled = false
-    loadingVoices = true
-    void engine
-      .voicesFor(lang, 2500)
-      .then((list) => {
-        if (cancelled) return
-        voices = list
-        loadingVoices = false
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        // A failing proxy used to surface here as "没有可用音色", which reads as
-        // "your phone has no voices" — the opposite of what just happened.
-        voiceError = err instanceof Error ? err.message : String(err)
-        loadingVoices = false
-      })
-    return () => {
-      cancelled = true
-    }
-  })
+  const list = $derived(voiceListFor($settings, $voiceList))
+  $effect(() => ensureVoices($settings))
 
   /**
    * Switching engines swaps a whole voice namespace, so the engine is rebuilt and
@@ -148,53 +117,36 @@
     <select
       class="rc-select"
       aria-label={tr('朗读音色')}
-      title={`${tr('朗读音色')} · ${ttsEngineLabel($settings.ttsEngine, $uiLang)}${voiceError ? ` · ${voiceError}` : ''}`}
+      title={`${tr('朗读音色')} · ${ttsEngineLabel($settings.ttsEngine, $uiLang)}${list.error ? ` · ${list.error}` : ''}`}
       value={chosenVoice}
-      disabled={loadingVoices || voices.length === 0}
+      disabled={list.loading || list.voices.length === 0}
       onchange={(e) => {
         const value = (e.currentTarget as HTMLSelectElement).value
         setSetting($settings.ttsEngine === 'edge' ? 'edgeVoice' : 'voiceURI', value)
       }}
     >
-      {#if voices.length === 0}
+      {#if list.voices.length === 0}
         <option value="">
-          {loadingVoices
+          {list.loading
             ? tr('正在读取音色…')
             : !ttsEngine.available
               ? $settings.ttsEngine === 'edge'
                 ? tr('没填 TTS 代理地址（在调试设置里）')
                 : tr('这个浏览器不支持语音朗读')
-              : voiceError
+              : list.error
                 ? tr('音色读取失败（见日志）')
                 : tr('没有可用音色')}
         </option>
       {:else}
         <option value="">{tr('默认音色')}</option>
-        {#each voices as voice (voice.voiceURI)}
+        {#each list.voices as voice (voice.voiceURI)}
           <option value={voice.voiceURI}>{voice.name}{voice.localService ? '' : tr('（网络）')}</option>
         {/each}
       {/if}
     </select>
   </SettingRow>
 
-  <p class="hint">
-    {tr('语速、自动加速和 TTS 代理地址在调试设置里。')}
-  </p>
-
   {#snippet footer()}
     <button class="rc-btn accent" onclick={() => onclose(t('点完成'))}>{tr('完成')}</button>
   {/snippet}
 </Modal>
-
-<style>
-  /*
-   * The one sentence in here that is not a control: it says where the settings
-   * that are *not* in this dialog went, because a user who opens this looking for
-   * the speed slider has otherwise no way to find out.
-   */
-  .hint {
-    margin: 10px 0 0;
-    font-size: 12px;
-    color: var(--rc-ink-soft);
-  }
-</style>

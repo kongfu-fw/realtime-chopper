@@ -40,6 +40,18 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const PORT = Number(process.env.RC_E2E_PORT ?? 5288)
 const BASE = `http://127.0.0.1:${PORT}`
 const DEBUG_PORT = Number(process.env.RC_E2E_DEBUG_PORT ?? 9333)
+/**
+ * The local Vite entry point, run by this same Node.
+ *
+ * Not `npx`: on Windows that is a batch shim, which a spawn without a shell cannot
+ * start (ENOENT), and a shell would then own a process this script has to be able
+ * to kill. Not the script by itself either — `node_modules/vite/bin/vite.js` is a
+ * text file with a shebang, which is a program on macOS and a format error on
+ * Windows.
+ */
+const VITE = join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js')
+/** `npm` is a batch shim on Windows, and a batch file needs a shell to be spawned. */
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const REPORT_DIR = join(ROOT, 'dist', 'e2e')
 const DOWNLOADS = join(REPORT_DIR, 'downloads')
 
@@ -65,6 +77,78 @@ function record(name, ok, detail = '') {
 function note(text) {
   notes.push(text)
   console.log(`  ..  ${text}`)
+}
+
+/** The screenshots a run leaves, in the order a person would read them. */
+const SHOTS = [
+  ['01-start-page', '起始页：logo、一块预留的加载位置、一颗开始按钮'],
+  ['02-settings-debug-off', '设置页，调试关闭'],
+  ['03-settings-debug-on', '设置页，调试打开'],
+  ['04-transcript', '转录页：声纹 → 下载位 → 方块时钟，两栏都没有标题'],
+  ['05-stopped', '停止后：时长冻住，下载钮出现在声纹和时钟之间'],
+  ['06-exported', '导出之后'],
+  ['07-read-settings', '朗读设置：音色打开时已经是满的，底下没有提示语'],
+]
+
+/** Escapes text for the HTML report; the app's own strings are trusted, paths are not. */
+function esc(text) {
+  return String(text).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch])
+}
+
+/**
+ * The run as a page: every assertion, and the screenshots underneath it.
+ *
+ * `report.md` is for reading in a terminal and `report.json` for a script, and
+ * neither of them shows what the app actually looked like — which is the whole
+ * subject of half these checks (centring, borders, a button that must not move).
+ * This file is that look, next to the evidence that produced it, and it opens by
+ * itself in the app's own preview pane.
+ */
+function reviewPage(summary) {
+  const rows = summary.results
+    .map(
+      (r) =>
+        `<tr class="${r.ok ? 'ok' : 'bad'}"><td>${r.ok ? 'ok' : 'FAIL'}</td><td>${esc(r.name)}</td><td>${esc(r.detail)}</td></tr>`,
+    )
+    .join('\n')
+  const shots = SHOTS.map(
+    ([file, caption]) =>
+      `<figure><img src="${file}.png" alt="${esc(caption)}"><figcaption>${esc(caption)}</figcaption></figure>`,
+  ).join('\n')
+  return `<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>端到端报告 — 乔巴</title>
+<style>
+  body { margin: 0; padding: 24px; background: #fdfbf4; color: #1d2d35; font: 15px/1.6 -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .meta { color: #5b6a72; font-size: 13px; margin-bottom: 20px; }
+  .verdict { font-weight: 700; }
+  .verdict.bad { color: #b4453a; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 28px; font-size: 13px; }
+  td { border-bottom: 1px solid #e3ddcd; padding: 5px 8px; vertical-align: top; }
+  td:first-child { font-family: ui-monospace, Consolas, monospace; color: #2f7a55; white-space: nowrap; }
+  tr.bad td:first-child { color: #b4453a; font-weight: 700; }
+  tr.bad td:nth-child(2) { font-weight: 600; }
+  td:last-child { color: #5b6a72; }
+  .shots { display: flex; flex-wrap: wrap; gap: 16px; }
+  figure { margin: 0; width: 232px; }
+  img { width: 100%; border: 2px solid #1d2d35; border-radius: 12px; background: #fff; }
+  figcaption { font-size: 12px; color: #5b6a72; margin-top: 6px; }
+</style>
+<h1>乔巴 · 端到端报告</h1>
+<p class="meta">${esc(summary.at)} · 应用版本 ${esc(summary.app)} ·
+  <span class="verdict${summary.failed ? ' bad' : ''}">${summary.passed} 通过 · ${summary.failed} 失败</span></p>
+<table><tbody>
+${rows}
+</tbody></table>
+<h2>截图</h2>
+<div class="shots">
+${shots}
+</div>
+</html>
+`
 }
 
 // -------------------------------------------------------------- cdp plumbing
@@ -153,7 +237,12 @@ class Cdp {
 // ------------------------------------------------------------------- servers
 
 async function startPreview() {
-  const child = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
+  // Through the local Vite entry point rather than `npx vite`: on Windows `npx` is
+  // a batch shim, which a spawn without a shell cannot start (ENOENT, and a report
+  // that says the server never answered), and a shell would then own the process
+  // this script has to be able to kill. A path into `node_modules` is the same
+  // Vite either way.
+  const child = spawn(process.execPath, [VITE, 'preview', '--port', String(PORT), '--strictPort'], {
     cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -288,15 +377,45 @@ async function scenario(cdp) {
       `${Math.round(stack.stage.h)} px`,
     )
     record('the button says what it starts', stack.label === '开始录音', stack.label)
+    // Centred by *ink*, not by box. The line was always centred as a box, but a
+    // Chinese full stop is a full-width glyph whose ink sits in the left of its em
+    // box: a sentence ending in one carries ~9 px of blank space on the right, so
+    // the words read as shifted left of centre by half of that. Measured from the
+    // glyphs with a canvas rather than from the element, because this is a question
+    // about what the eye sees.
+    const centred = await cdp.eval(`
+      const line = document.querySelector('.stage .line')
+      const box = line.getBoundingClientRect()
+      const style = getComputedStyle(line)
+      const canvas = document.createElement('canvas').getContext('2d')
+      canvas.font = style.fontStyle + ' ' + style.fontWeight + ' ' + style.fontSize + ' ' + style.fontFamily
+      const metrics = canvas.measureText(line.textContent)
+      const start = box.left + (box.width - metrics.width) / 2
+      const ink = start + (-metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight) / 2
+      return { shift: ink - (box.left + box.width / 2), text: line.textContent.trim() }
+    `)
+    record(
+      'the hint is centred by what the eye sees, not only by its box',
+      // 2 px, and not 0: the tolerance is a font's side bearings, which differ by a
+      // fraction of a pixel between platforms. The bug this holds down moved the
+      // words by 4.5 px, which is what "有点偏左" was about.
+      centred.text !== '' && Math.abs(centred.shift) <= 2,
+      `${centred.shift.toFixed(1)} px off centre · “${centred.text}”`,
+    )
+
     // The reason the area is reserved: text appears in it during a start, and the
-    // button must not move under the thumb that is already on it.
+    // button must not move under the thumb that is already on it. The sentence is
+    // put back afterwards — it is the page's own text, and the screenshot below has
+    // to show the screen a user actually sees.
     const moved = await cdp.eval(`
       const button = document.querySelector('.begin')
       const stage = document.querySelector('.stage')
+      const line = stage.querySelector('.line')
+      const original = line.textContent
       const before = button.getBoundingClientRect().top
-      stage.querySelector('.line').textContent = '正在加载识别模块'.repeat(3)
+      line.textContent = '正在加载识别模块'.repeat(3)
       const after = button.getBoundingClientRect().top
-      stage.querySelector('.line').textContent = ''
+      line.textContent = original
       return Math.abs(after - before)
     `)
     record('and the button does not move when that area fills up', moved < 0.5, `moved ${moved.toFixed(2)} px`)
@@ -427,7 +546,9 @@ async function scenario(cdp) {
     const titlebar = document.querySelector('.titlebar')
     const asr = document.querySelectorAll('.panel-head')[0]
     const mt = document.querySelectorAll('.panel-head')[1]
-    const time = document.querySelector('.clock .time')
+    const clock = document.querySelector('.clock')
+    const time = clock.querySelector('.time')
+    const vp = clock.querySelector('.vp')
     return {
       languageInHeader: titlebar.querySelectorAll('select').length,
       sourcePicker: asr.querySelectorAll('select').length,
@@ -435,9 +556,24 @@ async function scenario(cdp) {
       asrExport: !!asr.querySelector('button[aria-label="导出原文"]'),
       mtExport: !!mt.querySelector('button[aria-label="导出译文"]'),
       voicePicker: mt.querySelectorAll('select').length > 1,
-      time: time ? time.textContent.trim() : null,
-      bars: document.querySelectorAll('.clock .vp i').length,
-      download: !!document.querySelector('.clock .dl'),
+      titles: document.querySelectorAll('.panel-title').length,
+      provider: !!mt.querySelector('.provider'),
+      time: time.dataset.value ?? '',
+      timeLabel: time.getAttribute('aria-label') ?? '',
+      glyphs: time.querySelectorAll('.d').length,
+      cells: time.querySelectorAll('.d:first-child i').length,
+      lit: time.querySelectorAll('.d:first-child i.on').length,
+      glyph: (() => {
+        const d = time.querySelector('.d')
+        if (!d) return null
+        const r = d.getBoundingClientRect()
+        return { w: Math.round(r.width), h: Math.round(r.height) }
+      })(),
+      bars: clock.querySelectorAll('.vp i').length,
+      vpBorder: getComputedStyle(vp).borderTopWidth,
+      download: !!clock.querySelector('.dl'),
+      order: [...clock.children].map((el) => el.className.split(' ')[0]).join(','),
+      readBars: !!document.querySelector('.read-btn .playing-bars'),
       level: !!document.querySelector('.record-btn .level'),
       width: document.documentElement.scrollWidth,
       viewport: window.innerWidth,
@@ -448,9 +584,36 @@ async function scenario(cdp) {
   record('and the 译 picker in the translation header', frame.targetPicker === 1)
   record('both panels have their own export button', frame.asrExport && frame.mtExport)
   record('the voice picker has left the translation header', frame.voicePicker === false)
-  record('the header clock is running', /^\d{2}:\d{2}$/.test(frame.time ?? ''), frame.time ?? 'no clock')
-  record('with a five-bar voiceprint beside it', frame.bars === 5, `${frame.bars} bars`)
+  record(
+    'neither column carries a heading, and no Google mark stands in for one',
+    frame.titles === 0 && frame.provider === false,
+    `${frame.titles} titles · provider mark: ${frame.provider}`,
+  )
+  record('the header clock is running', /^\d{1,2}:\d{2}(:\d{2})?$/.test(frame.time), frame.time || 'no clock')
+  record(
+    'and it is drawn as a mosaic of blocks whose count the label spells out',
+    frame.glyphs === 5 &&
+      frame.cells === 15 &&
+      frame.lit > 0 &&
+      frame.timeLabel.endsWith(frame.time) &&
+      // Whole pixels — 3 px cells with a 1 px gap, which is what keeps the blocks
+      // crisp. A fractional cell would draw a blurred clock at every size.
+      frame.glyph?.w === 11 &&
+      frame.glyph?.h === 19,
+    `${frame.glyphs} glyphs · ${frame.cells} cells · ${frame.lit} lit · glyph ${frame.glyph?.w}×${frame.glyph?.h} · “${frame.timeLabel}”`,
+  )
+  record(
+    'with a five-bar voiceprint in a hairline frame beside it',
+    frame.bars === 5 && frame.vpBorder === '1px',
+    `${frame.bars} bars · border ${frame.vpBorder}`,
+  )
+  record(
+    'the row reads voiceprint, then download, then the clock',
+    frame.order === 'vp,slot,time',
+    frame.order,
+  )
   record('no download button while the recording is running', frame.download === false)
+  record('the read-aloud switch carries no second waveform', frame.readBars === false)
   record('the page does not scroll sideways', frame.width <= frame.viewport + 1, `${frame.width} > ${frame.viewport}`)
 
   // The footer grew a third control this round (the read-aloud settings button),
@@ -516,11 +679,16 @@ async function scenario(cdp) {
     level ? `max ${level.max}, min ${level.min}, scaleY ${level.scale}` : 'no level element',
   )
 
+  // The clock is blocks now, so what it *says* is its accessible label and the
+  // `data-value` it spells out; the glyphs themselves carry no text to count.
   const clockRan = await cdp.eval(`
-    const first = document.querySelector('.clock .time').textContent
+    const time = document.querySelector('.clock .time')
+    const read = () => time.dataset.value
+    const first = read()
+    const left = time.getBoundingClientRect().left
     await new Promise((r) => setTimeout(r, 2500))
-    const second = document.querySelector('.clock .time').textContent
-    return { first, second, moved: first !== second }
+    const second = read()
+    return { first, second, left, moved: first !== second }
   `)
   record('the clock counts the recording', clockRan.moved, `${clockRan.first} → ${clockRan.second}`)
 
@@ -532,24 +700,34 @@ async function scenario(cdp) {
   })
   await sleep(1500)
   const after = await cdp.eval(`
-    const time = document.querySelector('.clock .time').textContent
+    const time = document.querySelector('.clock .time')
+    const stopped = time.dataset.value
     await new Promise((r) => setTimeout(r, 1500))
     return {
-      time,
-      still: document.querySelector('.clock .time').textContent === time,
+      time: stopped,
+      still: time.dataset.value === stopped,
+      left: time.getBoundingClientRect().left,
       download: !!document.querySelector('.clock .dl'),
-      aboveVoiceprint: (() => {
+      between: (() => {
         const dl = document.querySelector('.clock .dl')
         const vp = document.querySelector('.clock .vp')
         if (!dl || !vp) return null
-        return dl.getBoundingClientRect().bottom <= vp.getBoundingClientRect().top + 0.5
+        const button = dl.getBoundingClientRect()
+        return vp.getBoundingClientRect().right <= button.left + 0.5 && button.right <= time.getBoundingClientRect().left + 0.5
       })(),
       rows: document.querySelectorAll('.panel-body .line').length,
     }
   `)
   record('the clock stops with the recording', after.still, `${after.time}`)
   record('a download button appears once there is something to save', after.download === true)
-  record('and it sits above the voiceprint', after.aboveVoiceprint === true)
+  record('and it sits between the voiceprint and the clock', after.between === true)
+  // The button appearing is the moment the reserved slot exists for: the clock is a
+  // number being watched, and taking the button's width out of it would move it.
+  record(
+    'and the clock does not move when the button appears',
+    Math.abs(after.left - clockRan.left) < 0.5,
+    `${clockRan.left.toFixed(1)} → ${after.left.toFixed(1)} px`,
+  )
   note(`transcript rows after the fake microphone: ${after.rows}`)
   await cdp.shot('05-stopped')
 
@@ -598,10 +776,29 @@ async function scenario(cdp) {
   // The read-aloud settings dialog: the three settings that belong together.
   const readDialog = await cdp.eval(`
     document.querySelector('.set-btn').click()
-    await new Promise((r) => setTimeout(r, 300))
+    await new Promise((r) => setTimeout(r, 250))
     const modal = document.querySelector('.modal')
     const rows = modal ? [...modal.querySelectorAll('.row .text')].map((t) => t.textContent.trim()) : []
-    return { open: !!modal, title: modal?.querySelector('h2')?.textContent.trim() ?? '', rows }
+    const voiceRow = modal
+      ? [...modal.querySelectorAll('.row')].find((r) => r.querySelector('.text')?.textContent.trim() === '朗读音色')
+      : null
+    const voice = voiceRow?.querySelector('select') ?? null
+    const height = modal?.getBoundingClientRect().height ?? 0
+    // What the picker shows *at the moment the dialog is on screen*. Fetched on
+    // open, this is the loading placeholder — and everything under it moves when
+    // the options arrive, which is the jitter this check exists for.
+    const opening = voice?.options[voice.selectedIndex]?.textContent.trim() ?? ''
+    await new Promise((r) => setTimeout(r, 1400))
+    return {
+      open: !!modal,
+      title: modal?.querySelector('h2')?.textContent.trim() ?? '',
+      rows,
+      options: voice?.options.length ?? 0,
+      opening,
+      hint: !!modal?.querySelector('.hint'),
+      height,
+      settled: modal?.getBoundingClientRect().height ?? 0,
+    }
   `)
   record(
     'the read-aloud button opens a settings dialog beside the switch',
@@ -612,6 +809,20 @@ async function scenario(cdp) {
     'and the translation provider, the engine and the voice are all in it',
     ['翻译用哪家', '朗读引擎', '朗读音色'].every((name) => readDialog.rows.includes(name)),
     readDialog.rows.join(' / '),
+  )
+  record(
+    'the voice picker is already loaded when the dialog opens',
+    readDialog.options > 0 && !readDialog.opening.includes('正在读取'),
+    `showing “${readDialog.opening}” · ${readDialog.options} options`,
+  )
+  record(
+    'so nothing in the dialog moves after it has been drawn',
+    readDialog.height > 0 && Math.abs(readDialog.settled - readDialog.height) < 0.5,
+    `${readDialog.height.toFixed(1)} → ${readDialog.settled.toFixed(1)} px`,
+  )
+  record(
+    'and the sentence that pointed at the debug settings is gone',
+    readDialog.hint === false,
   )
   // The AI translator needs a key, and with none configured the option has to be
   // *offered and refused* rather than hidden: a user looking for it has to learn
@@ -638,7 +849,11 @@ async function main() {
   }
   if (!process.env.RC_E2E_SKIP_BUILD) {
     console.log('building…')
-    const build = spawnSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'inherit' })
+    // Vite's own `build` command, through this same Node — `package.json`'s build
+    // script is `vite build` and nothing else, and this way the step is portable:
+    // no batch shim (Windows), no shell (a deprecation warning about unescaped
+    // arguments), and the process this script starts is the process it can wait on.
+    const build = spawnSync(process.execPath, [VITE, 'build'], { cwd: ROOT, stdio: 'inherit' })
     if (build.status !== 0) process.exit(build.status ?? 1)
   } else if (!existsSync(join(ROOT, 'dist', 'index.html'))) {
     console.error('RC_E2E_SKIP_BUILD=1 but there is no dist/index.html')
@@ -682,7 +897,15 @@ async function main() {
     cdp?.close()
     chrome?.child.kill('SIGKILL')
     preview.kill('SIGTERM')
-    rmSync(userDataDir, { recursive: true, force: true })
+    // Windows holds Chrome's profile directory open for a moment after the process
+    // is gone, and `rmSync` throws EPERM on the first attempt — which, thrown from
+    // here, would take the report with it. A leftover temp directory is not a test
+    // result, so the retries are the fix and the note is the receipt.
+    try {
+      rmSync(userDataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 })
+    } catch {
+      note(`could not remove the browser profile at ${userDataDir}`)
+    }
   }
 
   const failed = results.filter((r) => !r.ok)
@@ -710,11 +933,12 @@ async function main() {
       '',
       ...notes.map((n) => `- ${n}`),
       '',
-      'Screenshots: 01-start-page, 02-settings-debug-off, 03-settings-debug-on, 04-transcript,',
-      '05-stopped, 06-exported, 07-read-settings — in this directory.',
+      `Screenshots: ${SHOTS.map(([file]) => file).join(', ')} — in this directory.`,
+      'The same run as a page, screenshots included: index.html.',
       '',
     ].join('\n'),
   )
+  writeFileSync(join(REPORT_DIR, 'index.html'), reviewPage(summary))
 
   console.log(`\n${summary.passed} passed, ${summary.failed} failed`)
   console.log(`report: ${join(REPORT_DIR, 'report.md')}`)

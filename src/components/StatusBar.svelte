@@ -176,9 +176,10 @@
  * "voice", which is the whole subject of this corner; whether that voice is on is
  * said by the word, the outline and the crossed-through dimming, not by the mark.
  *
- * The bars keep their space when nothing is being read (dimmed, not removed): a
- * control whose width changes every sentence is a control that moves under the
- * thumb that is about to press it.
+ * The three animated bars that used to sit after the label are gone. They were a
+ * fourth thing in a corner that holds a thumb target, a word and a mark, and the
+ * one fact they carried — "a sentence is being read right now" — is carried by the
+ * mark's colour instead, which costs no width and moves nothing.
  -->
 <div class="read-cluster">
   <button
@@ -201,7 +202,6 @@
   >
     <span class="mark" aria-hidden="true"><Glyph name="voice" size={16} /></span>
     <span class="label">{readLabel}</span>
-    <span class="playing-bars" aria-hidden="true"><i></i><i></i><i></i></span>
   </button>
 </div>
 
@@ -324,24 +324,15 @@
   }
 
   /*
-   * The bars keep their width whether or not anything is being read, and this is
-   * the whole of that decision: a footer control that grew and shrank once per
-   * sentence would move under the thumb reaching for it. Colour and motion are
-   * what change.
+   * A sentence is being read right now: the mark goes green.
+   *
+   * Colour and nothing else. It is the one signal available to this corner that
+   * costs no width and moves nothing — the corner holds the control a thumb is
+   * aimed at, and the bars that used to carry this fact took their space from the
+   * side of the pill that the thumb is on.
    */
-  .read-btn .playing-bars {
-    color: var(--rc-line-strong);
-    opacity: 0.55;
-  }
-
-  .read-btn.reading .playing-bars {
+  .read-btn.reading .mark {
     color: var(--rc-ok);
-    opacity: 1;
-  }
-
-  .read-btn:not(.reading) .playing-bars i {
-    animation: none;
-    transform: scaleY(0.35);
   }
 
   @media (any-hover: hover) {

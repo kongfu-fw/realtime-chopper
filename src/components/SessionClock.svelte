@@ -24,7 +24,7 @@
    *
    * One interval per session, 2 Hz, and the number is an integer: a tenth of a
    * second is not information a person reads, and re-rendering twice a second for
-   * the length of a lecture is the whole memory budget this widget is allowed.
+   * the length of a lecture is the whole budget this widget is allowed.
    */
   const TICK_MS = 500
   let seconds = $state(0)
@@ -32,7 +32,7 @@
   $effect(() => {
     // Only a running session counts. Leaving it: the cleanup clears the interval
     // and the number stays where it stopped, which is what the export button
-    // below is about to refer to.
+    // beside it is about to refer to.
     if ($sessionState !== 'recording') return
     const startedAt = Date.now()
     seconds = 0
@@ -61,23 +61,83 @@
   }
 
   const live = $derived($sessionState === 'recording')
+  const value = $derived(stamp(seconds))
+
+  /**
+   * The clock's alphabet: a 3×5 mosaic per glyph, one string per row, `1` for a lit
+   * block, and a one-column colon.
+   *
+   * Drawn rather than typed. The time used to be text in the interface font, and a
+   * "block" face for it is not something this app may have: a webfont is a network
+   * dependency in a PWA that is otherwise complete on the device, and the platform
+   * fonts that render digits as blocks exist on no two machines the same way. Five
+   * rows of three squares are the whole font, they are the same on every device,
+   * and they scale with `--rc-*` tokens like everything else here.
+   *
+   * Deliberately *not* a `tabular-nums` number any more: every glyph is exactly as
+   * wide as every other, so the clock cannot shuffle sideways as the seconds tick —
+   * which was the one property the old face had to be given specially.
+   */
+  const FONT: Record<string, string[]> = {
+    '0': ['111', '101', '101', '101', '111'],
+    '1': ['010', '110', '010', '010', '111'],
+    '2': ['111', '001', '111', '100', '111'],
+    '3': ['111', '001', '111', '001', '111'],
+    '4': ['101', '101', '111', '001', '001'],
+    '5': ['111', '100', '111', '001', '111'],
+    '6': ['111', '100', '111', '101', '111'],
+    '7': ['111', '001', '001', '001', '001'],
+    '8': ['111', '101', '111', '101', '111'],
+    '9': ['111', '101', '111', '001', '111'],
+    ':': ['0', '1', '0', '1', '0'],
+  }
+
+  /** The clock broken into glyphs, each one five rows of cells. */
+  const glyphs = $derived(
+    value.split('').map((char) => ({ colon: char === ':', rows: FONT[char] ?? FONT['0'] })),
+  )
 </script>
 
 <!--
- * Two rows, fixed: the download button on top and the voiceprint underneath it,
- * with the time spanning both.
+ * One row, three things, in the order they are asked about: the voiceprint (is it
+ * hearing me?), the download (can I keep it?) and the time (how long has this been
+ * going?). The download sits *between* the other two — where it belongs in the
+ * reading order, and where it is a button the eye passes on its way from the sound
+ * to the number rather than one it has to go looking for.
  *
- * The top row is *always* there, even when it is empty, and that is the point of
- * the grid: the button appears the moment a recording ends, and a button that
- * appears takes its space from whatever is below it — which is the voiceprint the
- * eye is on. Reserved room costs 16 px of header and buys a header that never
- * moves.
- *
- * The download goes *above* the voiceprint rather than beside the clock because
- * that is where the user asked for it, and because it keeps the one number in the
- * header — the time — at the same x position whether or not the button is there.
+ * The time is the only thing in this row with a fixed width, and the other two are
+ * what move around it: the voiceprint's bars breathe without changing their box,
+ * and the download keeps its 18 px whether or not there is a file to save. That
+ * last part is the whole reason the button has a slot of its own: it appears the
+ * moment a recording ends, and a button that appears takes its space from whatever
+ * is next to it — which is the clock, and the clock is a number being watched.
 -->
 <div class="clock">
+  <!--
+    * The voiceprint: five bars, rising with the microphone.
+    *
+    * The level comes from the same store the record button's own effect reads, at
+    * the same 10 Hz, and it is applied as a single custom property on the container
+    * — five `scaleY`s in a stylesheet instead of five style writes from JavaScript.
+    * Bars rather than one bar because a voiceprint is a *shape*: at rest it still
+    * reads as the mark of a voice, which is what makes "it is listening" legible
+    * without a number to interpret.
+    *
+    * Framed, faintly: a hairline border and a slightly recessed background are what
+    * make five moving marks read as one instrument with a scale, rather than as five
+    * loose sticks beside a number. Dim when nothing is being recorded: after a stop,
+    * the mark belongs to the time beside it, not to the microphone.
+  -->
+  <div
+    class="vp"
+    class:live
+    style={`--level:${levelFraction($level).toFixed(3)}`}
+    aria-hidden="true"
+  >
+    <i></i><i></i><i></i><i></i><i></i>
+  </div>
+
+  <!-- The reserved download slot; see the note above. -->
   <div class="slot">
     {#if canDownload}
       <button
@@ -92,48 +152,118 @@
   </div>
 
   <!--
-    * The voiceprint: five bars that rise with the microphone.
-    *
-    * The level comes from the same store the record button's own effect reads, at
-    * the same 10 Hz, and it is applied as a single custom property on the
-    * container — five `scaleY`s in a stylesheet instead of five style writes from
-    * JavaScript. Bars rather than one bar because a voiceprint is a *shape*: at
-    * rest it still reads as the mark of a voice, which is what makes "it is
-    * listening" legible without a number to interpret.
-    *
-    * Dim when nothing is being recorded: after a stop, the mark belongs to the
-    * time beside it, not to the microphone.
+    * The time, as blocks. `role="img"` with the time in `aria-label` is the way a
+    * graphic that *is* a value gets read out: the five rows of squares are marked
+    * decorative, and what a screen reader announces is the number they spell.
   -->
   <div
-    class="vp"
-    class:live
-    style={`--level:${levelFraction($level).toFixed(3)}`}
-    aria-hidden="true"
+    class="time"
+    role="img"
+    aria-label={`${tr('录音时长')} ${value}`}
+    data-value={value}
   >
-    <i></i><i></i><i></i><i></i><i></i>
+    {#each glyphs as glyph, index (index)}
+      <span class="d" class:colon={glyph.colon}>
+        {#each glyph.rows as row, r (r)}
+          {#each [...row] as cell, c (c)}
+            <i class:on={cell === '1'}></i>
+          {/each}
+        {/each}
+      </span>
+    {/each}
   </div>
-
-  <div class="time" title={tr('录音时长')}>{stamp(seconds)}</div>
 </div>
 
 <style>
   .clock {
-    display: grid;
-    grid-template-columns: auto auto;
-    grid-template-rows: 16px auto;
+    display: flex;
     align-items: center;
-    justify-items: center;
-    column-gap: 7px;
+    gap: 7px;
     /* Nothing in here is a text input: the header's own padding is the margin. */
     line-height: 1;
   }
 
+  /*
+   * The frame around the voiceprint. `height: 20px` with 2 px of padding and a 1 px
+   * border leaves 14 px inside, which is the tallest bar — so a full-scale bar
+   * touches the frame's inner edge exactly, and never draws over the number beside
+   * it.
+   */
+  .vp {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 2px;
+    height: 20px;
+    padding: 2px 4px;
+    border: 1px solid var(--rc-line);
+    border-radius: 6px;
+    background: var(--rc-surface-alt);
+    color: var(--rc-line-strong);
+    transition:
+      border-color 160ms ease,
+      background-color 160ms ease;
+  }
+
+  .vp.live {
+    border-color: var(--rc-line-strong);
+    color: var(--rc-accent);
+  }
+
+  .vp i {
+    display: block;
+    width: 3px;
+    border-radius: 1.5px;
+    background: currentColor;
+    transform-origin: bottom;
+    /*
+     * 16 % at rest, and 84 % of the remaining height at a full bar, so the tallest
+     * bar reaches exactly the top of the frame at full scale.
+     *
+     * The per-bar multipliers are what make it a voiceprint instead of a level
+     * meter — five heights that rise together, symmetric around the middle one.
+     */
+    transform: scaleY(calc(0.16 + var(--level, 0) * var(--m, 1) * 0.84));
+    /* Bridging the 10 Hz updates into something the eye reads as movement. */
+    transition: transform 120ms linear;
+  }
+
+  .vp i:nth-child(1) {
+    height: 7px;
+    --m: 0.45;
+  }
+
+  .vp i:nth-child(2) {
+    height: 10px;
+    --m: 0.75;
+  }
+
+  .vp i:nth-child(3) {
+    height: 14px;
+    --m: 1;
+  }
+
+  .vp i:nth-child(4) {
+    height: 10px;
+    --m: 0.8;
+  }
+
+  .vp i:nth-child(5) {
+    height: 7px;
+    --m: 0.5;
+  }
+
+  /*
+   * The download's room, held open. It is the same 18 px whether the button is in
+   * it or not, and that is the point: the icon appears when a recording ends, and
+   * nothing beside it may move when it does.
+   */
   .slot {
-    grid-area: 1 / 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 16px;
+    width: 18px;
+    height: 18px;
   }
 
   .dl {
@@ -141,7 +271,7 @@
     align-items: center;
     justify-content: center;
     width: 18px;
-    height: 16px;
+    height: 18px;
     padding: 0;
     border: 0;
     background: none;
@@ -154,75 +284,49 @@
     color: var(--rc-accent);
   }
 
-  .vp {
-    grid-area: 2 / 1;
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    height: 16px;
-    color: var(--rc-line-strong);
-  }
-
-  .vp.live {
-    color: var(--rc-accent);
-  }
-
-  .vp i {
-    display: block;
-    width: 2.5px;
-    border-radius: 2px;
-    background: currentColor;
-    transform-origin: bottom;
-    /*
-     * 14 % at rest, and 86 % of the remaining height at a full bar, so the tallest
-     * bar reaches exactly the top of the box: a transform that overflowed its own
-     * row would draw over the download button above it.
-     *
-     * The per-bar multipliers are what make it a voiceprint instead of a level
-     * meter — five heights that rise together, symmetric around the middle one.
-     */
-    transform: scaleY(calc(0.14 + var(--level, 0) * var(--m, 1) * 0.86));
-    /* Bridging the 10 Hz updates into something the eye reads as movement. */
-    transition: transform 120ms linear;
-  }
-
-  .vp i:nth-child(1) {
-    height: 8px;
-    --m: 0.5;
-  }
-
-  .vp i:nth-child(2) {
-    height: 12px;
-    --m: 0.78;
-  }
-
-  .vp i:nth-child(3) {
-    height: 16px;
-    --m: 1;
-  }
-
-  .vp i:nth-child(4) {
-    height: 12px;
-    --m: 0.7;
-  }
-
-  .vp i:nth-child(5) {
-    height: 8px;
-    --m: 0.44;
-  }
-
+  /*
+   * The mosaic. One grid per glyph: 3 × 3 px cells with 1 px between them, so a
+   * digit is 11 × 19 px and the colon is one column of the same cells. The colour
+   * comes from `currentColor`, so a themed clock is a change to `.time` alone.
+   */
   .time {
-    grid-area: 1 / 2 / span 2 / span 1;
-    font-size: 15px;
-    font-weight: 700;
-    /* Digits that do not shuffle sideways as the seconds tick over. */
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
     color: var(--rc-ink);
+  }
+
+  .time .d {
+    display: grid;
+    grid-template-columns: repeat(3, 3px);
+    grid-auto-rows: 3px;
+    gap: 1px;
+  }
+
+  .time .d.colon {
+    grid-template-columns: 3px;
+    /* A colon hangs in the middle of the row rather than sitting on the baseline:
+       it is two dots between two digits, not a glyph with a top and a bottom. */
+    align-self: center;
+  }
+
+  .time i {
+    display: block;
+    border-radius: 1px;
+    /* Unlit cells are nothing: the blocks that are on are the number. */
+    background: transparent;
+  }
+
+  .time i.on {
+    background: currentColor;
   }
 
   @media (prefers-reduced-motion: reduce) {
     .vp i {
+      transition: none;
+    }
+
+    .vp {
       transition: none;
     }
   }

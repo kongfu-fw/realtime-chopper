@@ -77,9 +77,12 @@
 
 <section class="panel" aria-label={tr('原文')}>
   <div class="panel-head">
-    <span class="panel-title">{tr('原文')}</span>
-    <!-- What goes *in* is this panel's question, so its picker is in its header
-         (the 译 half is beside the 译文 title, on the other panel). -->
+    <!--
+      No column title. The picker says what goes in (说 英文) in fewer characters
+      than a heading did, and the heading was one more thing between the user and
+      the sentences. The column still has an accessible name — 原文, on the section
+      above — so nothing has to guess which half of the screen this is.
+    -->
     <LangPicker which="source" />
     <span class="spacer"></span>
     {#if !pinned}

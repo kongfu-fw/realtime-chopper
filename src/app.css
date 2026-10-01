@@ -203,12 +203,6 @@ body {
   background: var(--rc-surface-alt);
 }
 
-.panel-title {
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: 0.02em;
-}
-
 .panel-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -604,8 +598,10 @@ input {
  * at rest as well as in motion, and staggered so the bars are never in step —
  * which is what makes it look like sound rather than like a loading indicator.
  *
- * Shared with the read-aloud switch in the status bar, so the two places that
- * report "the app is talking" report it in the same language.
+ * Drawn in one place only: the row being read. The read-aloud switch in the
+ * status bar used to carry a second copy after its label, and it is gone from
+ * there — a footer control's width is what a thumb aims at, and the switch says
+ * "reading" with the colour of its mark instead.
  */
 .playing-bars {
   display: inline-flex;

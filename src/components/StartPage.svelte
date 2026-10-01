@@ -62,7 +62,14 @@
     if (installing) return tr('正在准备识别模块，第一次会慢一些')
     if ($stage) return $stage
     if ($sessionState === 'error') return $failure?.message ?? tr('启动失败，再试一次')
-    return tr('戴上耳机，点下面开始。')
+    // No full stop on the resting sentence, and that is a centring decision rather
+    // than a punctuation one: the line is centred, and a Chinese full stop is a
+    // full-width glyph whose ink sits in the left of its em box, so a sentence
+    // ending in one has ~9 px of blank space on the right — the words themselves
+    // read as shifted left of centre by half of that. Every other sentence this
+    // area can show is a fragment without punctuation, so this is the only one that
+    // had to lose it.
+    return tr('戴上耳机，点下面开始')
   })
 
   /**

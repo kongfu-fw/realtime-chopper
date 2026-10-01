@@ -5,22 +5,26 @@
   import { APP_VERSION } from '../lib/app/version'
   import { APP_NAME } from '../lib/brand/logo'
   import { navOpen, openHistory, openSettings, view } from '../lib/app/state'
+  import { openBackLayer } from '../lib/app/back'
   import { translator, uiLang } from '../lib/i18n/index.ts'
 
   /**
    * The list that slides out of the left edge, behind the logo.
    *
    * It exists because the app grew a second and third destination that had
-   * nowhere to live. The title bar holds one button (设置) and the footer holds
-   * two, and both of those corners are *thumb* real estate — a phone's bottom
-   * corners are where the things pressed mid-lecture belong, and the record
-   * button is one of them. Everything else — where do I put this phone down and
-   * start again, what did I record yesterday, which build is this — is a question
-   * asked *between* lessons, and this is where one belongs.
+   * nowhere to live. The title bar holds no destination any more (the footer's
+   * two corners are *thumb* real estate — a phone's bottom corners are where the
+   * things pressed mid-lecture belong, and the record button is one of them), and
+   * everything else — where do I put this phone down and start again, what did I
+   * record yesterday, which build is this — is a question asked *between*
+   * lessons, which is where this list belongs.
    *
-   * The top row is the app itself, and pressing it goes home: the start page is
-   * the one screen that knows how to begin anything, and a logo means "this app"
-   * and therefore "the front of this app".
+   * The top row is the app itself, and pressing it goes home, as a logo in the
+   * corner of any app does. 主页 is the same destination written out in words: a
+   * mark is the way back for somebody who already knows the app, and one row of
+   * text is the way back for a list that is read rather than recognised. Both
+   * land on the start page, which is the one screen that knows how to begin
+   * anything.
    *
    * The version sits at the bottom, where a version number belongs — out of the
    * way of the rows above it, and reachable the one time it is needed. It is also
@@ -58,6 +62,20 @@
     // card are for, and both of them say so.
     view.set('translate')
   }
+
+  /**
+   * The drawer is a layer of the app's own back stack, for exactly as long as it
+   * is on screen.
+   *
+   * What is registered is the *store*, not a handler: the scrim, Escape, a row and
+   * the system's back gesture all end in the same `navOpen.set(false)`, so there is
+   * no way to put the drawer away that leaves it registered and no way for the
+   * gesture to close it differently from the scrim.
+   */
+  $effect(() => {
+    if (!$navOpen) return
+    return openBackLayer(() => navOpen.set(false))
+  })
 </script>
 
 <svelte:window
@@ -82,6 +100,7 @@
       <span class="name">{APP_NAME}</span>
     </button>
 
+    <button class="row" onclick={() => go('start')}>{tr('主页')}</button>
     <button class="row" onclick={() => go('translate')}>{tr('开始翻译')}</button>
     <button class="row" onclick={() => go('history')}>{tr('历史记录')}</button>
     <button class="row" onclick={() => go('settings')}>{tr('设置')}</button>

@@ -1,7 +1,7 @@
 <script lang="ts">
   import Logo from './Logo.svelte'
   import SessionClock from './SessionClock.svelte'
-  import { closeSettings, logOpen, navOpen, openSettings, view } from '../lib/app/state'
+  import { goBack, logOpen, navOpen, view } from '../lib/app/state'
   import { APP_NAME } from '../lib/brand/logo'
   import { settings } from '../lib/store/settings'
   import { translator, uiLang } from '../lib/i18n/index.ts'
@@ -75,13 +75,31 @@
   {/if}
 
   <div class="actions">
-    <button
-      class="rc-btn ghost small"
-      onclick={() => ($view === 'settings' ? closeSettings() : openSettings())}
-      aria-label={$view === 'settings' ? tr('返回') : tr('打开设置')}
-    >
-      {$view === 'settings' ? tr('← 返回') : tr('设置')}
-    </button>
+    <!--
+      * One button, and only on one screen: the way back out of settings.
+      *
+      * The header used to carry 设置 on every screen that has a header, and it
+      * does not any more — the logo beside it is the door to the drawer now, and
+      * 设置 has lived in that drawer's list since the drawer existed. A header
+      * with a settings button on the recording screen was a second entrance to
+      * the same room, and the one a thumb was most likely to hit by accident.
+      *
+      * What stays is the *return*: settings is a screen you enter from
+      * somewhere else, and 返回 is the control that knows where that was
+      * (`goBack`, in `state.ts`). Without it the drawer would be the only way
+      * out of settings, and the drawer opens the list of destinations rather
+      * than the screen the user came from — which would look like the app
+      * forgetting what they were doing.
+      *
+      * It is not the only *way* back any more: the system's own back gesture
+      * leaves this screen through the same `goBack` (`back.ts`), so a key and a
+      * button cannot come to different conclusions about where the user was.
+    -->
+    {#if $view === 'settings'}
+      <button class="rc-btn ghost small" onclick={goBack} aria-label={tr('返回')}>
+        {tr('← 返回')}
+      </button>
+    {/if}
 
     <!--
       Requirement 18: the vertical ellipsis on the right opens the log drawer and

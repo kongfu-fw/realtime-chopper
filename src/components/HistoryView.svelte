@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
+  import Glyph from './Glyph.svelte'
   import Modal from './Modal.svelte'
   import SaveNoteDialog from './SaveNoteDialog.svelte'
-  import { closeHistory, showToast } from '../lib/app/state'
+  import { openNote, showToast } from '../lib/app/state'
+  import { openBackLayer } from '../lib/app/back'
+  import { hashOf } from '../lib/app/route'
   import { whenText } from '../lib/history/place'
   import {
     deleteEntries,
@@ -44,11 +47,22 @@
 
   const tr = $derived(translator($uiLang))
 
-  /** The note being read in full; `null` while the list is showing. */
-  let openId = $state<string | null>(null)
+  /**
+   * The note being read in full; `null` while the list is showing.
+   *
+   * The id itself lives in the app's state rather than in this component, because
+   * it is part of the address: `#/history/<id>` names one note, and the app is
+   * loaded with it when the page is opened at that address (`state.ts`). What this
+   * component keeps is the *reading* of it — the entry, its audio, and which id the
+   * two belong to — so that the screen that shows a note is still the only thing
+   * that knows how to read one.
+   */
+  const openId = $derived($openNote)
   let openEntry = $state<HistoryEntry | null>(null)
+  /** The note `openEntry` and `audioUrl` belong to, so "still reading" is a comparison, not a flag. */
+  let loaded = $state<string | null>(null)
   let audioUrl = $state('')
-  let loading = $state(false)
+  const loading = $derived(openId !== null && loaded !== openId)
   /** Selection mode, and the notes picked in it. */
   let selecting = $state(false)
   let chosen = $state<string[]>([])
@@ -69,33 +83,82 @@
     audioUrl = ''
   }
 
-  async function open(id: string): Promise<void> {
+  /**
+   * Reads one note: its words first, then its audio.
+   *
+   * `loaded` is written before the first `await`, so the effect below sees a note
+   * as being read instead of asking for it again — and re-read after every one,
+   * because opening another note while this one is still coming out of storage
+   * must not be answered with the previous one's text.
+   */
+  async function load(id: string): Promise<void> {
     releaseAudio()
-    openId = id
     openEntry = null
-    loading = true
+    loaded = id
     // Opening a note is the answer to its 新 badge.
     if ($historyFresh === id) historyFresh.set(null)
-    try {
-      const entry = await readEntry(id)
-      if (!entry) {
-        warn('storage', t('这条历史记录读不出来了（可能已被删除）'))
-        openId = null
-        return
-      }
-      openEntry = entry
-      const blob = await readAudio(id)
-      if (blob) audioUrl = URL.createObjectURL(blob)
-    } finally {
-      loading = false
+    const entry = await readEntry(id)
+    if (!entry) {
+      warn('storage', t('这条历史记录读不出来了（可能已被删除）'))
+      // The address named a note that is not there any more, and the way out of it
+      // is the one the screen underneath offers: the list, whose address is what
+      // this puts back (`back.ts` closes the note's layer and consumes the entry
+      // that named it). Only if this is still the note being read — a user who has
+      // already opened another one is not asking for this one to be closed.
+      if ($openNote === id) openNote.set(null)
+      return
     }
+    if ($openNote !== id) return
+    openEntry = entry
+    const blob = await readAudio(id)
+    if (blob && $openNote === id) audioUrl = URL.createObjectURL(blob)
   }
 
+  /**
+   * The note the address names is the note that gets read.
+   *
+   * Watching the store rather than loading from the row's own onclick is what lets
+   * a note be opened by something that never touched this component: a reload on
+   * `#/history/<id>`, a link somebody sent, an address typed into the bar. The row
+   * now does the only thing a row has to do — it changes the address — and the
+   * screen follows, exactly as it does for the other screens.
+   */
+  $effect(() => {
+    const id = $openNote
+    if (!id) {
+      releaseAudio()
+      openEntry = null
+      loaded = null
+      return
+    }
+    if (loaded !== id) void load(id)
+  })
+
+  /**
+   * The way out of a note: the list it came from.
+   *
+   * Which is now also the note's entry being given back, because the note carries
+   * the address `#/history/<id>`: clearing the store releases its layer, and the
+   * layer's entry is consumed by `back.ts` on the way out (see `reconcile`). The
+   * audio URL is released by the effect above, which sees the same clearing.
+   */
   function back(): void {
-    releaseAudio()
-    openId = null
-    openEntry = null
+    openNote.set(null)
   }
+
+  /**
+   * A note that is open is a layer of the app's own back stack (`back.ts`), so the
+   * phone's own back key leaves the note and lands on the list — the same `back()`
+   * as the 返回 button beside the note's heading, because they are the same request.
+   *
+   * It is the one layer in the app that carries an address of its own rather than
+   * inheriting the screen's: a note *is* an address, and it is the whole reason
+   * `#/history/<id>` exists.
+   */
+  $effect(() => {
+    if (!openId) return
+    return openBackLayer(back, hashOf({ view: 'history', note: openId }))
+  })
 
   function toggleSelecting(): void {
     selecting = !selecting
@@ -161,20 +224,36 @@
 
 <div class="history">
   <header class="bar">
+    <!--
+      * The way back exists on the note, not on the list.
+      *
+      * A list of notes is not a screen anybody is stranded on: the logo in the
+      * header opens the drawer, and the drawer is how every other destination is
+      * reached. So a 返回 here was a control that had to remember where the list
+      * was opened from — the start page's card, the drawer over a transcript, or
+      * the pause panel that had just filed a note — and it got that wrong in the
+      * one case a user could name, which is "the screen I was looking at". The
+      * detail *does* keep it, and there 返回 means the one thing that is never
+      * ambiguous: this list, where the user just came from.
+      *
+      * What replaces it is the small heading, which is what a screen with no way
+      * back needs most: a word at the top saying where this is.
+    -->
     {#if openId}
-      <button class="rc-btn ghost small" onclick={back}>{tr('← 返回列表')}</button>
-    {:else}
-      <button class="rc-btn ghost small" onclick={closeHistory}>{tr('← 返回')}</button>
+      <button class="rc-btn ghost small" onclick={back}>{tr('返回')}</button>
     {/if}
 
-    <span class="summary">
-      {#if $historyList.length}
-        {tr('共 {n} 条 · {size}', {
-          n: $historyList.length,
-          size: formatBytes(totalAudioBytes($historyList)),
-        })}
+    <div class="head">
+      <p class="heading">{openId ? tr('记录详情') : tr('历史记录')}</p>
+      {#if !openId && $historyList.length}
+        <span class="summary">
+          {tr('共 {n} 条 · {size}', {
+            n: $historyList.length,
+            size: formatBytes(totalAudioBytes($historyList)),
+          })}
+        </span>
       {/if}
-    </span>
+    </div>
 
     {#if !openId && $historyList.length > 0}
       <button class="rc-btn ghost small" onclick={toggleSelecting}>
@@ -194,10 +273,27 @@
       <p class="facts">{subtitle(openEntry)}</p>
 
       {#if audioUrl}
-        <audio class="player" controls preload="metadata" src={audioUrl}></audio>
-        <a class="rc-btn ghost small" href={audioUrl} download={`${openEntry.id}.wav`}>
-          {tr('下载录音')}
-        </a>
+        <!--
+          * One row: the sound, and the file it came in.
+          *
+          * These were stacked — a player, and under it a link — which read as
+          * two unrelated things that happened to sit together. They are one
+          * thing, and side by side they say it: listen to it, or keep it. The
+          * player takes whatever width is left and the button keeps its own, so
+          * the row also gives the transcript back a line it was not using.
+        -->
+        <div class="media">
+          <audio class="player" controls preload="metadata" src={audioUrl}></audio>
+          <a
+            class="rc-btn ghost small dl"
+            href={audioUrl}
+            download={`${openEntry.id}.wav`}
+            title={tr('下载录音')}
+          >
+            <Glyph name="download" size={15} />
+            <span class="dl-text">{tr('下载录音')}</span>
+          </a>
+        </div>
       {:else}
         <p class="facts">{tr('没有录音（记录时关闭了「保存整场录音」）')}</p>
       {/if}
@@ -246,7 +342,7 @@
               onclick={() => toggle(meta.id)}
             ></button>
           {/if}
-          <button class="row" onclick={selecting ? () => toggle(meta.id) : () => void open(meta.id)}>
+          <button class="row" onclick={selecting ? () => toggle(meta.id) : () => openNote.set(meta.id)}>
             <span class="lines">
               <span class="title">{meta.title}</span>
               <span class="sub">{subtitle(meta)}</span>
@@ -320,16 +416,44 @@
   .bar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 10px;
     padding-bottom: 10px;
     border-bottom: 1px solid var(--rc-line);
+  }
+
+  /* The heading and its footnote travel together and take the middle: the heading
+     is what the screen is, the summary is how much of it there is, and the button
+     at the end is what can be done to it. */
+  .head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  /*
+   * The small heading: 13 px, semibold, in the ink colour rather than the grey the
+   * summary beside it is in. Small enough not to compete with a note's own title
+   * (19 px, under it) and dark enough to be the thing the eye lands on first — a
+   * screen that has no 返回 needs one line that says where it is.
+   */
+  .heading {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    color: var(--rc-ink);
+    white-space: nowrap;
   }
 
   .summary {
     font-size: 12px;
     color: var(--rc-ink-soft);
     font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .note {
@@ -466,9 +590,67 @@
     padding: 16px 4px;
   }
 
+  /*
+   * The player and the download button, on one line.
+   *
+   * The browser draws everything inside an `<audio>`'s shadow root, so the only
+   * parts of it this stylesheet can reach are the ones on the host: the frame. It
+   * is given the frame the controls around it already wear — 2 px of ink-strong
+   * outline, a rounded box, the recessed paper of an input — so the native widget
+   * reads as one more control of this app rather than as a grey box the page
+   * happens to contain.
+   *
+   * Three details, each for a reason the browser decides and not this file:
+   *
+   * - `border-radius` is the input's, not the buttons' pill. The player's own
+   *   content is drawn edge to edge inside the host, and a 20 px curve on a 40 px
+   *   box would clip the top and bottom of the play button at the ends of the bar.
+   * - `overflow: hidden`, because that same content is a *square* panel and would
+   *   otherwise poke its corners out through the curve.
+   * - `flex: 1` with `width: 0` rather than a percentage: a native player refuses
+   *   to shrink below its own controls' intrinsic width, and on a 320 px phone it
+   *   has to. The floor is 140 px — a play button and a scrubber and no more — on
+   *   the narrowest screen this app supports.
+   */
+  .media {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
   .player {
-    width: 100%;
+    flex: 1 1 auto;
+    width: 0;
+    min-width: 140px;
     height: 40px;
+    padding: 0 2px;
+    border: 2px solid var(--rc-line-strong);
+    border-radius: var(--rc-radius);
+    overflow: hidden;
+    background: var(--rc-surface-alt);
+    box-shadow: var(--rc-shadow-hard);
+  }
+
+  /*
+   * The download button: the app's own pill (`.rc-btn ghost small`), with the
+   * glyph it shares with the header's download and a word beside it. The word is
+   * the important half — three icons in three places that all mean "the file"
+   * would be a language of its own — and it is dropped only when there is no room
+   * for it, where the icon and the link's own `title` still carry it.
+   */
+  .dl {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    text-decoration: none;
+  }
+
+  @media (max-width: 400px) {
+    .dl-text {
+      display: none;
+    }
   }
 
   .transcript {

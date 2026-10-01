@@ -1,11 +1,14 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import type { Snippet } from 'svelte'
+  import { openBackLayer } from '../lib/app/back'
   import { t } from '../lib/i18n/index.ts'
 
   interface Props {
     title: string
     /**
-     * `reason` names *how* it was dismissed ("点关闭" / "点遮罩" / "按 Esc").
+     * `reason` names *how* it was dismissed ("点关闭" / "点遮罩" / "按 Esc" /
+     * "按返回键").
      *
      * A dialog that disappears without a word is unreadable from a log: when the
      * user reports "it just closed", the reason is the difference between a bug
@@ -26,6 +29,20 @@
   function onKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') onclose?.(t('按 Esc'))
   }
+
+  /**
+   * Every dialog in the app is a layer of its own back stack, registered here
+   * rather than in each of the six dialogs that exist.
+   *
+   * A dialog is the thing a back press is most obviously aimed at — it is the top
+   * of the screen and there is a way out printed on it — so a phone's back key that
+   * walked out of the app instead would be the one gesture a user would read as
+   * the app being broken. On mount, because a `Modal` exists exactly while it is
+   * open; the close goes through `onclose`, so the dialog's owner hears about the
+   * back key the same way it hears about the ✕, the backdrop and Escape, with the
+   * reason attached for the log.
+   */
+  onMount(() => openBackLayer(() => onclose?.(t('按返回键'))))
 </script>
 
 <svelte:window onkeydown={onKeydown} />

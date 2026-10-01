@@ -22,13 +22,18 @@
    *
    * ## Why the clock is here, and enlarged
    *
-   * The header's three marks — the voiceprint, the download button and the
-   * timer — are the answer to "what did I just record": how it sounded, how long
-   * it ran, and whether there is a file to keep. On the header they are 20 px of
-   * a 56 px strip, which is the right size for a glance during a lesson and too
-   * small to decide by. So the panel draws *the same component*, scaled up and
-   * centred, and the numbers a person is about to make a decision with are the
-   * biggest thing on the screen.
+   * The header's marks — the voiceprint and the timer — are the answer to "what
+   * did I just record": how it sounded, and how long it ran. On the header they
+   * are 20 px of a 56 px strip, which is the right size for a glance during a
+   * lesson and too small to decide by. So the panel draws *the same component*,
+   * scaled up and centred, and the numbers a person is about to make a decision
+   * with are the biggest thing on the screen.
+   *
+   * The header's third mark is deliberately *not* drawn again: the download icon
+   * (`SessionClock`'s `showDownload`) belongs to the header, where it is a quiet
+   * offer beside the recording it belongs to. Up here, between a stop and a
+   * decision, the same icon would be a fourth way out of a panel that has three,
+   * and it would be the only one of the four with no words under it.
    *
    * The transition is that scale: the clock grows into place as the panel
    * arrives, because it is the same clock and it should look like it.
@@ -140,9 +145,10 @@
 
   <!-- The enlargement itself: `zoom` scales the component the header works with,
        drawn with a transition from its own size (see SessionClock). Centred, and
-       given the room it needs — 2.2× of the header row is ~240 px wide. -->
+       given the room it needs — 2.2× of the header row is ~240 px wide. No
+       download icon: see the note at the top of this component. -->
   <div class="scale">
-    <SessionClock zoom={2.2} />
+    <SessionClock zoom={2.2} showDownload={false} />
   </div>
 
   <div class="actions">

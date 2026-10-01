@@ -6,6 +6,7 @@ import { getSettings, isLangInstalled } from '../store/settings'
 import { ttsConfigFrom } from '../tts/engine'
 import { info } from '../log/store'
 import { t } from '../i18n/index.ts'
+import { parseHash } from './route'
 
 /**
  * One session per page. Everything that outlives a component lives here rather
@@ -22,48 +23,119 @@ export const session = new Session()
  * is reported, and one button. It is a view rather than a modal or an overlay
  * because everything else — the footer's buttons, the transcript, the timer in the
  * header — is about a *session*, and on the start page there is not one yet.
+ *
+ * The starting value is read from the address (`route.ts`), which is what makes a
+ * reload — or a link somebody sent — land on the screen it names instead of on the
+ * app's first one. Read once, here, rather than applied by a component later: a
+ * screen that is set after mounting is a screen the page has already drawn
+ * something else for, and on a phone that flash is the whole of what a user sees.
  */
 export type View = 'start' | 'translate' | 'settings' | 'history'
 
-export const view = writable<View>('start')
+const initial = parseHash(location.hash)
+
+export const view = writable<View>(initial.view)
 
 /**
- * Where 设置 was opened from, so 返回 goes back there rather than guessing.
+ * The note open on the history screen, or `null` while the list is showing.
  *
- * Opened from the start page, "back" has to mean the start page: it is the only
- * place the loading state and the one button that starts a session exist, and
- * sending a user to an empty transcript instead would look like the app had lost
- * the thing they were about to press.
+ * App state rather than a component's own variable (which is what it was), because
+ * an open note is part of the address: `#/history/<id>` names one note, and a
+ * refresh on that screen — or a link to it — has to be able to put the same one
+ * back. The id is all that is kept here; the note itself and its audio are read by
+ * `HistoryView`, which watches this store, so that the screen that *shows* a note
+ * is still the only thing that knows how to read one.
+ *
+ * It is also what makes the note a layer of the back stack rather than a state of
+ * the list: setting it is showing it, clearing it is putting it away.
  */
-export const viewBeforeSettings = writable<View>('translate')
+export const openNote = writable<string | null>(initial.note)
 
+/**
+ * The screens behind this one, newest last.
+ *
+ * This is what a way back *means*, and it is a trail rather than a remembered
+ * field because the app has more than one door into each screen: 设置 can be
+ * reached from the start page, from a transcript's drawer and from the notes
+ * screen, and every one of those is a different answer to "where does back go".
+ * A trail answers all of them with the same one — undo the step that was actually
+ * taken — which is also the only answer that stays true when a user zigzags
+ * (设置 → 历史记录 → 设置) and comes back out again.
+ *
+ * It replaces two writables, `viewBeforeSettings` and `viewBeforeHistory`, that
+ * each screen's own open function wrote down. That version could not tell a
+ * zigzag from a straight line — opening 设置 *from* 设置 overwrote the answer with
+ * 设置, and 返回 then went nowhere — and every new door into a screen had to
+ * remember to write it. The trail is written by the view store itself, in one
+ * place, so a screen added later is remembered without anything being remembered
+ * about it.
+ */
+const trail: View[] = []
+/** A way back this long is a fidget, not a journey; the oldest steps fall off. */
+const TRAIL_MAX = 12
+
+let shown: View = get(view)
+view.subscribe((next) => {
+  if (next === shown) return
+  // Only the two destinations are *entered*: the start page and the transcript
+  // are where the app already is, and stepping out of a destination lands on one
+  // of them and forgets the trail — which is what makes this a stack of screens
+  // rather than a log of taps.
+  if (next === 'settings' || next === 'history') {
+    trail.push(shown)
+    if (trail.length > TRAIL_MAX) trail.shift()
+  } else {
+    trail.length = 0
+  }
+  // Leaving 历史记录 forgets the note it had open.
+  //
+  // Not because the address would be wrong — it is the stack of open layers that
+  // spells the address (`back.ts`), and the note's layer goes when its screen
+  // goes — but because the note would otherwise be *remembered*: coming back to
+  // the list later would open it again, unasked. That is the old behaviour kept
+  // deliberately: the open note used to be a variable inside `HistoryView`, and a
+  // screen that is left and re-entered showed the list, which is what somebody
+  // tapping 历史记录 in the drawer is asking for.
+  if (next !== 'history' && get(openNote)) openNote.set(null)
+  shown = next
+})
+
+/**
+ * The way back: the screen this one was opened from.
+ *
+ * Its two callers are the same question — the 返回 in the settings header and the
+ * system's own back gesture (`back.ts`) — and they are answered in one place, so
+ * that a button and a key can never disagree about where a user came from.
+ */
+export function goBack(): void {
+  view.set(trail.pop() ?? 'start')
+}
+
+/** 设置: a destination like 历史记录 — entered from anywhere, left by `goBack` */
 export function openSettings(): void {
-  // Read first, write second: an `update` whose callback sets a second store is a
-  // side effect inside an expression, and Svelte is free to run it more than once.
-  viewBeforeSettings.set(get(view))
   view.set('settings')
 }
 
-export function closeSettings(): void {
-  view.set(get(viewBeforeSettings))
-}
-
 /**
- * Where 历史记录 was opened from, for the same reason as `viewBeforeSettings`.
+ * Opens the notes — the list of what has been recorded and filed.
  *
- * It is reachable from both ends of the app — the start page's own card and the
- * logo's drawer, which is drawn over the transcript — and "back" has to mean the
- * screen the user was looking at, not the one the app finds easiest to rebuild.
+ * There used to be a `closeHistory` beside it, and a `viewBeforeHistory` for that
+ * function to remember, because the list carried a 返回. It does not any more, and
+ * that is why the pair is gone rather than merely unused: a 返回 on the list had to
+ * answer "which screen was this opened from" — the start page's card, the drawer
+ * over a transcript, or the pause panel that had just filed a note — and the answer
+ * a user could name ("the screen I was looking at") is the one it got wrong. The
+ * list is a destination like any other, and the drawer is the way between
+ * destinations; the note's own screen keeps its 返回, where the answer is never in
+ * doubt.
+ *
+ * What the list has instead of a button is the system's own back gesture
+ * (`back.ts`), which is the one control that cannot get this wrong: it does not
+ * have to know where the list was opened from, it retraces the step that was
+ * taken.
  */
-export const viewBeforeHistory = writable<View>('start')
-
 export function openHistory(): void {
-  viewBeforeHistory.set(get(view))
   view.set('history')
-}
-
-export function closeHistory(): void {
-  view.set(get(viewBeforeHistory))
 }
 
 /**

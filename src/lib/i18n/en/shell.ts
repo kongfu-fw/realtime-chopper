@@ -143,6 +143,7 @@ export const EN_SHELL: Record<string, string> = {
   // ── Modal.svelte ──────────────────────────────────────────────────────────
   '点遮罩': 'tapped the backdrop',
   '按 Esc': 'pressed Esc',
+  '按返回键': 'pressed the back key',
 
   // ── ModelInstallModal.svelte ──────────────────────────────────────────────
   'iPhone 内存比较紧：先关掉其他 App 再试；英文（62 MB）和手机上的韩语（64 MB）模块都比中文模块轻得多。':
@@ -404,6 +405,7 @@ export const EN_SHELL: Record<string, string> = {
 
   // ── NavDrawer.svelte ──────────────────────────────────────────────────────
   '导航': 'Menu',
+  '主页': 'Home',
   '开始翻译': 'Start translating',
   '版本 {version}': 'Version {version}',
   '关于': 'About',
@@ -428,7 +430,7 @@ export const EN_SHELL: Record<string, string> = {
   '来源': 'Source',
 
   // ── HistoryView.svelte, and the notes behind it ──────────────────────────
-  '← 返回列表': '← Back to the list',
+  '记录详情': 'Note details',
   '共 {n} 条 · {size}': '{n} note · {size}|{n} notes · {size}',
   '选择': 'Select',
   '新': 'New',

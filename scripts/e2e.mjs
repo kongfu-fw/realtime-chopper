@@ -85,14 +85,15 @@ const SHOTS = [
   ['02-settings-debug-off', '设置页，调试关闭'],
   ['03-settings-debug-on', '设置页，调试打开'],
   ['04-transcript', '转录页：声纹 → 下载位 → 方块时钟，两栏都没有标题'],
-  ['05-paused', '暂停面板：放大居中的声纹 / 下载钮 / 时钟，下面三个按钮'],
+  ['05-paused', '暂停面板：放大居中的声纹与时钟，中间没有下载钮，下面三个按钮'],
   ['06-exported', '导出之后'],
   ['07-read-settings', '朗读设置：音色打开时已经是满的，底下没有提示语'],
-  ['08-drawer', '左上角 logo 拉出的列表：logo / 名字 / 开始翻译 / 历史记录 / 设置 / 版本号'],
+  ['08-drawer', '左上角 logo 拉出的列表：logo / 名字 / 主页 / 开始翻译 / 历史记录 / 设置 / 版本号'],
   ['09-save-dialog', '保存对话框：名称可以改，日期和定位是保留字段'],
   ['10-history', '历史记录：最新的那条挂着 新 标签'],
-  ['11-history-detail', '一条历史记录：录音回放、下载、原文与译文'],
+  ['11-history-detail', '一条记录：返回 + 小标题，播放器和下载在同一行，下面是原文与译文'],
   ['12-history-select', '批量选择：勾选一条，底部出现删除栏'],
+  ['13-note-from-its-address', '直接从地址打开的一条记录（标签页名字也是 记录详情）'],
 ]
 
 /** Escapes text for the HTML report; the app's own strings are trusted, paths are not. */
@@ -615,6 +616,7 @@ async function scenario(cdp) {
       vpBorder: getComputedStyle(vp).borderTopWidth,
       download: !!clock.querySelector('.dl'),
       order: [...clock.children].map((el) => el.className.split(' ')[0]).join(','),
+      headerButtons: [...document.querySelectorAll('.titlebar .actions button')].map((b) => b.textContent.trim()),
       readBars: !!document.querySelector('.read-btn .playing-bars'),
       level: !!document.querySelector('.record-btn .level'),
       width: document.documentElement.scrollWidth,
@@ -655,6 +657,13 @@ async function scenario(cdp) {
     frame.order,
   )
   record('no download button while the recording is running', frame.download === false)
+  // The header's 设置 button is gone: the drawer behind the logo is the only way
+  // into settings, and the only button left up here is the debug ellipsis.
+  record(
+    'the header no longer offers 设置 — the drawer is the way in',
+    frame.headerButtons.every((text) => text !== '设置'),
+    frame.headerButtons.join(' / ') || 'no buttons',
+  )
   record('the read-aloud switch carries no second waveform', frame.readBars === false)
   record('the page does not scroll sideways', frame.width <= frame.viewport + 1, `${frame.width} > ${frame.viewport}`)
 
@@ -779,13 +788,13 @@ async function scenario(cdp) {
       still: time.dataset.value === stopped,
       headerLeft: header.getBoundingClientRect().left,
       header: header.dataset.value,
-      download: !!document.querySelector('.pause-panel .clock .dl'),
-      between: (() => {
-        const dl = document.querySelector('.pause-panel .clock .dl')
-        const vp = document.querySelector('.pause-panel .clock .vp')
-        if (!dl || !vp) return null
-        const button = dl.getBoundingClientRect()
-        return vp.getBoundingClientRect().right <= button.left + 0.5 && button.right <= time.getBoundingClientRect().left + 0.5
+      // Both copies of the clock exist right now: the header's, under the panel's
+      // scrim, and the enlarged one on the panel.
+      panelDownload: !!document.querySelector('.pause-panel .clock .dl'),
+      headerDownload: !!document.querySelector('.titlebar .clock .dl'),
+      panelOrder: (() => {
+        const clock = document.querySelector('.pause-panel .clock')
+        return clock ? [...clock.children].map((el) => el.className.split(' ')[0]).join(',') : ''
       })(),
       rows: document.querySelectorAll('.panel-body .line').length,
     }
@@ -796,8 +805,18 @@ async function scenario(cdp) {
     after.time !== '00:00' && Math.abs(asSeconds(after.time) - asSeconds(after.header)) <= 1,
     `panel ${after.time} · header ${after.header}`,
   )
-  record('a download button appears once there is something to save', after.download === true)
-  record('and it sits between the voiceprint and the clock', after.between === true)
+  // The panel draws the same clock, minus the download icon: up here, between a
+  // stop and a decision, the file is what 保存 files, and a second unlabelled way
+  // to take it away would be a fourth meaning for one recording. The header keeps
+  // its own copy of that button (asserted below), which the panel covers while it
+  // is up.
+  record('the pause panel carries no download button of its own', after.panelDownload === false)
+  record(
+    'and its clock is the voiceprint and the time, with nothing between them',
+    after.panelOrder === 'vp,time',
+    after.panelOrder || 'no clock',
+  )
+  record('while the header, which the panel covers, still holds one', after.headerDownload === true)
   // The button appearing is the moment the reserved slot exists for: the clock is a
   // number being watched, and taking the button's width out of it would move it.
   record(
@@ -814,13 +833,22 @@ async function scenario(cdp) {
     const time = document.querySelector('.pause-panel .clock .time')
     const clock = document.querySelector('.pause-panel .clock')
     const rect = clock.getBoundingClientRect()
-    const header = document.querySelector('.titlebar .clock').getBoundingClientRect()
     const box = document.querySelector('.pause-panel').getBoundingClientRect()
+    // The enlargement is measured on a glyph rather than on the whole row: the
+    // panel's copy deliberately leaves out the download button the header's has
+    // (SessionClock's showDownload), so the two rows are different widths by
+    // design and only the drawing itself is comparable between them.
+    const glyph = time.querySelector('.d').getBoundingClientRect()
+    const headerGlyph = document.querySelector('.titlebar .clock .time .d').getBoundingClientRect()
     return {
       heading,
       buttons,
       centreOff: Math.abs(rect.left + rect.width / 2 - window.innerWidth / 2),
-      ratio: rect.width / header.width,
+      ratio: glyph.width / headerGlyph.width,
+      glyph:
+        Math.round(headerGlyph.width) + '×' + Math.round(headerGlyph.height) +
+        ' → ' + Math.round(glyph.width) + '×' + Math.round(glyph.height),
+      order: [...clock.children].map((el) => el.className.split(' ')[0]).join(','),
       duration: getComputedStyle(clock).transitionDuration,
       covers: box.height >= window.innerHeight - 1,
       scrim: !!document.querySelector('.scrim'),
@@ -837,8 +865,13 @@ async function scenario(cdp) {
   )
   record(
     'the header\u2019s clock is drawn again, enlarged and centred on the window',
-    panel.ratio > 1.9 && panel.centreOff <= 4,
-    `${panel.ratio.toFixed(2)}× the header\u2019s clock · ${panel.centreOff.toFixed(1)} px off centre`,
+    panel.ratio > 2 && panel.ratio < 2.5 && panel.centreOff <= 4,
+    `${panel.ratio.toFixed(2)}× the header\u2019s digits (${panel.glyph}) · ${panel.centreOff.toFixed(1)} px off centre`,
+  )
+  record(
+    'and it is the same two marks up there, without the download the header keeps',
+    panel.order === 'vp,time',
+    panel.order,
   )
   record(
     'and it grows into place rather than appearing at its size',
@@ -848,23 +881,8 @@ async function scenario(cdp) {
   record('the panel is the screen, not a card on one', panel.covers === true && panel.scrim === true)
   await cdp.shot('05-paused')
 
-  // The recording itself, from the panel's own download button: the one artifact a
-  // classroom can take away.
-  const wavBefore = readdirSync(DOWNLOADS).length
-  await cdp.eval(`document.querySelector('.pause-panel .clock .dl').click(); return true`)
-  await sleep(1500)
-  const pausedWav = readdirSync(DOWNLOADS).find((name) => name.endsWith('.wav'))
-  record('the download button on that panel saves the recording to the device', !!pausedWav, pausedWav ?? `nothing in ${DOWNLOADS}`)
-  if (pausedWav) {
-    const bytes = readFileSync(join(DOWNLOADS, pausedWav))
-    const declared = bytes.length >= 44 ? bytes.readUInt32LE(4) + 8 : 0
-    record(
-      'and the file is a WAV whose header covers the audio in it',
-      bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WAVE' && declared === bytes.length,
-      `${bytes.length} bytes, header says ${declared}`,
-    )
-  }
-  note(`downloads before filing anything: ${wavBefore}`)
+  // The recording as a file is checked where a user asks for it: the note's own
+  // screen, once it has been filed and it is the note's WAV that comes down.
 
   // 继续录音: the same session, the microphone reopened, the panel gone.
   const resumed = await cdp.eval(`
@@ -981,6 +999,8 @@ async function scenario(cdp) {
       rows: [...document.querySelectorAll('.history .row')].map((r) => r.textContent.trim()),
       badge: document.querySelector('.history .badge')?.textContent.trim() ?? '',
       summary: document.querySelector('.history .summary')?.textContent.trim() ?? '',
+      heading: document.querySelector('.history .bar .heading')?.textContent.trim() ?? '',
+      barButtons: [...document.querySelectorAll('.history .bar button')].map((b) => b.textContent.trim()),
       paused: !!document.querySelector('.pause-panel'),
     }
   `)
@@ -1000,6 +1020,14 @@ async function scenario(cdp) {
     'the recording screen is gone: no footer, no pause panel',
     filed.footer === false && filed.paused === false,
     filed.summary,
+  )
+  // The list's own small heading, and the absence of the 返回 that used to sit
+  // where it is now: the list is a destination, and the drawer is the way between
+  // destinations.
+  record(
+    'the list is titled by a small heading, and carries no way back',
+    filed.heading === '历史记录' && filed.barButtons.every((text) => !text.includes('返回')),
+    `“${filed.heading}” · buttons: ${filed.barButtons.join(' / ') || 'none'}`,
   )
   await cdp.shot('10-history')
 
@@ -1047,13 +1075,28 @@ async function scenario(cdp) {
       if (audio && audio.readyState >= 1 && Number.isFinite(audio.duration)) duration = audio.duration
       else await new Promise((r) => setTimeout(r, 100))
     }
+    const link = document.querySelector('.history a[download]')
+    const row = (() => {
+      if (!audio || !link) return null
+      const a = audio.getBoundingClientRect()
+      const d = link.getBoundingClientRect()
+      return {
+        centres: Math.abs(a.top + a.height / 2 - (d.top + d.height / 2)),
+        rightOf: d.left >= a.right - 0.5,
+        inside: d.right <= window.innerWidth + 1,
+      }
+    })()
     return {
       title: document.querySelector('.history h2')?.textContent.trim() ?? '',
       facts: document.querySelector('.history .facts')?.textContent.trim() ?? '',
       audio: !!audio,
       kind: (audio?.src ?? '').split(':')[0],
       duration,
-      download: !!document.querySelector('.history a[download]'),
+      download: !!link,
+      heading: document.querySelector('.history .bar .heading')?.textContent.trim() ?? '',
+      barButtons: [...document.querySelectorAll('.history .bar button')].map((b) => b.textContent.trim()),
+      playerBorder: audio ? getComputedStyle(audio).borderTopWidth : '',
+      row,
       pairs: document.querySelectorAll('.history .pair').length,
       empty: document.querySelector('.history .transcript')?.textContent.trim() ?? '',
     }
@@ -1069,6 +1112,21 @@ async function scenario(cdp) {
     detail.pairs ? `${detail.pairs} sentences` : detail.empty,
   )
   record('with a link that hands out the note\u2019s own file', detail.download === true)
+  // Where the list has a small heading and no way back, the note has both: 返回
+  // to the list it was opened from, and a heading saying which screen this is.
+  record(
+    'a note is titled by its own small heading, with 返回 beside it',
+    detail.heading === '记录详情' && detail.barButtons.join('/') === '返回',
+    `“${detail.heading}” · buttons: ${detail.barButtons.join(' / ') || 'none'}`,
+  )
+  // One line: the player, and the button that keeps the file, dressed as the rest
+  // of the app's controls are.
+  record(
+    'the player and the download link sit on one row, the link to its right',
+    detail.row !== null && detail.row.centres <= 3 && detail.row.rightOf === true && detail.row.inside === true,
+    detail.row ? `${detail.row.centres.toFixed(1)} px apart vertically, link inside the window: ${detail.row.inside}` : 'no row',
+  )
+  record('and the player wears this app\u2019s frame like the controls beside it', detail.playerBorder === '2px', detail.playerBorder || 'no player')
   await cdp.shot('11-history-detail')
 
   const grabbed = readdirSync(DOWNLOADS).length
@@ -1076,6 +1134,19 @@ async function scenario(cdp) {
   await sleep(1200)
   const noteFile = readdirSync(DOWNLOADS).filter((name) => name.startsWith(stored.id))
   record('and that link downloads the recording the note holds', noteFile.length === 1, noteFile.join(', ') || `nothing matching ${stored.id} (had ${grabbed})`)
+  if (noteFile.length === 1) {
+    // The whole chain in one file: a fake microphone, a session, OPFS, and the
+    // bytes a user saved. This assertion used to run against the pause panel's own
+    // download button; that button is gone, so it runs where the file is actually
+    // asked for now.
+    const bytes = readFileSync(join(DOWNLOADS, noteFile[0]))
+    const declared = bytes.length >= 44 ? bytes.readUInt32LE(4) + 8 : 0
+    record(
+      'and the file is a WAV whose header covers the audio in it',
+      bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WAVE' && declared === bytes.length,
+      `${bytes.length} bytes, header says ${declared}`,
+    )
+  }
 
   // ------------------------------------------------------------------ rename
   const renamed = await cdp.eval(`
@@ -1090,7 +1161,7 @@ async function scenario(cdp) {
     save.click()
     await new Promise((r) => setTimeout(r, 700))
     const afterTitle = document.querySelector('.history h2')?.textContent.trim() ?? ''
-    const back = [...document.querySelectorAll('.history .bar button')].find((b) => b.textContent.trim().includes('返回列表'))
+    const back = [...document.querySelectorAll('.history .bar button')].find((b) => b.textContent.trim() === '返回')
     back.click()
     await new Promise((r) => setTimeout(r, 500))
     return { before, afterTitle, row: document.querySelector('.history .row')?.textContent.trim() ?? '' }
@@ -1185,8 +1256,8 @@ async function scenario(cdp) {
   await cdp.shot('08-drawer')
   record('the logo opens a drawer out of the left edge', drawer.open === true && drawer.scrim === true, `left ${drawer.left}`)
   record(
-    'holding the app itself, then the three destinations',
-    ['乔巴', '开始翻译', '历史记录', '设置'].every((name, index) => (drawer.rows?.[index] ?? '').includes(name)),
+    'holding the app itself, then the way home and the three destinations',
+    ['乔巴', '主页', '开始翻译', '历史记录', '设置'].every((name, index) => (drawer.rows?.[index] ?? '').includes(name)),
     (drawer.rows ?? []).join(' / '),
   )
   record(
@@ -1315,7 +1386,8 @@ async function scenario(cdp) {
     await new Promise((r) => setTimeout(r, 350))
     document.querySelector('.titlebar .brand').click()
     await new Promise((r) => setTimeout(r, 380))
-    document.querySelector('.drawer .row').click()
+    const row = [...document.querySelectorAll('.drawer .row')].find((b) => b.textContent.trim() === '主页')
+    row.click()
     await new Promise((r) => setTimeout(r, 500))
     return {
       start: !!document.querySelector('.start'),
@@ -1324,7 +1396,7 @@ async function scenario(cdp) {
     }
   `)
   record(
-    'the drawer\u2019s top row goes home, where the card counts what is left',
+    'the drawer\u2019s 主页 row goes home, where the card counts what is left',
     home.start === true && home.drawer === false && home.card.includes('还没有'),
     home.card,
   )
@@ -1376,6 +1448,406 @@ async function scenario(cdp) {
     'and what it replaced is in the history, titled from the date, the time and the place',
     replaced.rows.length === 1 && replaced.rows[0].includes('·') && replaced.badge === '新',
     `${replaced.rows[0] ?? 'no rows'} · badge “${replaced.badge}”`,
+  )
+
+  // ------------------------------------------------------------- the back key
+  /**
+   * The one control this whole walk has not pressed, and the one a phone has that
+   * a finger on the glass does not: the system's own back key. In a browser it is
+   * `history.back()`, on Android it is the gesture at the edge of the screen, and
+   * in an installed app it is both — same event, same stack.
+   *
+   * It is here because the list of notes deliberately carries no 返回 of its own:
+   * a *button* had to guess where the list was opened from, and the drawer's row
+   * opens it from wherever the user happens to be. A back key does not guess — it
+   * retraces the step that was actually taken, one step per press — and
+   * `lib/app/back.ts` is what keeps the browser's history in step with the app's
+   * own screens so that it can.
+   *
+   * Every check below reads `history.state.rc`: how many of the app's own entries
+   * the browser is standing on. One press of the back key takes exactly one of
+   * them away, which is the mechanism a screenshot cannot show — and a number that
+   * drifts upward over a walk like this one is a back key that would leave a user
+   * pressing it at nothing.
+   */
+  const backToTranscript = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    const before = depth()
+    history.back()
+    await new Promise((r) => setTimeout(r, 700))
+    return {
+      before,
+      after: depth(),
+      entries: history.length,
+      list: !!document.querySelector('.history'),
+      panels: !!document.querySelector('.panels'),
+      recording: !!document.querySelector('.record-btn.recording'),
+    }
+  `)
+  record(
+    'the back key takes the list back to the screen it was opened from, and the recording goes on',
+    backToTranscript.before === 1 &&
+      backToTranscript.after === 0 &&
+      backToTranscript.list === false &&
+      backToTranscript.panels === true &&
+      backToTranscript.recording === true,
+    `depth ${backToTranscript.before} → ${backToTranscript.after}, transcript back: ${backToTranscript.panels}, still recording: ${backToTranscript.recording}`,
+  )
+
+  const backFromNote = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    document.querySelector('.titlebar .brand').click()
+    await new Promise((r) => setTimeout(r, 400))
+    const notes = [...document.querySelectorAll('.drawer .row')].find((b) => b.textContent.trim() === '历史记录')
+    notes.click()
+    await new Promise((r) => setTimeout(r, 900))
+    document.querySelector('.history .row').click()
+    await new Promise((r) => setTimeout(r, 1300))
+    const opened = depth()
+    const played = !!document.querySelector('.history audio')
+    history.back()
+    await new Promise((r) => setTimeout(r, 700))
+    return {
+      opened,
+      played,
+      after: depth(),
+      rows: document.querySelectorAll('.history .row').length,
+      audio: !!document.querySelector('.history audio'),
+      heading: document.querySelector('.history .bar .heading')?.textContent.trim() ?? '',
+    }
+  `)
+  record(
+    'a back key over a note closes the note and not the app',
+    backFromNote.opened === 2 &&
+      backFromNote.played === true &&
+      backFromNote.after === 1 &&
+      backFromNote.rows === 1 &&
+      backFromNote.audio === false &&
+      backFromNote.heading === '历史记录',
+    `depth 2 → ${backFromNote.after}, ${backFromNote.rows} row left, heading “${backFromNote.heading}”`,
+  )
+
+  const backFromDrawer = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    document.querySelector('.titlebar .brand').click()
+    await new Promise((r) => setTimeout(r, 400))
+    const before = depth()
+    history.back()
+    await new Promise((r) => setTimeout(r, 700))
+    return {
+      before,
+      after: depth(),
+      drawer: !!document.querySelector('.drawer'),
+      scrim: !!document.querySelector('.scrim'),
+      list: !!document.querySelector('.history'),
+    }
+  `)
+  record(
+    'a back key with the drawer open shuts the drawer, and the screen under it does not move',
+    backFromDrawer.before === 2 &&
+      backFromDrawer.after === 1 &&
+      backFromDrawer.drawer === false &&
+      backFromDrawer.scrim === false &&
+      backFromDrawer.list === true,
+    `depth ${backFromDrawer.before} → ${backFromDrawer.after}, drawer: ${backFromDrawer.drawer}, list still up: ${backFromDrawer.list}`,
+  )
+
+  const backFromDialog = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    document.querySelector('.history .row').click()
+    await new Promise((r) => setTimeout(r, 1300))
+    const rename = [...document.querySelectorAll('.history .row-actions button')].find((b) => b.textContent.trim() === '重命名')
+    rename.click()
+    await new Promise((r) => setTimeout(r, 450))
+    const before = depth()
+    const dialog = !!document.querySelector('.modal')
+    history.back()
+    await new Promise((r) => setTimeout(r, 700))
+    return {
+      before,
+      dialog,
+      after: depth(),
+      modal: !!document.querySelector('.modal'),
+      note: !!document.querySelector('.history audio'),
+    }
+  `)
+  record(
+    'and one press closes one thing: the dialog goes and the note behind it stays',
+    backFromDialog.before === 3 &&
+      backFromDialog.dialog === true &&
+      backFromDialog.after === 2 &&
+      backFromDialog.modal === false &&
+      backFromDialog.note === true,
+    `depth ${backFromDialog.before} → ${backFromDialog.after}, dialog: ${backFromDialog.modal}, note still open: ${backFromDialog.note}`,
+  )
+
+  const ownReturn = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    const back = [...document.querySelectorAll('.history .bar button')].find((b) => b.textContent.trim() === '返回')
+    back.click()
+    await new Promise((r) => setTimeout(r, 800))
+    return { after: depth(), rows: document.querySelectorAll('.history .row').length, audio: !!document.querySelector('.history audio') }
+  `)
+  record(
+    'and the app\u2019s own 返回 hands its entry back, so the next press has nothing stale to land on',
+    ownReturn.after === 1 && ownReturn.rows === 1 && ownReturn.audio === false,
+    `depth back to ${ownReturn.after} with no press of its own`,
+  )
+
+  const nothingStale = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    const before = depth()
+    document.querySelector('.titlebar .brand').click()
+    await new Promise((r) => setTimeout(r, 400))
+    const row = [...document.querySelectorAll('.drawer .row')].find((b) => b.textContent.trim() === '开始翻译')
+    row.click()
+    await new Promise((r) => setTimeout(r, 900))
+    return {
+      before,
+      after: depth(),
+      entries: history.length,
+      drawer: !!document.querySelector('.drawer'),
+      list: !!document.querySelector('.history'),
+      panels: !!document.querySelector('.panels'),
+    }
+  `)
+  record(
+    'and leaving the list through the drawer leaves nothing of the app behind in the history',
+    nothingStale.before === 1 &&
+      nothingStale.after === 0 &&
+      nothingStale.drawer === false &&
+      nothingStale.list === false &&
+      nothingStale.panels === true,
+    `depth ${nothingStale.before} → ${nothingStale.after} while the drawer shut and the list was left`,
+  )
+
+  // --------------------------------------------------------------- 各自的网址
+  /**
+   * Every screen has an address of its own (`lib/app/route.ts`), and this is that
+   * claim checked from outside the app rather than from inside it: the bar after
+   * walking into a screen by hand, a page *opened* at an address — which is all a
+   * link from somewhere else is, and all a Home Screen shortcut is — a refresh on
+   * one, and an address that names nothing that exists.
+   *
+   * None of it can be seen in a screenshot, so every check here reads
+   * `location.hash` beside the screen it is supposed to name. What makes this
+   * section possible at all is the depth assertion from the one above it: an
+   * address is only right if the screen it names is the screen the app is on, and
+   * the app's own entry is what a fresh page has to build for it (`back.ts`,
+   * `labelBase`).
+   */
+  const addressed = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    const heading = () => document.querySelector('.history .bar .heading')?.textContent.trim() ?? ''
+    document.querySelector('.titlebar .brand').click()
+    await new Promise((r) => setTimeout(r, 400))
+    const notes = [...document.querySelectorAll('.drawer .row')].find((b) => b.textContent.trim() === '历史记录')
+    notes.click()
+    await new Promise((r) => setTimeout(r, 900))
+    const list = { hash: location.hash, depth: depth(), heading: heading() }
+    document.querySelector('.history .row').click()
+    await new Promise((r) => setTimeout(r, 1500))
+    const note = {
+      hash: location.hash,
+      depth: depth(),
+      title: document.querySelector('.history .detail h2')?.textContent.trim() ?? '',
+      title2: document.title,
+    }
+    history.back()
+    await new Promise((r) => setTimeout(r, 800))
+    const back = { hash: location.hash, depth: depth(), heading: heading() }
+    return { list, note, back }
+  `)
+  record(
+    'walking into the notes and into a note writes each screen into the address bar',
+    addressed.list.hash === '#/history' &&
+      addressed.list.depth === 1 &&
+      addressed.list.heading === '历史记录' &&
+      /^#\/history\/[0-9a-z-]+$/i.test(addressed.note.hash) &&
+      addressed.note.depth === 2 &&
+      addressed.note.title.length > 0 &&
+      addressed.back.hash === '#/history' &&
+      addressed.back.depth === 1 &&
+      addressed.back.heading === '历史记录',
+    `${addressed.list.hash} (${addressed.list.depth}) → ${addressed.note.hash} (${addressed.note.depth}) → ${addressed.back.hash} (${addressed.back.depth})`,
+  )
+
+  // A page opened *at* the note's address: what a link pasted into a browser, a
+  // bookmark, or a shortcut on a phone's home screen does. Nothing of the walk so
+  // far exists in this page — it is a fresh document — so the note has to come out
+  // of storage and the screen out of the address alone.
+  //
+  // The `?from=link` is what makes this a *document* and not a fragment change in
+  // the page that is already open (a fragment change is the next check but one,
+  // and it is a different path through `back.ts`). The app keeps the query on every
+  // entry it pushes (`urlFor`), so the address under test is still the fragment.
+  await cdp.send('Page.navigate', { url: `${BASE}/?from=link${addressed.note.hash}` })
+  await cdp.waitFor(`return !!document.querySelector('.history .detail h2')`, {
+    label: 'the note, opened from its own address',
+  })
+  const linked = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    return {
+      hash: location.hash,
+      depth: depth(),
+      title: document.querySelector('.history .detail h2')?.textContent.trim() ?? '',
+      title2: document.title,
+      audio: !!document.querySelector('.history audio'),
+    }
+  `)
+  record(
+    'opening a link to a note lands on that note, in a page that never saw the list',
+    linked.hash === addressed.note.hash &&
+      linked.depth === 2 &&
+      linked.title === addressed.note.title &&
+      linked.title2.startsWith('记录详情') &&
+      linked.audio === true,
+    `${linked.hash} (depth ${linked.depth}), “${linked.title}”, tab “${linked.title2}”`,
+  )
+  await cdp.shot('13-note-from-its-address')
+
+  // A refresh is the same question asked twice: the address has to survive the
+  // page it names being thrown away and built again, `history.state` included.
+  await cdp.send('Page.reload')
+  await cdp.waitFor(`return !!document.querySelector('.history .detail h2')`, { label: 'the note, after a refresh' })
+  const refreshed = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    return {
+      hash: location.hash,
+      depth: depth(),
+      title: document.querySelector('.history .detail h2')?.textContent.trim() ?? '',
+      title2: document.title,
+    }
+  `)
+  record(
+    'and a refresh on it comes back to the same note, not to the app\u2019s first screen',
+    refreshed.hash === addressed.note.hash &&
+      refreshed.depth === 2 &&
+      refreshed.title === addressed.note.title &&
+      refreshed.title2.startsWith('记录详情'),
+    `${refreshed.hash} (depth ${refreshed.depth}), “${refreshed.title}”`,
+  )
+
+  // And out again, one press at a time: the note, the list it came from, and home —
+  // the order the app's own entries give, which is what makes a link behave like a
+  // walk that started at the start page.
+  const deepBack = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    history.back()
+    await new Promise((r) => setTimeout(r, 800))
+    const first = {
+      hash: location.hash,
+      depth: depth(),
+      heading: document.querySelector('.history .bar .heading')?.textContent.trim() ?? '',
+      audio: !!document.querySelector('.history audio'),
+    }
+    history.back()
+    await new Promise((r) => setTimeout(r, 900))
+    const second = {
+      hash: location.hash,
+      depth: depth(),
+      start: !!document.querySelector('.start'),
+      title: document.title,
+    }
+    return { first, second }
+  `)
+  record(
+    'and the back key walks a link back out the way it came: the list, then home',
+    deepBack.first.hash === '#/history' &&
+      deepBack.first.depth === 1 &&
+      deepBack.first.heading === '历史记录' &&
+      deepBack.first.audio === false &&
+      deepBack.second.hash === '' &&
+      deepBack.second.depth === 0 &&
+      deepBack.second.start === true,
+    `${deepBack.first.hash} (${deepBack.first.depth}) → “${deepBack.second.hash || 'no fragment'}” (${deepBack.second.depth})`,
+  )
+
+  // An address for a note that is not there any more. It has to end up *somewhere*:
+  // a link that was true when it was sent and is not true now is not a reason to
+  // show a screen with nothing on it, and the list is the address's own way out.
+  await cdp.send('Page.navigate', { url: `${BASE}/#/history/19700101-000000-0000` })
+  await cdp.waitFor(`return location.hash === '#/history'`, { label: 'the list, out of a note that is gone' })
+  const gone = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    return {
+      hash: location.hash,
+      depth: depth(),
+      heading: document.querySelector('.history .bar .heading')?.textContent.trim() ?? '',
+      rows: document.querySelectorAll('.history .row').length,
+    }
+  `)
+  record(
+    'an address for a note that no longer exists lands on the list',
+    gone.hash === '#/history' && gone.depth === 1 && gone.heading === '历史记录' && gone.rows >= 1,
+    `${gone.hash} (depth ${gone.depth}), ${gone.rows} row(s), heading “${gone.heading}”`,
+  )
+
+  // An address the app has never heard of: home, with the bar put right. The
+  // rewrite is the point — a mistyped address that stayed in the bar would be
+  // copied into the next link somebody sends.
+  await cdp.send('Page.navigate', { url: `${BASE}/#nonsense` })
+  await cdp.waitFor(`return !!document.querySelector('.start') && location.hash === ''`, {
+    label: 'home, out of an address the app does not know',
+  })
+  const nonsense = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    return { hash: location.hash, depth: depth(), start: !!document.querySelector('.start') }
+  `)
+  record(
+    'and an address the app does not recognise is the home screen, with the bar put right',
+    nonsense.hash === '' && nonsense.depth === 0 && nonsense.start === true,
+    `“${nonsense.hash || 'no fragment'}” (depth ${nonsense.depth}), start page ${nonsense.start}`,
+  )
+
+  // The one way in that is not a link at all: an address typed into the bar of a
+  // page that is already open. It is a same-document navigation (`hashchange`),
+  // which no press of the back key ever produces — so this is the check that the
+  // two halves of `route.ts` agree when nothing but the address has changed.
+  const typed = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    location.hash = '#/settings'
+    await new Promise((r) => setTimeout(r, 900))
+    const settings = {
+      hash: location.hash,
+      depth: depth(),
+      headings: document.querySelectorAll('.settings h2').length,
+      title: document.title,
+    }
+    location.hash = '#/history'
+    await new Promise((r) => setTimeout(r, 900))
+    const list = {
+      hash: location.hash,
+      depth: depth(),
+      heading: document.querySelector('.history .bar .heading')?.textContent.trim() ?? '',
+      rows: document.querySelectorAll('.history .row').length,
+    }
+    return { settings, list }
+  `)
+  record(
+    'an address typed into the bar of the open page goes to that screen too',
+    typed.settings.hash === '#/settings' &&
+      typed.settings.depth === 1 &&
+      typed.settings.headings > 0 &&
+      typed.settings.title.startsWith('设置') &&
+      typed.list.hash === '#/history' &&
+      typed.list.heading === '历史记录' &&
+      typed.list.rows >= 1,
+    `#/settings (${typed.settings.depth}, “${typed.settings.title}”) → #/history (${typed.list.rows} row(s))`,
+  )
+
+  // Last, the plain address again: everything above ends with the app still able to
+  // open the way it always did, with no fragment to interpret.
+  await cdp.send('Page.navigate', { url: `${BASE}/` })
+  await cdp.waitFor(`return !!document.querySelector('.start')`, { label: 'the start page, at the plain address' })
+  const plain = await cdp.eval(`
+    const depth = () => (history.state && typeof history.state.rc === 'number' ? history.state.rc : 0)
+    return { hash: location.hash, depth: depth(), start: !!document.querySelector('.start'), title: document.title }
+  `)
+  record(
+    'and the app opens at its plain address exactly as it did before addresses existed',
+    plain.hash === '' && plain.depth === 0 && plain.start === true && plain.title === '乔巴 · 录音笔记',
+    `“${plain.hash || 'no fragment'}” (depth ${plain.depth}), title “${plain.title}”`,
   )
 }
 

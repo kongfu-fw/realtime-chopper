@@ -19,9 +19,21 @@
    */
   interface Props {
     zoom?: number
+    /**
+     * Whether this copy of the clock offers the recording as a file.
+     *
+     * True in the header, false on the pause panel. The panel is drawn between a
+     * stop and a decision, and it already answers "what happens to this note"
+     * three ways (see `PausePanel`); a fourth, unlabelled icon that downloads the
+     * WAV *in addition* to filing it was a second meaning for the same recording,
+     * sitting in the middle of the row the user is reading to decide. The file is
+     * still one tap away — the header keeps it, and the note itself carries it
+     * once filed.
+     */
+    showDownload?: boolean
   }
 
-  let { zoom = 1 }: Props = $props()
+  let { zoom = 1, showDownload = true }: Props = $props()
 
   const { state: sessionState, level, recording } = session
 
@@ -146,7 +158,8 @@
  * hearing me?), the download (can I keep it?) and the time (how long has this been
  * going?). The download sits *between* the other two — where it belongs in the
  * reading order, and where it is a button the eye passes on its way from the sound
- * to the number rather than one it has to go looking for.
+ * to the number rather than one it has to go looking for. Where it is not wanted at
+ * all (`showDownload`), the row is simply two things.
  *
  * The time is the only thing in this row with a fixed width, and the other two are
  * what move around it: the voiceprint's bars breathe without changing their box,
@@ -180,19 +193,23 @@
     <i></i><i></i><i></i><i></i><i></i>
   </div>
 
-  <!-- The reserved download slot; see the note above. -->
-  <div class="slot">
-    {#if canDownload}
-      <button
-        class="dl"
-        title={tr('下载录音')}
-        aria-label={tr('下载录音')}
-        onclick={() => void session.exportRecording()}
-      >
-        <Glyph name="download" size={13} />
-      </button>
-    {/if}
-  </div>
+  <!-- The reserved download slot; see the note above. Left out entirely on a copy
+       that does not offer the file (the pause panel), so nothing is reserved for a
+       button that cannot appear. -->
+  {#if showDownload}
+    <div class="slot">
+      {#if canDownload}
+        <button
+          class="dl"
+          title={tr('下载录音')}
+          aria-label={tr('下载录音')}
+          onclick={() => void session.exportRecording()}
+        >
+          <Glyph name="download" size={13} />
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   <!--
     * The time, as blocks. `role="img"` with the time in `aria-label` is the way a

@@ -8,6 +8,7 @@
     selfCheckReport,
     copyText,
   } from '../lib/app/state'
+  import { openBackLayer } from '../lib/app/back'
   import {
     entries,
     clearLogs,
@@ -63,6 +64,16 @@
   function close() {
     logOpen.set(false)
   }
+
+  /**
+   * The log drawer is a layer of the app's own back stack while it is open — see
+   * `back.ts`. `close` is what the ✕, the scrim and the retry button already call,
+   * so the back gesture is not a fourth way out with a mind of its own.
+   */
+  $effect(() => {
+    if (!$logOpen) return
+    return openBackLayer(close)
+  })
 
   /**
    * The one copy affordance, shared by the toolbar and every entry.

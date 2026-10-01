@@ -141,6 +141,7 @@ export const KO_SHELL: Record<string, string> = {
   // ── Modal.svelte ──────────────────────────────────────────────────────────
   '点遮罩': '배경을 눌렀습니다',
   '按 Esc': 'Esc를 눌렀습니다',
+  '按返回键': '뒤로 가기를 눌렀습니다',
 
   // ── ModelInstallModal.svelte ──────────────────────────────────────────────
   'iPhone 内存比较紧：先关掉其他 App 再试；英文（62 MB）和手机上的韩语（64 MB）模块都比中文模块轻得多。':
@@ -381,6 +382,7 @@ export const KO_SHELL: Record<string, string> = {
 
   // ── NavDrawer.svelte ──────────────────────────────────────────────────────
   '导航': '메뉴',
+  '主页': '홈',
   '开始翻译': '번역 시작',
   '版本 {version}': '버전 {version}',
   '关于': '정보',
@@ -405,7 +407,7 @@ export const KO_SHELL: Record<string, string> = {
   '来源': '출처',
 
   // ── HistoryView.svelte, and the notes behind it ──────────────────────────
-  '← 返回列表': '← 목록으로',
+  '记录详情': '기록 상세',
   '共 {n} 条 · {size}': '모두 {n}개 · {size}',
   '选择': '선택',
   '新': '새',

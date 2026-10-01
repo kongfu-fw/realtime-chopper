@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { fade } from 'svelte/transition'
   import { get } from 'svelte/store'
   import TitleBar from './components/TitleBar.svelte'
@@ -23,7 +23,10 @@
     headphonePrompt,
     installLang,
     acknowledgeHeadphones,
+    openNote,
+    type View,
   } from './lib/app/state'
+  import { armBackNavigation } from './lib/app/back'
   import { getSettings, forgetModel, settings } from './lib/store/settings'
   import { loadHistory } from './lib/history/store'
   import { applyAppIcon } from './lib/brand/apply'
@@ -56,6 +59,28 @@
   // the language as it is right now, which is what the log lines want (they are
   // written once, and never re-rendered).
   const tr = $derived(translator($uiLang))
+
+  /**
+   * The system's own back gesture and the app's addresses, armed once for the life
+   * of the page (`lib/app/back.ts`).
+   *
+   * Armed *here*, in the component's own setup, and not in `onMount` below — which
+   * is entirely a question of order, and the order is the whole of it. Svelte runs
+   * a child component's effects before its parent's `onMount`, and a screen the
+   * app was *opened at* — a link to a note, a refresh on one — registers its layer
+   * from the component that draws it: `HistoryView`, during its own mount. Arming
+   * later would put the note's layer in the stack before the list's, which is the
+   * wrong order for every question this stack answers: the two entries came out
+   * labelled with each other's addresses, and a back press closed the list from
+   * under the note instead of the note itself. Measured here, before this moved:
+   * a page opened at `#/history/<id>` pushed `#/history/<id>` and then `#/history`,
+   * and a press landed on the start page.
+   *
+   * Everything below this line is a screen or an overlay over one, so being first
+   * is all it takes.
+   */
+  const disarmBack = armBackNavigation()
+  onDestroy(disarmBack)
 
   const { lines: linesStore, state: sessionState, notice } = session
   const lines = $derived($linesStore)
@@ -102,13 +127,39 @@
   )
   const swap = $derived({ duration: reducedMotion ? 0 : 260 })
 
+  /**
+   * What the document is called: the screen's own name, then the app's.
+   *
+   * Home is the app's name alone — there is nothing to add to it — and a note says
+   * 记录详情 rather than the note's own title on purpose: a title is read before
+   * anything behind it has finished loading (a tab strip draws from it while the
+   * note is still coming out of storage), and one that flickered from the app's
+   * name to a lecture's and back would be worse than one that simply says which
+   * screen this is.
+   */
+  function screenTitle(screen: View, note: boolean): string {
+    const name =
+      screen === 'settings'
+        ? t('设置')
+        : screen === 'history'
+          ? t(note ? '记录详情' : '历史记录')
+          : ''
+    return name ? `${name} · ${appTitle()}` : appTitle()
+  }
+
   // The interface language follows the setting, and `auto` follows the browser.
   //
   // The window title and the manifest are re-applied here too, and not only when
   // the icon changes: both carry text, and text follows the language.
+  //
+  // The title also carries the *screen*, which is the half a tab strip or a window
+  // list needs: four of these open and "乔巴 · 录音笔记" four times says nothing about
+  // which is which. It is the other half of the same idea as the address
+  // (`route.ts`) — a screen that can be linked to is a screen that can be named —
+  // and the two cannot drift apart, because both are read from these same stores.
   $effect(() => {
     setUiLang(effectiveLang($settings.uiLang))
-    document.title = appTitle()
+    document.title = screenTitle($view, $openNote !== null)
     applyAppIcon($settings.appIcon)
   })
 
@@ -577,8 +628,11 @@
   <!--
    * No footer on the history screen: the recording button and the read-aloud
    * switch are both about a session, and a phone's thumb corners are the last
-   * place a button that does nothing belongs. The way out is the screen's own
-   * 返回, at the top, where lists put it.
+   * place a button that does nothing belongs. The way out is the drawer, behind
+   * the logo in the header the notes screen shares with every other one — the
+   * list itself carries no 返回 (see `HistoryView`), and the phone's own back key
+   * is what leaves it (`lib/app/back.ts`), while a note's own screen carries a
+   * 返回 back to the list.
    -->
   {#if $view !== 'history'}
     <footer>

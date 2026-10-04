@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { session } from '../lib/app/state'
   import {
     settings,
     setSetting,
@@ -31,23 +30,18 @@
   let { which }: Props = $props()
 
   /**
-   * Switching the source language is switching the recogniser.
+   * Switching the source language does not switch recognisers any more.
    *
-   * Every language has its own module now, so this is always a module switch —
-   * and one model at a time is the memory budget: drop the old engine before the
-   * new language's module is requested. This used to be conditional. Korean rode
-   * on the Chinese module, so zh → ko had to leave the engine alone rather than
-   * throw away the very bytes that answer Korean. With a Korean module of its own
-   * that reasoning is gone, and leaving the deleted condition behind would have
-   * kept a model that can no longer answer the chosen language.
+   * There is one module and it is multilingual, deciding the language of each
+   * utterance itself (`asr/models.ts`), so the engine that answered the old
+   * language answers the new one — nothing to release, nothing to load. This used
+   * to drop the resident model here, which was right when each language had bytes
+   * of its own and two models must never be resident at once.
    */
-  async function changeSource(lang: SourceLang) {
+  function changeSource(lang: SourceLang) {
     if (lang === $settings.sourceLang) return
     setSetting('sourceLang', lang)
-    await session.releaseModel()
-    info('ui', t('识别语言切换为{lang}', { lang: langLabel(lang) }), {
-      note: t('下次开始录音时会加载对应模块'),
-    })
+    info('ui', t('识别语言切换为{lang}', { lang: langLabel(lang) }))
   }
 
   /**

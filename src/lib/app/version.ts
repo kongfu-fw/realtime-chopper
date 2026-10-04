@@ -22,4 +22,4 @@
  * - the startup line in the log drawer, the first line of every copied log, and
  *   the head of the diagnostic report that a phone can send.
  */
-export const APP_VERSION = '20261001.7'
+export const APP_VERSION = '20261004'

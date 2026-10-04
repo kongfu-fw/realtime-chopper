@@ -75,8 +75,25 @@ export const EN_CORE: Record<string, string> = {
   '中韩识别模块（SenseVoice Small int8）':
     'Chinese recognition module (SenseVoice Small int8)',
   '英文识别模块（Parakeet，已移除）': 'English recognition module (Parakeet, removed)',
-  '这个设备内存不够装这个模块：关掉其他应用，或先装英文模块':
-    'This device does not have memory for this module: close other apps, or install the English module first',
+  // The live module and the names retired with this round's change: every language
+  // now resolves to SenseVoice, and the Moonshine downloads and the Korean network
+  // service are only mentioned by leftover crash notes and install records.
+  '识别模块（SenseVoice Small int8）': 'Recognition module (SenseVoice Small int8)',
+  'SenseVoice · 中英韩日粤': 'SenseVoice · zh/en/ko/ja/yue',
+  '英文识别模块（Moonshine，已移除）': 'English recognition module (Moonshine, removed)',
+  '韩语识别模块（Moonshine，已移除）': 'Korean recognition module (Moonshine, removed)',
+  '韩语识别服务（koasr，已移除）': 'Korean recognition service (koasr, removed)',
+  '这个设备内存不够装这个模块：关掉其他应用再试一次':
+    'This device does not have enough memory for the module — close other apps and try again',
+  '约 {mb} MB': 'about {mb} MB',
+  // The refusal an Apple-mobile page gets before the download starts, and the
+  // report line that names the one recogniser left. Both carry the same two facts:
+  // what the model costs, and that a phone cannot pay it.
+  '{module}在这台设备上装不下：iOS 给网页的内存放不下 {size} 的模型（实测几百 MB 就会把整个页面关掉）。识别只能在电脑上使用。':
+    '{module} does not fit on this device: iOS hands a web page less memory than a {size} model needs (measured: a few hundred MB is enough for the whole page to be closed). Recognition is available on a computer only.',
+  '识别模块：{module}（{lang} 源）': 'Recognition module: {module} (source {lang})',
+  '可用配额约 {quota} GB，已用 {used} MB · 识别模块约 230 MB':
+    'About {quota} GB of quota, {used} MB used · the recognition module is about 230 MB',
   '下载中断了，检查网络后重试': 'The download was interrupted — check the network and try again',
   '下载被拒绝，换个网络重试': 'The download was refused — try a different network',
   '找不到模块文件，可能需要更新版本': 'The module files were not found — the app may need an update',

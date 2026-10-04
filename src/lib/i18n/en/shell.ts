@@ -146,12 +146,10 @@ export const EN_SHELL: Record<string, string> = {
   '按返回键': 'pressed the back key',
 
   // ── ModelInstallModal.svelte ──────────────────────────────────────────────
-  'iPhone 内存比较紧：先关掉其他 App 再试；英文（62 MB）和手机上的韩语（64 MB）模块都比中文模块轻得多。':
-    'iPhones are tight on memory: close the other apps and try again. The English (62 MB) and the phone-only Korean (64 MB) modules are both far lighter than the Chinese one.',
-  'iPhone 上装不下：iOS 给一个网页的内存比电脑少一个数量级（实测：几百 MB 就会把整页关掉），这个模块的模型文件本身就有 {size}。手机上用英文和韩语（韩语会自动换用更小的 Moonshine 模块），中文留给电脑。':
-    'Does not fit on an iPhone: iOS gives a web page an order of magnitude less memory than a computer — a few hundred MB is measured to be enough to kill the whole page — and this module’s model file alone is {size}. On a phone use English and Korean (Korean switches itself to the smaller Moonshine module); keep Chinese for a computer.',
-  '内存不够：关掉其他应用，或换用更小的模块（英文 62 MB、手机上的韩语 64 MB）。':
-    'Not enough memory: close other apps, or switch to a smaller module (English 62 MB, the phone-only Korean 64 MB).',
+  'iPhone / iPad 上装不下：iOS 给一个网页的内存比电脑少一个数量级（实测：几百 MB 就会把整页关掉），这个模块的模型文件本身就有 {size}。识别只能在电脑上使用。':
+    'Does not fit on an iPhone / iPad: iOS gives a web page an order of magnitude less memory than a computer (measured: a few hundred MB is enough to close the whole page), and this module’s model file alone is {size}. Recognition is available on a computer only.',
+  '内存不够：先关掉其他应用再试。识别模型约 230 MB，需要浏览器腾出足够的空间。':
+    'Out of memory: close other apps and try again. The recognition model is about 230 MB, and the browser needs that much room.',
   '识别模块安装失败': 'Installing the recognition module failed',
   '开始安装识别模块：{module}': 'Installing the recognition module: {module}',
   '设备': 'Device',
@@ -227,9 +225,8 @@ export const EN_SHELL: Record<string, string> = {
   // '已安装' is defined with the install dialog's strings above.
   '清除': 'Clear',
   '未安装': 'Not installed',
-  '中文和韩语共用 SenseVoice；英文和手机上的韩语用 Moonshine（更小、约 64 MB）；同时只驻留一个。':
-    'Chinese and Korean share SenseVoice; English and Korean-on-a-phone use Moonshine (smaller, about 64 MB). Only one is resident at a time.',
-  '手机上使用': 'phones only',
+  '所有语言都使用同一个 SenseVoice 模型（中英韩日粤）；一次只驻留一个模块，iPhone / iPad 上装不下。':
+    'Every language uses the same SenseVoice model (Chinese, English, Korean, Japanese, Cantonese); one module is resident at a time, and it does not fit on an iPhone / iPad.',
   // The network recogniser's rows. The two long ones are the ones that matter:
   // they are where a user finds out that the service needs a machine switched on,
   // and that an http address cannot be called from an https page.

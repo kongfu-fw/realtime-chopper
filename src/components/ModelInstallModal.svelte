@@ -5,30 +5,25 @@
     ASR_MODULES,
     MODULE_IDS,
     isMemoryFailure,
-    moduleIdFor,
     moduleLabel,
     moduleTitle,
     moduleTooBigForDevice,
-    moduleUsedOnThisDevice,
   } from '../lib/asr/models'
   import { formatBytes, markModelInstalled, isModuleCurrent, settings } from '../lib/store/settings'
   import { info } from '../lib/log/store'
   import { diagnosticReport } from '../lib/diag'
-  import { isAppleMobile } from '../lib/asr/device'
   import { t, translator, uiLang } from '../lib/i18n/index.ts'
-  import type { Lang, ModuleId } from '../lib/types'
+  import type { ModuleId } from '../lib/types'
 
   const tr = $derived(translator($uiLang))
 
   interface Props {
-    /** The language the user was trying to use, so we know where to continue. */
-    want: Lang
     ondone: () => void
     /** Carries how the dialog was dismissed, so the log can name it. */
     oncancel: (reason: string) => void
   }
 
-  let { want, ondone, oncancel }: Props = $props()
+  let { ondone, oncancel }: Props = $props()
 
   const { model, failure } = session
   let downloading = $state<ModuleId | null>(null)
@@ -49,20 +44,16 @@
   /**
    * The one failure with a fix the user can apply themselves.
    *
-   * The 228 MB Chinese module is past what iOS will hand a web page, so "out of
-   * memory" there is an expected outcome rather than a bug — and the advice differs
-   * by platform, which is why this is not part of the sentence above. The sizes in
-   * it are the other two modules' own: a phone is *known* to manage the English
-   * one (the log of an iPhone 12 that lost its page to the Chinese module shows the
-   * English one loading on the same device minutes earlier) and the Korean one is
-   * smaller than either of the others' arrival cost, which is why it is named as a
-   * candidate rather than promised to fit.
+   * There used to be advice here about switching to a smaller module, and that
+   * advice is gone with the smaller modules (`asr/models.ts`): the recognition
+   * download is a single 228 MB model, so the only levers left are closing other
+   * applications and having enough room to hold it. Phones never reach this
+   * sentence — they are refused before the download starts, in words, by
+   * `moduleTooBigForDevice`.
    */
   const memoryHint = $derived(
     rawError && isMemoryFailure(rawError)
-      ? isAppleMobile()
-        ? tr('iPhone 内存比较紧：先关掉其他 App 再试；英文（62 MB）和手机上的韩语（64 MB）模块都比中文模块轻得多。')
-        : tr('内存不够：关掉其他应用，或换用更小的模块（英文 62 MB、手机上的韩语 64 MB）。')
+      ? tr('内存不够：先关掉其他应用再试。识别模型约 230 MB，需要浏览器腾出足够的空间。')
       : '',
   )
 
@@ -94,19 +85,19 @@
   /**
    * Bytes are downloaded at 100 %, but the engine is not ready.
    *
-   * Building the session (ONNX/WebGPU) or unpacking the runtime is seconds of
-   * real work that reports no numbers at all, and a bar sitting at 100 % with
-   * nothing else happening is exactly what "it froze" looks like. This flag is
-   * what turns that silence into a sentence.
+   * Building the session (or unpacking the runtime) is seconds of real work that
+   * reports no numbers at all, and a bar sitting at 100 % with nothing else
+   * happening is exactly what "it froze" looks like. This flag is what turns that
+   * silence into a sentence.
    */
   const starting = $derived(percent !== null && percent >= 100)
 
   /**
-   * Installs one module.
+   * Installs the module.
    *
    * The argument is a module rather than a language because those are different
-   * things even now that they line up: this dialog offers the *bytes*, and the
-   * question of which language those bytes answer is `moduleIdFor`'s.
+   * things even now that there is one of each — this dialog offers the *bytes*,
+   * and the question of which language those bytes answer is `moduleIdFor`'s.
    */
   async function download(module: ModuleId) {
     downloading = module
@@ -116,19 +107,12 @@
     try {
       info('storage', t('开始安装识别模块：{module}', { module: moduleLabel(ASR_MODULES[module]) }), {
         [t('设备')]: navigator.userAgent,
-        [t('显卡加速')]: 'gpu' in navigator ? t('浏览器有 WebGPU') : t('没有 WebGPU，走 CPU'),
       })
       await session.prepare(module)
       // Only reachable once the module is genuinely usable — `prepare` no longer
       // resolves on "the request was sent".
       markModelInstalled(module, ASR_MODULES[module].approxBytes, ASR_MODULES[module].version)
-      if (moduleIdFor(want) === module) {
-        ondone()
-        return
-      }
-      // A different module was installed: free the engine so only the module in
-      // use is ever resident in memory.
-      await session.releaseModel()
+      ondone()
     } catch (err) {
       error = err instanceof Error ? err.message : String(err)
     } finally {
@@ -141,14 +125,6 @@
   {#each MODULE_IDS as key (key)}
     <div class="module">
       <span class="name">{moduleTitle(key, $uiLang)}</span>
-      <!--
-        A module this device will never load has to say so, or the row reads as
-        "install this and Korean works" when the app has already routed Korean
-        elsewhere. See `moduleUsedOnThisDevice`.
-      -->
-      {#if !moduleUsedOnThisDevice(key)}
-        <span class="size">{tr('手机上使用')}</span>
-      {/if}
 
       <span class="spacer"></span>
 
@@ -161,7 +137,7 @@
         <span class="size">{tr('约 {size}', { size: formatBytes(ASR_MODULES[key].approxBytes) })}</span>
         <button
           class="rc-btn small accent"
-          disabled={downloading !== null}
+          disabled={downloading !== null || moduleTooBigForDevice(ASR_MODULES[key])}
           onclick={() => void download(key)}
         >
           {tr('下载')}
@@ -172,11 +148,13 @@
     <!--
       Said *before* the tap, because the tap is what costs the page: a module past
       what this device can hold dies by killing the whole renderer — silently, with
-      nothing to catch and no error to show afterwards. See `moduleTooBigForDevice`.
+      nothing to catch and no error to show afterwards. The button above is disabled
+      for the same reason; `prepare` refuses this combination again, for the path
+      that reaches it without asking this dialog. See `moduleTooBigForDevice`.
     -->
     {#if moduleTooBigForDevice(ASR_MODULES[key]) && !isModuleCurrent(key, $settings.installedModels[key])}
       <p class="warn">
-        {tr('iPhone 上装不下：iOS 给一个网页的内存比电脑少一个数量级（实测：几百 MB 就会把整页关掉），这个模块的模型文件本身就有 {size}。手机上用英文和韩语（韩语会自动换用更小的 Moonshine 模块），中文留给电脑。', {
+        {tr('iPhone / iPad 上装不下：iOS 给一个网页的内存比电脑少一个数量级（实测：几百 MB 就会把整页关掉），这个模块的模型文件本身就有 {size}。识别只能在电脑上使用。', {
           size: formatBytes(ASR_MODULES[key].approxBytes),
         })}
       </p>

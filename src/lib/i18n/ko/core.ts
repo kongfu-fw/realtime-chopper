@@ -63,8 +63,24 @@ export const KO_CORE: Record<string, string> = {
   '韩语识别模块（Moonshine Base）': '한국어 인식 모듈(Moonshine Base)',
   '中韩识别模块（SenseVoice Small int8）': '중국어·한국어 인식 모듈(SenseVoice Small int8)',
   '英文识别模块（Parakeet，已移除）': '영어 인식 모듈(Parakeet, 제거됨)',
-  '这个设备内存不够装这个模块：关掉其他应用，或先装英文模块':
-    '이 기기에는 이 모듈을 담을 메모리가 없습니다: 다른 앱을 닫거나 영어 모듈을 먼저 설치하세요',
+  // The live module and the names retired with this round's change: every language
+  // now resolves to SenseVoice, and the Moonshine downloads and the Korean network
+  // service are only mentioned by leftover crash notes and install records.
+  '识别模块（SenseVoice Small int8）': '인식 모듈(SenseVoice Small int8)',
+  'SenseVoice · 中英韩日粤': 'SenseVoice · 중·영·한·일·광둥어',
+  '英文识别模块（Moonshine，已移除）': '영어 인식 모듈(Moonshine, 제거됨)',
+  '韩语识别模块（Moonshine，已移除）': '한국어 인식 모듈(Moonshine, 제거됨)',
+  '韩语识别服务（koasr，已移除）': '한국어 인식 서비스(koasr, 제거됨)',
+  '这个设备内存不够装这个模块：关掉其他应用再试一次':
+    '이 기기에는 이 모듈을 담을 메모리가 부족합니다 — 다른 앱을 닫고 다시 시도하세요',
+  '约 {mb} MB': '약 {mb} MB',
+  // The refusal an Apple-mobile page gets before the download starts, and the
+  // report line that names the one recogniser left.
+  '{module}在这台设备上装不下：iOS 给网页的内存放不下 {size} 的模型（实测几百 MB 就会把整个页面关掉）。识别只能在电脑上使用。':
+    '{module}은(는) 이 기기에 들어가지 않습니다: iOS가 웹 페이지에 주는 메모리로는 {size} 모델을 담을 수 없습니다(수백 MB만 넘어도 페이지 전체가 닫히는 것이 실측됐습니다). 인식은 컴퓨터에서만 사용할 수 있습니다.',
+  '识别模块：{module}（{lang} 源）': '인식 모듈: {module} (원문 {lang})',
+  '可用配额约 {quota} GB，已用 {used} MB · 识别模块约 230 MB':
+    '할당량 약 {quota} GB, 사용 {used} MB · 인식 모듈 약 230 MB',
   '下载中断了，检查网络后重试': '다운로드가 끊겼습니다. 네트워크를 확인하고 다시 시도하세요',
   '下载被拒绝，换个网络重试': '다운로드가 거부되었습니다. 다른 네트워크로 다시 시도하세요',
   '找不到模块文件，可能需要更新版本': '모듈 파일을 찾지 못했습니다. 버전을 올려야 할 수 있습니다',

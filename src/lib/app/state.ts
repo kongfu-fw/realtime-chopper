@@ -19,8 +19,8 @@ export const session = new Session()
 /**
  * Which screen the app is on.
  *
- * `start` is the page a cold launch opens on: the logo, where a session's loading
- * is reported, and one button. It is a view rather than a modal or an overlay
+ * `start` is the page a cold launch opens on: the logo and the two doors out of
+ * it (a recording, and the notes). It is a view rather than a modal or an overlay
  * because everything else — the footer's buttons, the transcript, the timer in the
  * header — is about a *session*, and on the start page there is not one yet.
  *
@@ -139,6 +139,24 @@ export function openHistory(): void {
 }
 
 /**
+ * 开始录音: the start page's card, which opens the recording screen.
+ *
+ * It starts nothing. The screen it names carries the record button that does —
+ * the same button that pauses, resumes and cancels — and a start that happens
+ * there is one start path instead of two, which is the only way the two can be
+ * guaranteed to ask the headphone question, download the module and report a
+ * failure the same way. Starting used to live behind this card as well (see
+ * `beginSession`), and the two paths had already drifted once.
+ *
+ * This is a `view` change and not an address of its own, on purpose: home is one
+ * address for the start page and the live transcript (`route.ts`), and which of
+ * the two a user sees is decided by whether they came in — not by the bar.
+ */
+export function openRecording(): void {
+  view.set('translate')
+}
+
+/**
  * The list that slides out of the left edge behind the logo.
  *
  * A store rather than component state because two things outside the drawer open
@@ -188,16 +206,18 @@ export const headphonePrompt = writable(false)
  * The one way a session is started from a button.
  *
  * Three states a session can be in when somebody presses "start", and only the
- * third of them starts anything: the module for the source language is not on the
- * device (the install dialog takes over and starts the session when it is done),
- * the headphone question has not been answered (a first run answers it through
-the prompt `App.svelte` draws), or it is time to open the microphone. The order
- * matters and is the order of cost: the download is the only wait measured in
- * minutes, and the headphone question is asked while it runs.
+ * third of them starts anything: the module is not on the device (the install
+ * dialog takes over and starts the session when it is done), the headphone
+ * question has not been answered (a first run answers it through the prompt
+ * `App.svelte` draws), or it is time to open the microphone. The order matters
+ * and is the order of cost: the download is the only wait measured in minutes,
+ * and the headphone question is asked while it runs.
  *
  * Written once because it used to exist twice — the footer's button and the start
  * page's — with the same three cases spelled out in each, which is how the two
- * came to answer the headphone question differently.
+ * came to answer the headphone question differently. The start page no longer
+ * starts anything at all (`openRecording`), which leaves this as the only path a
+ * button can take.
  */
 export type BeginOutcome = 'started' | 'installing' | 'headphones' | 'cancelled'
 

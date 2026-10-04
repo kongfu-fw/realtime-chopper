@@ -1,33 +1,33 @@
 /*
  * sherpa-onnx recognition worker.
  *
- * Runs the modules whose runtime is sherpa-onnx's browser WASM build:
+ * Runs the app's recognition module — the only one left:
  *
- *   zh  — SenseVoice-Small (int8, ~228 MB), Chinese *and* Korean
+ *   zh  — SenseVoice-Small (int8, ~228 MB), every source language
  *
  * SenseVoice is the right model for Chinese and always was: non-autoregressive (one
  * forward pass per utterance, roughly an order of magnitude faster than Whisper's
  * token-by-token decode), and it recognises Chinese, English, Japanese, Korean and
  * Cantonese in one model with inverse text normalisation — so Chinese speech with
  * English words inside it survives, which a Mandarin-only CTC model cannot do, and
- * its `language: 'auto'` mode is what makes it the best Korean this app can run on
- * a device that can hold it.
+ * its `language: 'auto'` mode is what lets one download answer every language the
+ * app offers. That last property is why it is the only module now (see
+ * `src/lib/asr/models.ts`): English and Korean each used to have a smaller model of
+ * their own, and a Korean one also rode on a service over HTTP.
  *
- * This worker used to carry two more packs, both gone:
+ * This worker used to carry more packs, all gone:
  *
  *   en-nemo  NVIDIA Parakeet, English — slower than Moonshine on this hardware,
- *            twice the download, and Moonshine punctuates too. See the note where
- *            its shape is recorded in `PACKS`.
+ *            twice the download. See the note where its shape is recorded in
+ *            `PACKS`.
  *   ko       Zipformer Korean int8, 73 MB — the model built for Korean, which read
  *            k2-fsa's own clips at 1.3% CER and then collapsed on a real recording
  *            from this app's microphone ("음" for a whole sentence). Its
- *            replacement is a transformers.js model, so it does not live here.
+ *            replacement was a transformers.js model, and that route is gone too.
  *            The measurement is in `src/lib/asr/models.ts`.
  *
- * What matters is that the *runtime* stays: every language that does not go through
- * a transformers.js model is built out of this one download of wasm. See
- * `src/lib/asr/models.ts` for the registry these ids mirror, and
- * `src/workers/asr.worker.ts` for the module-worker counterpart.
+ * What matters is that the *runtime* stays: recognition is built out of this one
+ * download of wasm. See `src/lib/asr/models.ts` for the registry these ids mirror.
  *
  * Packs can differ in shape, not just in bytes: SenseVoice is one graph with a
  * language it picks itself, while a transducer pack (the removed Korean one, and
@@ -103,10 +103,11 @@
  * where the heap has to hold it once — and where unlinking our copy hands that memory
  * back to the browser instead of to a heap that cannot return it.
  *
- * The message protocol is byte-for-byte the one in src/workers/asr.worker.ts, so
- * the main thread cannot tell which of the two workers answered:
+ * The message protocol is the one the main thread's client speaks (`AsrWorkerClient`
+ * in src/lib/workers/index.ts); it used to be shared byte-for-byte with the module
+ * worker that answered Moonshine, and that worker is gone:
  *
- *   in   { type:'load', module, plan }
+ *   in   { type:'load', module, uiLang }
  *        { type:'recognize', id, samples, startMs, endMs }
  *        { type:'dispose' }
  *   out  { type:'load-progress', module?, status, file?, progress?, loaded?, total? }

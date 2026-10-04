@@ -2,9 +2,7 @@ import type { AsrLoadProgress, LogLevel, ModuleId, SpeechSegment } from '../type
 import type { RecordingInfo } from '../audio/recorder'
 import type { MtConfig, MtItem, MtItemResult } from '../mt/client'
 import type { SegmenterOptions } from '../asr/segmenter'
-import type { DevicePlan } from '../asr/moonshine'
-import type { RemoteAsrConfig } from '../asr/koasr'
-import { describeModuleError, moduleSpec } from '../asr/models'
+import { describeModuleError } from '../asr/models'
 import { currentLang, t } from '../i18n/index.ts'
 import { debug, error as logError, info, warn } from '../log/store'
 
@@ -34,36 +32,26 @@ function guard(worker: Worker, name: string): Worker {
 }
 
 /**
- * Two recognition workers exist because their runtimes are loaded in mutually
- * exclusive ways: transformers.js (the Moonshine English and Korean modules) goes
- * through `import()`, so it must live in a module worker, while sherpa-onnx's
- * published runtime is a pair of classic scripts that install globals, so the
- * sherpa module — Chinese SenseVoice, which also answers Korean wherever it can be
- * installed — lives in `static/sherpa-asr.worker.js`.
+ * The recognition worker, singular.
  *
- * The split follows the runtime, not the language — and the network module is on
- * the module-worker side of it, not because HTTP needs `import()` but because it
- * needs nothing the classic script offers, and the module worker is where the
- * ordered recognition chain already lives.
+ * There used to be two, because sherpa-onnx's published runtime is a pair of
+ * classic scripts that install globals and can only be evaluated in a classic
+ * worker, while Moonshine's transformers.js went through `import()` and needed a
+ * module worker. Moonshine is gone (see `asr/models.ts`), so the classic sherpa
+ * worker is the only one left and the split is a memory of why this is a classic
+ * worker at all: a module worker has no `importScripts`, which is the one API the
+ * runtime needs.
  *
  * That URL is a plain string built from BASE_URL on purpose: writing
  * `new URL('…', import.meta.url)` here would make the bundler treat the file as
- * a worker chunk and emit it as a module, and a module worker has no
- * `importScripts` — which is the one API the sherpa runtime needs.
+ * a worker chunk and emit it as a module. The query string is the point, not
+ * decoration: this file keeps its name between builds, so without a changing URL a
+ * browser can run a *previous* build's worker against this build's client and
+ * answer a legitimate request with "这个版本不认识识别模块". See `SHERPA_WORKER_REV`
+ * in `vite.config.ts`.
  */
-function createAsrWorker(module: ModuleId): Worker {
-  if (moduleSpec(module).engine === 'sherpa') {
-    // The query string is the point, not decoration: this file keeps its name
-    // between builds, so without a changing URL a browser can run a *previous*
-    // build's worker against this build's client and answer a legitimate request
-    // with "这个版本不认识识别模块 ko". See `SHERPA_WORKER_REV` in
-    // `vite.config.ts`.
-    return new Worker(`${import.meta.env.BASE_URL}sherpa-asr.worker.js?v=${__SHERPA_WORKER_REV__}`)
-  }
-  return new Worker(new URL('../../workers/asr.worker.ts', import.meta.url), {
-    type: 'module',
-    name: 'asr',
-  })
+function createAsrWorker(): Worker {
+  return new Worker(`${import.meta.env.BASE_URL}sherpa-asr.worker.js?v=${__SHERPA_WORKER_REV__}`)
 }
 
 type RecordResult =
@@ -290,7 +278,7 @@ export class AsrWorkerClient {
 
   constructor(module: ModuleId) {
     this.module = module
-    this.worker = guard(createAsrWorker(module), 'asr')
+    this.worker = guard(createAsrWorker(), 'asr')
     this.worker.onmessage = (event: MessageEvent) => {
       const msg = event.data as Record<string, unknown> & { type: string }
       switch (msg.type) {
@@ -360,7 +348,7 @@ export class AsrWorkerClient {
    * bytes have been downloaded, not after the request was sent. Rejects when the
    * worker reports a load failure, and only then can an install be recorded.
    */
-  load(module: ModuleId, plan: DevicePlan | null, remote?: RemoteAsrConfig | null): Promise<void> {
+  load(module: ModuleId): Promise<void> {
     // A second request supersedes the first; the old one must not hang forever.
     this.pendingLoad?.settle(new Error(t('已被新的加载请求取代')))
     const done = new Promise<void>((resolve, reject) => {
@@ -369,8 +357,6 @@ export class AsrWorkerClient {
         settle: (err) => (err ? reject(err) : resolve()),
       }
     })
-    // The plan travels with the request: the verdict behind it lives in
-    // `localStorage`, which a worker does not have. See `DevicePlan`.
     // The language travels with the request because the worker is a separate
     // thread with its own copy of the i18n module: without this it would log in
     // whatever language the *browser* asks for rather than the one the user
@@ -380,7 +366,7 @@ export class AsrWorkerClient {
     // `lang` on the module name (an older cached copy of it reads that field),
     // and a second meaning for one key is how a Chinese module ends up being
     // requested with the string "en".
-    this.worker.postMessage({ type: 'load', module, plan, remote: remote ?? null, uiLang: currentLang() })
+    this.worker.postMessage({ type: 'load', module, uiLang: currentLang() })
     return done
   }
 

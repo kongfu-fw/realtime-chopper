@@ -1,5 +1,5 @@
 import { exportLogs, formatStamp } from './log/store'
-import { gpuBlockReason, isAppleMobile, readGpuVerdict, webgpuAvailable } from './asr/device'
+import { isAppleMobile } from './asr/device'
 import { moduleIdFor, moduleName } from './asr/models'
 import { speechSnapshot, speechSupported } from './tts/speech'
 import { ttsEngineLabel } from './tts/engine'
@@ -51,16 +51,6 @@ export function platformLines(): string[] {
         gb: (navigator as { deviceMemory?: number }).deviceMemory ?? t('未知'),
       }),
   )
-  const verdict = readGpuVerdict()
-  lines.push(
-    t('WebGPU：{available}', { available: webgpuAvailable() ? t('浏览器提供') : t('没有') }) +
-      t(' · 上次判定：{verdict}', {
-        verdict: verdict
-          ? `${verdict.ok ? t('可用') : t('失败')}${t('（{reason}）', { reason: verdict.reason })}`
-          : t('还没试过'),
-      }) +
-      (gpuBlockReason() ? t(' · 本次将直接用 CPU') : ''),
-  )
   // Speech output, because "朗读听不到" is the one failure with no error and no
   // console line to find: `paused` here means the platform stopped calling back
   // (切后台/锁屏之后), and `play-and-record` during recording is the audio session
@@ -88,21 +78,14 @@ export function platformLines(): string[] {
         t(' · 语音会话：{session}', { session: speech.session }),
     )
   }
-  // Where recognition actually happens, and — the part a report cannot be read
-  // without — which *module* the current language resolved to. On a phone the
-  // difference between the 64 MB local Korean model and a service on the network is
-  // invisible in the interface and decides both the latency and the error profile,
-  // so a report that does not name it leaves the two indistinguishable.
+  // Which module the current language resolved to. There is one module and every
+  // language resolves to it (`asr/models.ts`), so this line is short — but a
+  // report that does not name the recogniser leaves the one fact that explains
+  // every transcript out of it.
   lines.push(
-    t('识别服务：{backend} · {url} · 当前语言用 {module}', {
-      backend:
-        settings.asrBackend === 'local'
-          ? t('只用本机模型')
-          : settings.asrBackend === 'network'
-            ? t('网络服务优先')
-            : t('自动'),
-      url: settings.asrBaseUrl.trim() || t('没填地址'),
+    t('识别模块：{module}（{lang} 源）', {
       module: moduleName(moduleIdFor(settings.sourceLang)),
+      lang: settings.sourceLang,
     }),
   )
   return lines

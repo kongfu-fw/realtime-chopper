@@ -55,8 +55,13 @@ const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const REPORT_DIR = join(ROOT, 'dist', 'e2e')
 const DOWNLOADS = join(REPORT_DIR, 'downloads')
 
-/** How long a session may take to start: a 62 MB download plus engine init. */
-const START_TIMEOUT_MS = Number(process.env.RC_E2E_START_TIMEOUT_MS ?? 240_000)
+/**
+ * How long a session may take to start: the recognition module is a single
+ * ~230 MB download now (SenseVoice; see `asr/models.ts`) plus engine init, and a
+ * fresh browser profile means it comes down on every run — the test trades time
+ * for using the real module rather than a fake one.
+ */
+const START_TIMEOUT_MS = Number(process.env.RC_E2E_START_TIMEOUT_MS ?? 480_000)
 
 const CHROME =
   process.env.CHROME_PATH ??
@@ -81,7 +86,7 @@ function note(text) {
 
 /** The screenshots a run leaves, in the order a person would read them. */
 const SHOTS = [
-  ['01-start-page', '起始页：logo、一块预留的加载位置、两颗方块卡片'],
+  ['01-start-page', '起始页：logo 与两颗方块卡片（开始录音 / 历史记录）'],
   ['02-settings-debug-off', '设置页，调试关闭'],
   ['03-settings-debug-on', '设置页，调试打开'],
   ['04-transcript', '转录页：声纹 → 下载位 → 方块时钟，两栏都没有标题'],
@@ -348,46 +353,37 @@ async function scenario(cdp) {
   const stack = await cdp.eval(`
     const start = document.querySelector('.start')
     const brand = start.querySelector('.brand')
-    const stage = start.querySelector('.stage')
     const cards = start.querySelector('.cards')
     const button = start.querySelector('.begin')
     const history = start.querySelector('.card.history')
-    if (!brand || !stage || !cards || !button || !history) return null
+    if (!brand || !cards || !button || !history) return null
     const box = (el) => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, x: r.left + r.width / 2, h: r.height, w: r.width } }
     return {
-      brand: box(brand), stage: box(stage), cards: box(cards), button: box(button), history: box(history),
+      brand: box(brand), cards: box(cards), button: box(button), history: box(history),
       viewport: window.innerWidth / 2,
       label: button.textContent.trim(),
       historyLabel: history.textContent.trim(),
       tagline: start.querySelector('.tagline')?.textContent.trim() ?? '',
-      line: stage.querySelector('.line')?.textContent.trim() ?? null,
       hasSettings: !!start.querySelector('.settings'),
       hasHeader: !!document.querySelector('.titlebar'),
       hasFooter: !!document.querySelector('.record-btn'),
     }
   `)
-  record('the start page shows a logo, a loading area and two cards', !!stack)
+  record('the start page shows a logo and two cards', !!stack)
   if (stack) {
     record(
-      'the three are stacked in that order, centred on the window',
-      stack.brand.bottom <= stack.stage.top &&
-        stack.stage.bottom <= stack.cards.top &&
+      'the two are stacked in that order, centred on the window',
+      stack.brand.bottom <= stack.cards.top &&
         Math.abs(stack.brand.x - stack.viewport) < 2 &&
-        Math.abs(stack.stage.x - stack.viewport) < 2 &&
         Math.abs(stack.cards.x - stack.viewport) < 2,
-      `brand ${Math.round(stack.brand.x)} / stage ${Math.round(stack.stage.x)} / cards ${Math.round(stack.cards.x)} · centre ${stack.viewport}`,
+      `brand ${Math.round(stack.brand.x)} / cards ${Math.round(stack.cards.x)} · centre ${stack.viewport}`,
     )
     record(
       'nothing else is on it: no header, no footer',
       !stack.hasHeader && !stack.hasFooter,
       `settings door: ${stack.hasSettings}`,
     )
-    record(
-      'the loading area is reserved before there is anything to load',
-      stack.stage.h >= 80,
-      `${Math.round(stack.stage.h)} px`,
-    )
-    record('one card starts a recording', stack.label === '开始录音', stack.label)
+    record('one card opens the recording screen', stack.label === '开始录音', stack.label)
     record(
       'and the other opens the history',
       stack.historyLabel.startsWith('历史记录'),
@@ -408,28 +404,6 @@ async function scenario(cdp) {
       stack.tagline === '录音笔记',
       stack.tagline,
     )
-    record(
-      'the reserved area says nothing at rest — the resting hint is gone',
-      stack.line === '',
-      `“${stack.line}”`,
-    )
-
-    // The reason the area is reserved: text appears in it during a start, and the
-    // button must not move under the thumb that is already on it. The sentence is
-    // put back afterwards — it is the page's own text, and the screenshot below has
-    // to show the screen a user actually sees.
-    const moved = await cdp.eval(`
-      const button = document.querySelector('.begin')
-      const stage = document.querySelector('.stage')
-      const line = stage.querySelector('.line')
-      const original = line.textContent
-      const before = button.getBoundingClientRect().top
-      line.textContent = '正在加载识别模块'.repeat(3)
-      const after = button.getBoundingClientRect().top
-      line.textContent = original
-      return Math.abs(after - before)
-    `)
-    record('and the button does not move when that area fills up', moved < 0.5, `moved ${moved.toFixed(2)} px`)
   }
   await cdp.shot('01-start-page')
 
@@ -497,54 +471,70 @@ async function scenario(cdp) {
   record('returning from settings lands back on the start page, not in an empty transcript', true)
 
   // --------------------------------------------------------------- a session
-  const started = await cdp.eval(`document.querySelector('.begin').click(); return true`)
-  record('the start button is pressable', started === true)
-  note('starting a session — this downloads and loads the recognition module')
+  //
+  // Two steps where there used to be one, because that is the change under test:
+  // the card is a door that opens the recording screen without starting anything,
+  // and the record button there is what starts. A fresh profile has no module, so
+  // that button raises the install dialog — which is now the only place a first
+  // run downloads the 230 MB SenseVoice model from.
+  const opened = await cdp.eval(`
+    document.querySelector('.begin').click()
+    for (let i = 0; i < 40 && !document.querySelector('.panels'); i += 1) await new Promise((r) => setTimeout(r, 100))
+    return {
+      panels: !!document.querySelector('.panels'),
+      recording: !!document.querySelector('.record-btn.recording'),
+      empty: document.querySelector('.panel-body .empty')?.textContent.trim() ?? '',
+    }
+  `)
+  record('the start card opens the recording screen', opened.panels === true)
+  record(
+    'and it starts nothing: an idle transcript, with the record button still at rest',
+    opened.recording === false && opened.empty.includes('点下面的按钮'),
+    `recording: ${opened.recording} · “${opened.empty}”`,
+  )
+
+  const pressed = await cdp.eval(`document.querySelector('.record-btn').click(); return true`)
+  record('the record button there is pressable', pressed === true)
+  note('starting a session — the install dialog downloads and loads the recognition module')
   let sawError = ''
-  let lastLine = ''
-  /** The first real sentence this area showed, and how far its ink sits off centre. */
-  let hintShift = null
-  let hintText = ''
   let acknowledged = false
+  let downloading = false
   const deadline = Date.now() + START_TIMEOUT_MS
   let running = false
   while (Date.now() < deadline) {
     const state = await cdp.eval(`
-      const line = document.querySelector('.stage .line')
+      const error = document.querySelector('.modal .error')
       const confirm = [...document.querySelectorAll('.modal button')].find((b) => b.textContent.includes('戴好了'))
-      // Centred by *ink*, not by box. The area is centred as a box, and a Chinese
-      // full stop is a full-width glyph whose ink sits in the left of its em box:
-      // a sentence ending in one carries ~9 px of blank space on the right, so the
-      // words read as shifted left of centre by half of that. Measured from the
-      // glyphs with a canvas rather than from the element, because this is a
-      // question about what the eye sees. Nothing is said at rest any more, so the
-      // sentence this runs on is the real one a start produces.
-      const shift = (() => {
-        if (!line || !line.textContent.trim()) return null
-        const box = line.getBoundingClientRect()
-        const style = getComputedStyle(line)
-        const canvas = document.createElement('canvas').getContext('2d')
-        canvas.font = style.fontStyle + ' ' + style.fontWeight + ' ' + style.fontSize + ' ' + style.fontFamily
-        const metrics = canvas.measureText(line.textContent)
-        const start = box.left + (box.width - metrics.width) / 2
-        return start + (-metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight) / 2 - (box.left + box.width / 2)
-      })()
+      const download = [...document.querySelectorAll('.modal button')].find((b) => b.textContent.trim() === '下载')
+      const progress = document.querySelector('.modal .bar i')
       return {
         recording: !!document.querySelector('.record-btn.recording'),
-        line: line ? line.textContent.trim() : '',
-        bad: line ? line.classList.contains('bad') : false,
+        error: error ? error.textContent.trim() : '',
         confirm: !!confirm,
-        shift,
+        download: !!download,
+        percent: progress ? progress.style.width : '',
       }
     `)
     if (state.recording) {
       running = true
       break
     }
-    if (state.bad) {
-      sawError = state.line
+    if (state.error) {
+      sawError = state.error
       break
     }
+    if (state.download && !downloading) {
+      // The install dialog, with one row in it: the download button is what fetches
+      // the module, and `ondone` starts the session the user was reaching for.
+      downloading = true
+      await cdp.eval(`
+        const button = [...document.querySelectorAll('.modal button')].find((b) => b.textContent.trim() === '下载')
+        button.click()
+        return true
+      `)
+      note('pressed 下载 in the install dialog')
+    }
+    if (state.percent) note(`  download at ${state.percent}`)
     if (state.confirm && !acknowledged) {
       // The one-time headphone confirmation, which is a gate a first run has to pass
       // — a fresh browser profile has never answered it.
@@ -556,23 +546,9 @@ async function scenario(cdp) {
       `)
       note('answered the headphone prompt')
     }
-    if (state.shift !== null && hintShift === null) {
-      hintShift = state.shift
-      hintText = state.line
-    }
-    if (state.line && state.line !== lastLine) {
-      lastLine = state.line
-      note(`  page says: ${state.line}`)
-    }
     await sleep(1000)
   }
-  record(
-    'a sentence in that area is centred by what the eye sees while it is up',
-    hintShift !== null && Math.abs(hintShift) <= 2,
-    // 2 px, and not 0: the tolerance is a font's side bearings, which differ by a
-    // fraction of a pixel between platforms.
-    hintShift === null ? 'no sentence was ever shown in it' : `${hintShift.toFixed(1)} px off centre · “${hintText}”`,
-  )
+  record('the install dialog was the way in', downloading, downloading ? '' : 'no 下载 button ever appeared')
   if (acknowledged) record('the headphone reminder can be answered and the start carries on', running, sawError)
   record(
     'a session starts (module, provider, microphone, and the view change)',
@@ -1403,10 +1379,14 @@ async function scenario(cdp) {
 
   // ------------------------------------------------------------ 开启新录音
   // The third way out of a pause: file what was just recorded, forget its words,
-  // and open the microphone on the next one. Started from the start page's own
-  // card, which is the door this whole walk came in by.
+  // and open the microphone on the next one. Opened from the start page's card,
+  // which is the door this whole walk came in by — and, as on the first walk, the
+  // card only opens the screen: the record button there is what starts. The module
+  // is installed by now, so no dialog stands in between.
   const second = await cdp.eval(`
     document.querySelector('.card.begin').click()
+    for (let i = 0; i < 40 && !document.querySelector('.panels'); i += 1) await new Promise((r) => setTimeout(r, 100))
+    document.querySelector('.record-btn').click()
     const deadline = Date.now() + 90_000
     while (Date.now() < deadline && !document.querySelector('.record-btn.recording')) {
       await new Promise((r) => setTimeout(r, 500))

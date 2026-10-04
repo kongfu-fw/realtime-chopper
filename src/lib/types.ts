@@ -12,24 +12,18 @@ export type Lang = SourceLang
  *
  * Not the same thing as a language: a module is a set of bytes and a language is
  * what the user says, so the two are mapped rather than equated (see `moduleIdFor`
- * in `asr/models.ts`). Today one module answers one language, but Korean used to
- * ride on the Chinese module, and the indirection is what made that swap a table
- * entry instead of a rewrite.
+ * in `asr/models.ts`). There is one module left — SenseVoice, which answers every
+ * language the app offers — so the mapping is currently a constant, and it stays a
+ * mapping because that is what versions of this app have changed and what a second
+ * module would change again.
  *
- * `en-nemo` (NVIDIA Parakeet on the sherpa runtime) used to be a second English
- * module and is gone — measured on the same audio it was not faster on the CPU,
- * was twice the download, and ran single-threaded because that runtime ships no
- * pthreads, so Moonshine stayed. The id is still *parsed* rather than deleted:
- * an install record, a cache bucket and a crash note written by an older build
- * all still mention it. It is simply never resolved to a module.
- *
- * `ko-net` breaks the "module = a download" reading on purpose: it is a Korean
- * recogniser on another machine, reached over HTTP. It is still a module because
- * the question the rest of the app asks is the same one — which bytes answer this
- * language — and the answer for Korean on a phone is now "none of ours". See
- * `networkModuleFor` in `asr/models.ts`.
+ * Retired ids (`en`, `ko`, `ko-net`, `en-nemo`) are deliberately *not* part of this
+ * union: they are never resolved to a module by the live code any more. They
+ * survive as plain strings in the two places leftover bytes and crash notes are
+ * read — the retired-cache sweep and `moduleName` — because a phone that installed
+ * one of them is still holding the download.
  */
-export type ModuleId = 'en' | 'ko' | 'zh' | 'ko-net'
+export type ModuleId = 'zh'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -115,13 +109,6 @@ export type SessionState =
   | 'stopping'
   | 'error'
 
-export interface AsrResult {
-  text: string
-  rawText: string
-  engine: string
-  inferMs: number
-}
-
 /**
  * Progress report shared by every module downloader and engine loader.
  *
@@ -141,16 +128,3 @@ export interface AsrLoadProgress {
   total?: number
 }
 
-export type AsrProgressCallback = (progress: AsrLoadProgress) => void
-
-/** Common surface of the two engine implementations, used by the router. */
-export interface AsrEngine {
-  readonly id: string
-  readonly lang: Lang
-  /** The module this engine loaded — what a caller must compare, never the lang. */
-  readonly module: ModuleId
-  readonly ready: boolean
-  load(onProgress?: AsrProgressCallback): Promise<{ device?: string; dtype?: string; reason?: string }>
-  recognize(samples: Float32Array): Promise<AsrResult>
-  dispose(): void
-}

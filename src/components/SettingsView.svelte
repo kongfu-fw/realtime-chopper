@@ -10,15 +10,7 @@
     isModuleCurrent,
     langLabel,
   } from '../lib/store/settings'
-  import {
-    ASR_MODULES,
-    MODULE_CACHE_KEYS,
-    MODULE_IDS,
-    moduleShort,
-    moduleUsedOnThisDevice,
-  } from '../lib/asr/models'
-  import { addressProblem } from '../lib/asr/koasr'
-  import { isAppleMobile } from '../lib/asr/device'
+  import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS, moduleShort } from '../lib/asr/models'
   import {
     LANG_NAMES,
     SUPPORTED_LANGS,
@@ -33,13 +25,7 @@
   import { APP_VERSION } from '../lib/app/version'
   import { APP_ICONS, iconFor, iconPreviewUrl, type AppIconId } from '../lib/brand/logo'
   import { info } from '../lib/log/store'
-  import type {
-    Accelerator,
-    AsrBackend,
-    LlmFormat,
-    LogLevelSetting,
-    Precision,
-  } from '../lib/store/settings'
+  import type { LlmFormat, LogLevelSetting } from '../lib/store/settings'
   import type { ModuleId } from '../lib/types'
 
   // Markup reads `tr`, so a language change redraws the page; the handlers below
@@ -56,24 +42,6 @@
   // The browser's language, not what the app is showing: with a `?lang=` link
   // open, the two differ, and this label says what `auto` would follow.
   const autoLang = $derived(LANG_NAMES[detectLang()])
-
-  /**
-   * Changing where recognition happens has to drop the resident recogniser.
-   *
-   * The two backends are different modules, and a module is what a client is bound
-   * to: leaving the old one loaded would keep answering with the engine the user
-   * just turned off, while the picker said otherwise. Same reasoning — and the same
-   * call — as the language picker in `LangPicker`.
-   */
-  async function pickAsrBackend(id: AsrBackend) {
-    if (id === $settings.asrBackend) return
-    setSetting('asrBackend', id)
-    session.applySettings()
-    await session.releaseModel()
-    info('ui', t('识别后端换为 {backend}', { backend: id }), {
-      note: t('下次开始录音时生效'),
-    })
-  }
 
   function pickIcon(id: AppIconId) {
     if (id === $settings.appIcon) return
@@ -108,46 +76,6 @@
   const totalInstalledBytes = $derived(
     installed.reduce((sum, key) => sum + ($settings.installedModels[key]?.bytes ?? ASR_MODULES[key].approxBytes), 0),
   )
-
-  /**
-   * Whether this device refuses to fall back to the local recogniser.
-   *
-   * Read from the device rather than from a setting, because that is where the
-   * rule lives (`mayFallBackToLocal`), and the sentences below have to be the ones
-   * that match what will actually happen: on a phone, "the local model" is the
-   * small Korean model this whole route exists to stop using.
-   */
-  const asrNoFallback = isAppleMobile()
-
-  /**
-   * Why the configured service address cannot be used from this page, in words.
-   *
-   * Shown *here* rather than discovered at the start of a session, because at the
-   * start of a session the only visible symptom is "it used the local model" — and
-   * the whole point of the setting is that this device was supposed to use the
-   * service. The two faults are the two ways it silently does not happen: nothing
-   * configured, and an `http://` address on an `https:` page, which the browser
-   * blocks before the request exists. Where the fallback is not allowed at all
-   * (`asrNoFallback`) neither fault is quiet — both stop the session — so the
-   * sentence has to say that rather than promise a local model.
-   */
-  const asrAddressFault = $derived.by(() => {
-    if ($settings.asrBackend === 'local') return ''
-    const fault = addressProblem($settings.asrBaseUrl, location.protocol)
-    if (!fault) return ''
-    // Apple's mobile has nothing to fall back to (`mayFallBackToLocal`), so there
-    // the same two faults are not "the network will not be used": they are a
-    // session that will not start. Two sentences per fault, because a warning that
-    // describes the softer behaviour is worse than no warning at all.
-    if (asrNoFallback) {
-      return fault === 'empty'
-        ? tr('还没填地址。这台设备连不上识别服务就直接报错，不会退回本机模型：要么把地址填上，要么把上面改成「只用本机模型」。')
-        : tr('页面是 https，填 http 的地址浏览器会直接拦掉，而这台设备不会退回本机模型：把服务也用 https 发出来（见 DOCKER.md），或者把这里改回默认的 https 地址。')
-    }
-    return fault === 'empty'
-      ? tr('还没填地址，网络识别不会启用。')
-      : tr('页面是 https，填 http 的地址浏览器会直接拦掉：把服务也用 https 发出来（见 DOCKER.md），或者把这里改回默认的 https 地址。')
-  })
 
   /** Continuous recording state, mirrored from the pipeline worker. */
   const { recording } = session
@@ -260,39 +188,6 @@
       <span class="value">{tr('{n} 秒', { n: ($settings.maxSegMs / 1000).toFixed(0) })}</span>
     </SettingRow>
 
-    <SettingRow label={tr('识别精度')} help={tr('省电优先更流畅，也更容易听错。')}>
-      <select
-        class="rc-select"
-        value={$settings.precision}
-        onchange={(e) => setSetting('precision', (e.currentTarget as HTMLSelectElement).value as Precision)}
-      >
-        <option value="high">{tr('高精度')}</option>
-        <option value="eco">{tr('省电优先')}</option>
-      </select>
-    </SettingRow>
-
-    <SettingRow
-      label={tr('用显卡加速')}
-      help={tr('有显卡会更快。中文识别一直用 CPU；iPhone / iPad 上别选「显卡优先」——实测一启用就把整个页面带崩，所以那边的自动档走 CPU。')}
-    >
-      <select
-        class="rc-select"
-        value={$settings.accelerator}
-        onchange={(e) => setSetting('accelerator', (e.currentTarget as HTMLSelectElement).value as Accelerator)}
-      >
-        <option value="auto">{tr('自动')}</option>
-        <option value="webgpu">{tr('显卡优先')}</option>
-        <option value="wasm">{tr('CPU 兜底')}</option>
-      </select>
-    </SettingRow>
-
-    <SettingRow
-      label={tr('英文识别模型')}
-      help={tr('英文只有一个识别模型（Moonshine Base，约 62 MB）：桌面上会走显卡加速，iPhone / iPad 上自动用 CPU 加多线程——同一段音频实测比 Parakeet 更快也更小。Parakeet 已经从这个版本里去掉了。')}
-    >
-      <span class="value">Moonshine Base</span>
-    </SettingRow>
-
     <SettingRow label={tr('已下载的识别模块')}>
       <span class="value">
         {installed.length === 0
@@ -305,9 +200,6 @@
       {#each MODULE_IDS as key (key)}
         <div class="module">
           <span>{moduleShort(key, $uiLang)}</span>
-          {#if !moduleUsedOnThisDevice(key)}
-            <span class="dim">{tr('手机上使用')}</span>
-          {/if}
           <span class="dim">{formatBytes(ASR_MODULES[key].approxBytes, $uiLang)}</span>
           {#if isModuleCurrent(key, $settings.installedModels[key])}
             <span class="badge ok">{tr('已安装')}</span>
@@ -318,47 +210,9 @@
         </div>
       {/each}
       <p class="dim note">
-        {tr('中文和韩语共用 SenseVoice；英文和手机上的韩语用 Moonshine（更小、约 64 MB）；同时只驻留一个。')}
+        {tr('所有语言都使用同一个 SenseVoice 模型（中英韩日粤）；一次只驻留一个模块，iPhone / iPad 上装不下。')}
       </p>
     </div>
-
-    <!--
-      The network recogniser, beside the downloads it can replace rather than in
-      another section: "where does recognition happen" is one question, and the two
-      answers are a file on this device and a machine on the network.
-    -->
-    <SettingRow
-      label={tr('识别走哪里')}
-      help={tr('韩语还能交给网络上的识别服务：模型大得多，认得更准，但要在同一网络里有台机器开着它。自动档只在手机上用网络——电脑上的韩语本来就有个更大的本机模型，换成网络只会变慢。') +
-        (asrNoFallback ? tr('这台设备连不上识别服务会直接报错，不会退回本机韩语模型。') : '')}
-    >
-      <select
-        class="rc-select"
-        value={$settings.asrBackend}
-        onchange={(e) => void pickAsrBackend((e.currentTarget as HTMLSelectElement).value as AsrBackend)}
-      >
-        <option value="auto">{tr('自动（手机上韩语走网络）')}</option>
-        <option value="local">{tr('只用本机模型')}</option>
-        <option value="network">{tr('网络服务优先')}</option>
-      </select>
-    </SettingRow>
-
-    <SettingRow
-      label={tr('识别服务地址')}
-      help={tr('默认是教室那台 Mac 上的 koasr：https://kongfu.kooka-salmon.ts.net —— tailscale serve --bg 8900 把服务的根挂在这个域名上，跨源调用，服务默认允许。换别的服务时主机名可以不带协议（按 https 解析）；想用和页面同一台机器上的服务就填 /asr。页面是 https 时，http:// 开头的地址会被浏览器直接拦掉。')}
-    >
-      <input
-        class="rc-input"
-        type="text"
-        placeholder="kongfu.kooka-salmon.ts.net"
-        value={$settings.asrBaseUrl}
-        oninput={(e) => setSetting('asrBaseUrl', (e.currentTarget as HTMLInputElement).value)}
-      />
-    </SettingRow>
-
-    {#if asrAddressFault}
-      <p class="warn">{asrAddressFault}</p>
-    {/if}
   </section>
 
   <section>
@@ -747,13 +601,6 @@
   .note {
     margin: 4px 0 0;
     font-size: 12px;
-  }
-
-  /* The same alarm colour the log drawer uses for errors (see `app.css`). */
-  .warn {
-    margin: 6px 0 0;
-    font-size: 12px;
-    color: var(--rc-danger);
   }
 
   .badge {

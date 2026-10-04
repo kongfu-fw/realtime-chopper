@@ -88,11 +88,14 @@
     }
   }
 
-  // The dialog records the install itself; here we only continue where the user
-  // was heading (they pressed the record button).
+  // The dialog records the install itself; here we continue where the user was
+  // heading (they pressed the record button). Through `beginSession` rather than
+  // straight to `start`, so that the headphone question — which the record button
+  // is the gate for now — is asked on a first run whether or not a download was
+  // in between. Calling `start` here is what used to skip it.
   function onInstallDone() {
     installLang.set(null)
-    void session.start().catch((err: unknown) => {
+    void beginSession().catch((err: unknown) => {
       showToast(err instanceof Error ? err.message : String(err))
     })
   }
@@ -205,7 +208,7 @@
 </div>
 
 {#if $installLang}
-  <ModelInstallModal want={$installLang} ondone={onInstallDone} oncancel={onInstallCancel} />
+  <ModelInstallModal ondone={onInstallDone} oncancel={onInstallCancel} />
 {/if}
 
 {#if readSettings}

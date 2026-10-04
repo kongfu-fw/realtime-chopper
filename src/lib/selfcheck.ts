@@ -5,7 +5,6 @@ import { t } from './i18n/index.ts'
 import { speechSnapshot } from './tts/speech'
 import { createTtsEngine, type SpeakOutcome, type TtsConfig, type TtsEngine } from './tts/engine'
 import { ASR_MODULES, MODULE_CACHE_KEYS, MODULE_IDS, moduleLabel } from './asr/models'
-import { planDevice } from './asr/moonshine'
 import { isAppleMobile } from './asr/device'
 import type { LlmConfig } from './mt/types'
 
@@ -84,19 +83,9 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
     ].join(' · '),
   })
 
-  // The same plan the pipeline will use, from the same function — a self-check
-  // that answered this question its own way could promise a GPU the engine then
-  // declines to try.
-  const plan = planDevice('auto', 'high')
-  results.push({
-    label: t('识别加速方式'),
-    ok: plan.primary.device === 'webgpu' ? true : 'warn',
-    detail: t('将使用 {device}（{dtype}）—— {reason}', {
-      device: plan.primary.device,
-      dtype: plan.primary.dtype,
-      reason: plan.primary.reason,
-    }),
-  })
+  // There is no accelerator check any more: the one module left runs on
+  // sherpa-onnx's CPU-only WASM build (`asr/models.ts`), so there is nothing to
+  // choose and nothing to measure here.
 
   // --- storage -------------------------------------------------------------
   try {
@@ -107,7 +96,7 @@ export async function runSelfCheck(options: SelfCheckOptions): Promise<SelfCheck
       results.push({
         label: t('存储空间'),
         ok: quotaGb > 1 ? true : 'warn',
-        detail: t('可用配额约 {quota} GB，已用 {used} MB · 中韩模块约 230 MB，手机上的韩语模块约 64 MB', {
+        detail: t('可用配额约 {quota} GB，已用 {used} MB · 识别模块约 230 MB', {
           quota: quotaGb.toFixed(2),
           used: usageMb.toFixed(1),
         }),
@@ -337,10 +326,10 @@ async function isModuleCached(module: ModuleId): Promise<boolean> {
   if (typeof caches === 'undefined') return false
   const owned = MODULE_CACHE_KEYS[module]
   try {
-    // Residency means the module's own bucket is there: for sherpa that is the
-    // bucket it writes, for Moonshine the transformers.js cache. The old prefix
-    // guess (`rc-model-en-…`) was never a bucket that existed, so the English
-    // module read as "not installed" on every device that had it.
+    // Residency means the module's own bucket is there — for sherpa that is the
+    // bucket it writes. The old prefix guess (`rc-model-en-…`) was never a bucket
+    // that existed, so the English module read as "not installed" on every device
+    // that had it; the one module left reads its own real bucket instead.
     return (await caches.keys()).some((key) => owned.includes(key))
   } catch {
     return false

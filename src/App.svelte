@@ -43,7 +43,6 @@
   import { createTtsEngine, ttsConfigFrom } from './lib/tts/engine'
   import { ensureVoices } from './lib/tts/voices.ts'
   import { moduleFor, moduleLabel, moduleName, purgeRetiredModuleCaches } from './lib/asr/models'
-  import { rememberGpuFailure } from './lib/asr/device'
   import { takeAsrCrashReport } from './lib/boot-guard'
   import { APP_VERSION } from './lib/app/version'
   import {
@@ -253,27 +252,19 @@
   }
 
   onMount(() => {
-    // English no longer has a second module (Parakeet) — anyone who installed it
-    // is holding 126 MB that nothing will open again. Drop the record and the
-    // caches in the same breath, once.
-    //
-    // Korean used to be forgotten here as well, and that is now wrong: back then
-    // the record to drop was the one the *Chinese* module's download had left
-    // behind (that module was answering Korean), so `ko` could only be a leftover
-    // from the Moonshine era. Korean has a module of its own again, which makes
-    // `ko` the genuine key — this line would have deleted a real Korean install on
-    // every reload, and the app would have asked for the download again each
-    // time, which reads as storage that does not stick.
-    //
-    // A Moonshine-era record needs no help anyway: its `version` no longer
-    // matches the registry, so it already reads as not installed, and the retired
-    // cache prefix clears its bytes.
     // The notes on this device, read once at startup: the start page's card shows
     // how many there are, and the drawer's 历史记录 opens a list that is already
     // there rather than an empty screen that fills in a moment later.
     void loadHistory()
 
-    if (getSettings().installedModels['en-nemo']) forgetModel('en-nemo')
+    // Every module this build no longer has: the Parakeet English module removed
+    // rounds ago, and — this round — the two Moonshine downloads and the Korean
+    // network module. Their install records would otherwise sit in the settings
+    // store forever as keys nothing reads, and the caches behind them are swept
+    // right below.
+    for (const retired of ['en', 'ko', 'ko-net', 'en-nemo']) {
+      if (getSettings().installedModels[retired]) forgetModel(retired)
+    }
     void purgeRetiredModuleCaches().then((gone) => {
       if (gone.length) info('storage', t('已清理不再使用的识别模块：{list}', { list: gone.join(t('、')) }))
     })
@@ -321,51 +312,36 @@
     const crash = takeAsrCrashReport()
     if (crash) {
       const name = moduleName(crash.module)
-      if (crash.accelerator === 'webgpu') {
-        // Measured on an iPhone 14 Pro: the page dies ~2.7 s after the engine is
-        // asked for WebGPU, twice, silently — and the same module on the CPU is
-        // fine. So this crash bans the *accelerator*, never the module: the note
-        // that recorded it is what lets the next attempt succeed instead of
-        // repeating the flash.
-        rememberGpuFailure(t('上次启用显卡加速时整个页面被系统关掉了'))
-        logError('asr', t('上次启动{name}时页面被系统直接关掉了 —— 当时用的是显卡加速（WebGPU），已记住，下次改用 CPU', { name }), {
-          [t('依据')]: t('iPhone / Safari 上启用 WebGPU 会把渲染进程带崩，一闪重开、无异常可捕'),
-        })
-        logNotice.set({
-          title: t('显卡加速把页面带崩了，已自动改用 CPU'),
-          body: `${t('iPhone / Safari 上的 WebGPU 一启用就会把整个页面关掉，这个模块本身没问题。现在再试一次即可（设置里也可以自己确认「显卡加速」选的是 CPU）。')}${
-            restoredCount > 0 ? t('下面标红的那一条记着当时用的是哪个加速器。') : ''
-          }`,
-          // The fix is already in place, so this is the one failure the drawer can
-          // offer to undo with a button rather than describe.
-          retry: true,
-        })
-      } else {
-        logError('asr', t('上次启动{name}时页面被系统直接关掉了（第 {n} 次，多半是内存不够）', { name, n: crash.count }), {
-          [t('提示')]: t('弹窗闪一下就没了、控制台没有任何报错，通常就是这一种'),
-        })
-        // Where the evidence is decides what can be promised. A tail can still be
-        // missing — the page was killed before its first write reached storage,
-        // or it died long enough ago that the tail aged out — and pointing
-        // somebody at a line that is not there is worse than saying plainly that
-        // it did not survive.
-        //
-        // "标红的那一条", not "最后一条": the failure's line is logged by *this*
-        // load, so by the time anybody reads it there are already newer lines
-        // under it (startup, the storage probe, the visibility events). The line
-        // itself is unambiguous; its position is not.
-        const tail =
-          restoredCount > 0
-            ? t('下面标红的那一条就是它倒下的地方，它前面几行是崩溃前的最后状态。')
-            : t('这次没能找回崩溃前的日志尾巴，只能确认它是在这一步倒下的。')
-        logNotice.set({
-          title: t('上次启动{name}时，页面被系统直接关掉了', { name }),
-          body:
-            crash.count >= 2
-              ? `${t('这台设备装不下这个模块（240MB 的模型加上识别引擎）。再点还是会一样，先别试了。')}${tail}`
-              : `${t('多半是内存不够：这种失败不会弹任何错误，页面只是闪一下就重开了。')}${tail}`,
-        })
-      }
+      // One failure and one explanation now: a killed page during an engine start
+      // is the memory ceiling of the device, because the only engine left is
+      // CPU-only WASM on a 228 MB model. The WebGPU crash this used to have a
+      // second branch for cannot happen any more — that accelerator went with the
+      // Moonshine modules — so a note left by an older build is reported as what
+      // it actually was: a page killed during a start.
+      logError('asr', t('上次启动{name}时页面被系统直接关掉了（第 {n} 次，多半是内存不够）', { name, n: crash.count }), {
+        [t('提示')]: t('弹窗闪一下就没了、控制台没有任何报错，通常就是这一种'),
+      })
+      // Where the evidence is decides what can be promised. A tail can still be
+      // missing — the page was killed before its first write reached storage,
+      // or it died long enough ago that the tail aged out — and pointing
+      // somebody at a line that is not there is worse than saying plainly that
+      // it did not survive.
+      //
+      // "标红的那一条", not "最后一条": the failure's line is logged by *this*
+      // load, so by the time anybody reads it there are already newer lines
+      // under it (startup, the storage probe, the visibility events). The line
+      // itself is unambiguous; its position is not.
+      const tail =
+        restoredCount > 0
+          ? t('下面标红的那一条就是它倒下的地方，它前面几行是崩溃前的最后状态。')
+          : t('这次没能找回崩溃前的日志尾巴，只能确认它是在这一步倒下的。')
+      logNotice.set({
+        title: t('上次启动{name}时，页面被系统直接关掉了', { name }),
+        body:
+          crash.count >= 2
+            ? `${t('这台设备装不下这个模块（240MB 的模型加上识别引擎）。再点还是会一样，先别试了。')}${tail}`
+            : `${t('多半是内存不够：这种失败不会弹任何错误，页面只是闪一下就重开了。')}${tail}`,
+      })
       // The evidence only exists in the log, so for this one failure the log comes
       // to the user instead of waiting to be asked for.
       logOpen.set(true)

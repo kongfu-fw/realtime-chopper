@@ -815,6 +815,8 @@ npm test           # node --test（Node 自带跑测，不装测试框架）
 npm run icons      # 从 logo.ts 的几何重新渲染图标（见下）
 npm run e2e        # 构建 + 用无头 Chrome 真开一遍（假麦克风），报告和截图写到 dist/e2e/（见下）
 npm run verify:runtime  # 核对被钉住的那份 sherpa 运行时是否仍与 worker 的注释相符（需联网）
+npm run deploy         # 推送当前分支到部署服务器，然后等线上真的换成这一版（见「部署」）
+npm run verify:deploy  # 只等：抓线上 index.html 的 app-version 和本地 APP_VERSION 比
 ```
 
 ### 端到端测试（`npm run e2e`）
@@ -910,6 +912,8 @@ static/                manifest / sw.js / 图标 / 可选图标的原图 / sherp
 static/icons/          非默认图标的各尺寸 PNG（由 npm run icons 生成）
 scripts/make-icons.mjs 图标渲染 + 裁切安全自检
 scripts/verify-runtime.mjs 把 worker 注释里关于运行时的数字与那份产物逐一对照（需联网）
+scripts/deploy.mjs     推送到 origin 的地址，然后跑下面这个自检
+scripts/verify-deploy.mjs 等线上 index.html 的 app-version 与本地一致（报告在 dist/deploy-check/）
 design/                设计稿原图（几 MB 那种）：不进构建、不进镜像、也不发到线上
 ```
 
@@ -920,7 +924,8 @@ design/                设计稿原图（几 MB 那种）：不进构建、不�
 不会各自跑偏：
 
 - 构建出的 `index.html` 里的 `<meta name="app-version">` —— `curl -s http://<主机>:8080/ | grep app-version`
-  就能确认线上跑的是哪一版，这也是区分「Service Worker 还缓存着旧外壳」和「根本没部署上」最快的办法；页面自己
+  就能确认线上跑的是哪一版（`npm run verify:deploy` 是它的命令版：等着线上变成你要的那一版，见「部署」），这也是区分
+  「Service Worker 还缓存着旧外壳」和「根本没部署上」最快的办法；页面自己
   也读同一个 meta 来发现自己过期（见「打开着的应用怎么发现自己过期了」那节）；
 - 设置页「诊断」里的**版本**一行；
 - 小鹿彩蛋（关于）弹窗页脚；
@@ -1044,6 +1049,17 @@ docker compose up -d --build      # 默认监听 0.0.0.0:8080（RC_BIND / RC_POR
 默认所有网卡都监听，所以本机、局域网、Tailscale 都能打开；但**能打开不等于能用麦克风**（非 https、非 localhost 不是安全上下文）。手机上怎么用（Tailscale / 域名 + HTTPS）、监听地址怎么调、缓存头和排错，都在 **[DOCKER.md](DOCKER.md)**。
 
 部署完之后 `curl -s http://<主机>:8080/ | grep app-version` 就能看到线上是哪个版本号（见下面的「版本号」）。
+
+**推完不等于上线**：推送到 `origin` 只是让服务器拿到提交，它还要构建、把新文件换上去，这中间线上一直是上一版。所以自检写成了两条命令：
+
+```bash
+npm run deploy          # 推送当前分支到部署服务器，然后等线上真的换成这一版
+npm run verify:deploy   # 只等：抓线上 index.html 的 app-version 和本地 APP_VERSION 比
+```
+
+`verify:deploy` 默认看这套部署自己的地址（`https://kongfu-onedrive.kooka-salmon.ts.net/`；同一份构建在 `http://100.113.136.125:8080/` 上也答），默认最多等 10 分钟、每 5 秒看一次，`--url` / `--timeout` / `--interval`（或 `RC_DEPLOY_URL` / `RC_DEPLOY_TIMEOUT` / `RC_DEPLOY_INTERVAL`）可改。**两个号一致才退出 0**；到点还不一致就退出 1，并说清最后看到的是旧版本号、一个没有这个 meta 的页面、一个 HTTP 状态、还是根本没连上 —— 四种失败四句话，逐次变化和结论都写在 `dist/deploy-check/`。
+
+`deploy` 推的是**当前分支**，推到 `origin` 的**地址**而不是名字：`origin` 上挂着两个 push URL（GitHub 镜像那个要凭据），推名字会在镜像那里停下、或在它上面报错，让一次刚成功的部署看起来像失败。要推别处用 `--remote` / `RC_DEPLOY_REMOTE`。它在推送前还会先看一眼线上，把两件自检看不出来的事说在前面：工作区有未提交改动时列出那些文件（这次推的是最后一次提交，磁盘上的改动不在里面），线上已经是同一个版本号时直接说明（这样自检分不出这次部署和上一次部署）。
 
 ---
 

@@ -15,10 +15,11 @@
  *
  * - the built `index.html`, as `<meta name="app-version">` — so a deployment can
  *   be identified with `curl` and grepped, which is the quickest way to tell a
- *   live build apart from a Service-Worker-cached older one;
+ *   live build apart from a Service-Worker-cached older one (`npm run deploy`
+ *   pushes and then runs that grep as a wait — see `scripts/verify-deploy.mjs`);
  * - the settings screen and the mascot's easter egg, for a person who is holding
  *   the device;
  * - the startup line in the log drawer, the first line of every copied log, and
  *   the head of the diagnostic report that a phone can send.
  */
-export const APP_VERSION = '20261001.6'
+export const APP_VERSION = '20261001.7'

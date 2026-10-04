@@ -12,7 +12,9 @@
     "test": "node --test \"src/**/*.test.ts\"",
     "e2e": "node scripts/e2e.mjs",
     "icons": "node scripts/make-icons.mjs",
-    "verify:runtime": "node scripts/verify-runtime.mjs"
+    "verify:runtime": "node scripts/verify-runtime.mjs",
+    "verify:deploy": "node scripts/verify-deploy.mjs",
+    "deploy": "node scripts/deploy.mjs"
   },
   "keywords": [],
   "author": "",
